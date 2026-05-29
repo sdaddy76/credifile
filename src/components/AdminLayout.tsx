@@ -4,35 +4,38 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, FolderOpen, Users, Building2,
-  FileText, LogOut, Menu, X, UserCog, ShieldAlert
+  FileText, LogOut, Menu, X, UserCog, ShieldAlert,
+  UserCircle, UsersRound
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
-// Super Admin: tutto
 const NAV_SUPER = [
-  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/pratiche',  icon: FolderOpen,       label: 'Pratiche' },
-  { to: '/admin/clienti',   icon: Users,             label: 'Clienti' },
-  { to: '/admin/banche',    icon: Building2,         label: 'Banche' },
-  { to: '/admin/documenti', icon: FileText,          label: 'Documenti Standard' },
-  { to: '/admin/utenti',    icon: UserCog,           label: 'Utenti' },
+  { to: '/admin/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/admin/pratiche',    icon: FolderOpen,      label: 'Pratiche' },
+  { to: '/admin/clienti',     icon: Users,           label: 'Clienti' },
+  { to: '/admin/banche',      icon: Building2,       label: 'Banche' },
+  { to: '/admin/documenti',   icon: FileText,        label: 'Documenti Standard' },
+  { to: '/admin/utenti',      icon: UserCog,         label: 'Utenti' },
+  { to: '/admin/miei-agenti', icon: UsersRound,      label: 'Miei Agenti' },
+  { to: '/admin/profilo',     icon: UserCircle,      label: 'Profilo' },
 ];
 
-// Segreteria: pratiche agenti assegnati, clienti, banche
 const NAV_SEGRETERIA = [
-  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/pratiche',  icon: FolderOpen,       label: 'Pratiche' },
-  { to: '/admin/clienti',   icon: Users,             label: 'Clienti' },
-  { to: '/admin/banche',    icon: Building2,         label: 'Banche' },
+  { to: '/admin/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/admin/pratiche',    icon: FolderOpen,      label: 'Pratiche' },
+  { to: '/admin/clienti',     icon: Users,           label: 'Clienti' },
+  { to: '/admin/banche',      icon: Building2,       label: 'Banche' },
+  { to: '/admin/miei-agenti', icon: UsersRound,      label: 'Miei Agenti' },
+  { to: '/admin/profilo',     icon: UserCircle,      label: 'Profilo' },
 ];
 
-// Agente: proprie pratiche, propri clienti
 const NAV_AGENTE = [
   { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/pratiche',  icon: FolderOpen,       label: 'Pratiche' },
-  { to: '/admin/clienti',   icon: Users,             label: 'Clienti' },
+  { to: '/admin/pratiche',  icon: FolderOpen,      label: 'Pratiche' },
+  { to: '/admin/clienti',   icon: Users,           label: 'Clienti' },
+  { to: '/admin/profilo',   icon: UserCircle,      label: 'Profilo' },
 ];
 
 const ROLE_LABEL: Record<string, string> = {
@@ -58,7 +61,7 @@ export default function AdminLayout() {
 
   const handleSignOut = async () => {
     await signOut();
-    toast.success('Disconnesso con successo');
+    toast.success('Disconnesso');
     navigate('/login');
   };
 
@@ -114,8 +117,7 @@ export default function AdminLayout() {
               <Badge className={`text-[10px] px-1.5 py-0 ${roleColor}`}>{roleLabel}</Badge>
             </div>
           </div>
-          <Button
-            variant="ghost" size="sm"
+          <Button variant="ghost" size="sm"
             className="w-full justify-start gap-2 text-muted-foreground hover:text-destructive h-8"
             onClick={handleSignOut}
           >
