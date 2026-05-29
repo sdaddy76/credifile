@@ -79,7 +79,11 @@ export default function MieiAgentiPage() {
     setInviting(true);
     setInviteLink('');
     const { data, error } = await supabase.functions.invoke('invite-agent', {
-      body: { email: inviteEmail.trim().toLowerCase(), nome: inviteNome || null },
+      body: {
+        email: inviteEmail.trim().toLowerCase(),
+        nome: inviteNome || null,
+        segreteria_user_id: !isSuperAdmin ? user?.id : null,
+      },
     });
     if (error || !data?.success) {
       toast.error(error?.message ?? data?.error ?? 'Errore generazione invito');
@@ -87,14 +91,6 @@ export default function MieiAgentiPage() {
     }
     setInviteLink(data.invite_link);
     setInviting(false);
-
-    // Se segreteria, assegna automaticamente il nuovo agente
-    if (!isSuperAdmin && user?.id && data.agent_id) {
-      await supabase.from('segreteria_agent_assignments').upsert({
-        segreteria_user_id: user.id,
-        agent_user_id: data.agent_id,
-      });
-    }
     toast.success('Link di invito generato');
     loadAgents();
   };

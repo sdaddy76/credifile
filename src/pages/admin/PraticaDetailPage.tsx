@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle
@@ -339,6 +340,7 @@ export default function PraticaDetailPage() {
           <Tabs defaultValue="documenti">
             <TabsList>
               <TabsTrigger value="documenti">Documenti ({documents.length})</TabsTrigger>
+              <TabsTrigger value="scheda">Scheda Rischio</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
             </TabsList>
 
@@ -439,6 +441,10 @@ export default function PraticaDetailPage() {
                   Nessun documento richiesto
                 </div>
               )}
+            </TabsContent>
+
+            <TabsContent value="scheda" className="mt-3">
+              {id && <SchedaValutazioneRischio practiceId={id} />}
             </TabsContent>
 
             <TabsContent value="log" className="mt-3">

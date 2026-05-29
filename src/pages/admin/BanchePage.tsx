@@ -12,7 +12,7 @@ import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText } fro
 import { toast } from 'sonner';
 import type { Bank, BankDocumentRequirement } from '@/lib/types';
 
-const emptyBank = { nome: '', codice: '', contatto: '', email: '', note: '', attiva: true };
+const emptyBank = { nome: '', codice: '', contatto: '', email: '', email_invio_banca: '', note: '', attiva: true };
 const emptyReq = { nome: '', descrizione: '', obbligatorio: true };
 
 export default function BanchePage() {
@@ -50,7 +50,7 @@ export default function BanchePage() {
   const openCreateBank = () => { setEditingBank(null); setBankForm(emptyBank); setShowBankForm(true); };
   const openEditBank = (b: Bank) => {
     setEditingBank(b);
-    setBankForm({ nome: b.nome, codice: b.codice, contatto: b.contatto ?? '', email: b.email ?? '', note: b.note ?? '', attiva: b.attiva });
+    setBankForm({ nome: b.nome, codice: b.codice, contatto: b.contatto ?? '', email: b.email ?? '', email_invio_banca: (b as Bank & { email_invio_banca?: string }).email_invio_banca ?? '', note: b.note ?? '', attiva: b.attiva });
     setShowBankForm(true);
   };
 
@@ -215,6 +215,11 @@ export default function BanchePage() {
             <div className="space-y-1.5">
               <Label>Email</Label>
               <Input type="email" placeholder="istruttoria@banca.it" value={bankForm.email} onChange={e => setBankForm(f => ({ ...f, email: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Email Invio Documenti Pratica</Label>
+                <Input type="email" placeholder="documenti@banca.it" value={bankForm.email_invio_banca} onChange={e => setBankForm(f => ({ ...f, email_invio_banca: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">Email a cui la segreteria invia la pratica completa.</p>
             </div>
             <div className="space-y-1.5">
               <Label>Contatto</Label>
