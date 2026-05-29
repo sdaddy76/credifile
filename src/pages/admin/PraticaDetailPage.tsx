@@ -422,7 +422,7 @@ export default function PraticaDetailPage() {
                                   >
                                     {uploadingAdminDoc === doc.id
                                       ? <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
-                                      : <><Upload className="w-3 h-3" /> Admin</>}
+                                      : <><Upload className="w-3 h-3" /> Upload</>}
                                   </Button>
                                 </div>
                               )}
