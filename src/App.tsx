@@ -11,6 +11,7 @@ import PraticaDetailPage from "@/pages/admin/PraticaDetailPage";
 import ClientiPage from "@/pages/admin/ClientiPage";
 import BanchePage from "@/pages/admin/BanchePage";
 import DocumentiTemplatePage from "@/pages/admin/DocumentiTemplatePage";
+import UtentiPage from "@/pages/admin/UtentiPage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 
@@ -52,6 +53,7 @@ const App = () => (
             <Route path="clienti" element={<ClientiPage />} />
             <Route path="banche" element={<BanchePage />} />
             <Route path="documenti" element={<DocumentiTemplatePage />} />
+            <Route path="utenti" element={<UtentiPage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />

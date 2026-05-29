@@ -11,10 +11,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Plus, Search, FolderOpen, Eye, Calendar, Euro } from 'lucide-react';
 import { toast } from 'sonner';
-import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank, type PracticeStatus } from '@/lib/types';
+import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function PratichePage() {
   const navigate = useNavigate();
+  const { isAgente } = useAuth();
   const [practices, setPractices] = useState<Practice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -128,9 +130,11 @@ export default function PratichePage() {
           <h1 className="text-2xl font-bold text-foreground">Pratiche</h1>
           <p className="text-muted-foreground text-sm mt-1">{practices.length} pratiche totali</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} className="gap-2">
-          <Plus className="w-4 h-4" /> Nuova Pratica
-        </Button>
+        {isAgente && (
+          <Button onClick={() => setShowCreate(true)} className="gap-2">
+            <Plus className="w-4 h-4" /> Nuova Pratica
+          </Button>
+        )}
       </div>
 
       {/* Filtri */}

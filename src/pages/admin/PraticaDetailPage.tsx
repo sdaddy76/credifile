@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +26,7 @@ import {
 export default function PraticaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { isAgente } = useAuth();
 
   const [practice, setPractice] = useState<Practice | null>(null);
   const [documents, setDocuments] = useState<PracticeDocument[]>([]);
@@ -207,9 +209,11 @@ export default function PraticaDetailPage() {
             {bank && ` · ${bank.nome}`}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => { setNewStatus(practice.status); setShowStatusChange(true); }}>
-          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
-        </Button>
+        {isAgente && (
+          <Button variant="outline" size="sm" onClick={() => { setNewStatus(practice.status); setShowStatusChange(true); }}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
+          </Button>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-3 gap-5">
@@ -224,6 +228,7 @@ export default function PraticaDetailPage() {
               {client?.telefono && <div><p className="text-muted-foreground text-xs">Telefono</p><p>{client.telefono}</p></div>}
               {bank && <div><p className="text-muted-foreground text-xs">Banca</p><p className="flex items-center gap-1"><Building2 className="w-3 h-3" />{bank.nome}</p></div>}
               {practice.importo_richiesto && <div><p className="text-muted-foreground text-xs">Importo</p><p className="flex items-center gap-1 font-semibold"><Euro className="w-3 h-3" />{practice.importo_richiesto.toLocaleString('it-IT')}</p></div>}
+              {practice.motivazione && <div><p className="text-muted-foreground text-xs">Motivazione Richiesta</p><p className="text-sm mt-0.5 bg-muted/50 rounded p-2 leading-relaxed">{practice.motivazione}</p></div>}
             </CardContent>
           </Card>
 
@@ -244,7 +249,8 @@ export default function PraticaDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Link cliente */}
+          {/* Link cliente — solo agente */}
+          {isAgente && (
           <Card className="border-border">
             <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Link2 className="w-4 h-4 text-primary" />Portale Cliente</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -277,6 +283,7 @@ export default function PraticaDetailPage() {
               )}
             </CardContent>
           </Card>
+          )} {/* fine isAgente portale cliente */}
         </div>
 
         {/* Documenti + Log */}
@@ -288,7 +295,8 @@ export default function PraticaDetailPage() {
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
-              {/* Actions */}
+              {/* Actions — solo agente */}
+              {isAgente && (
               <div className="flex gap-2 flex-wrap">
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddDoc(true)}>
                   <Plus className="w-3.5 h-3.5" /> Aggiungi Documento
@@ -297,6 +305,7 @@ export default function PraticaDetailPage() {
                   <AlertCircle className="w-3.5 h-3.5" /> Richiedi Integrazione
                 </Button>
               </div>
+              )}
 
               {/* Documenti per tipo */}
               {[
@@ -335,7 +344,7 @@ export default function PraticaDetailPage() {
                                   </div>
                                 )}
                               </div>
-                              {doc.status === 'caricato' && (
+                              {doc.status === 'caricato' && isAgente && (
                                 <div className="flex gap-1 shrink-0">
                                   <Button size="sm" variant="ghost" className="h-7 px-2 text-green-600 hover:bg-green-50" onClick={() => approveDoc(doc.id)}>
                                     <CheckCircle className="w-3.5 h-3.5" />
