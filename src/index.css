@@ -1,0 +1,204 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+==========================================================================
+【AI HANDOVER NOTE】
+1. DESIGN PHILOSOPHY:
+   - Swiss Precision meets Italian Financial Trust: Design system rooted in institutional credibility, regulatory compliance aesthetics, and operational clarity
+   - Visual style: Neo-minimalism with subtle physicality—clean surfaces, precise typography, restrained color palette that conveys professionalism and security
+   - Rationale: Financial document management requires absolute clarity, trust signals, and zero ambiguity. The design must feel authoritative yet approachable for SME clients unfamiliar with complex banking processes
+
+2. TYPOGRAPHY:
+   - Inter (Sans): Chosen for exceptional legibility at all sizes, neutral professionalism, and excellent Italian diacritics support. Its geometric precision conveys systematic organization—critical for document workflows
+   - IBM Plex Mono: Used for practice codes (codice pratica), document IDs, and status indicators. Monospaced clarity prevents misreading of alphanumeric identifiers
+
+3. COLOR SYSTEM:
+   - Brand primary: Deep institutional blue (Hue 230°)—evokes banking heritage, trust, stability. Maps to --primary for CTAs and --ring for focus states
+   - --brand → --primary (buttons, links), --accent (highlights, badges), --ring (focus indicators)
+   - Semantic colors: Success (green H:150) for completed uploads, Warning (amber H:45) for pending integrations, Destructive (red H:10) for missing documents
+   - Muted grays create visual hierarchy without distraction; card surfaces use subtle elevation to organize complex multi-step workflows
+
+4. USAGE GUIDE:
+   - Layout: Dashboard full-width with sidebar navigation. Admin panel uses data-dense tables; client portal emphasizes large upload zones and clear progress indicators
+   - Effects: Minimal backdrop-blur on modals (regulatory clarity > aesthetics), subtle border-based elevation (avoid heavy shadows that feel consumer-grade)
+   - Design rules: All document states must be color-coded AND icon-labeled (accessibility + quick scanning). Practice codes always in monospace. Status badges use muted backgrounds with high-contrast text. Maintain 4.5:1 contrast minimum for all text (WCAG AA compliance for financial interfaces)
+==========================================================================
+*/
+
+:root {
+  /* Typography */
+  --font-sans: Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: IBM Plex Mono, Consolas, monospace;
+  
+  /* Radius */
+  --radius: 0.5rem;
+
+  /* Core UI Tokens */
+  --background: oklch(0.99 0.002 230);
+  --foreground: oklch(0.15 0.01 230);
+  --card: oklch(0.98 0.003 230);
+  --card-foreground: oklch(0.18 0.01 230);
+  --popover: oklch(0.99 0.002 230);
+  --popover-foreground: oklch(0.15 0.01 230);
+  --primary: oklch(0.42 0.14 230);
+  --primary-foreground: oklch(0.98 0.003 230);
+  --secondary: oklch(0.92 0.008 230);
+  --secondary-foreground: oklch(0.22 0.012 230);
+  --muted: oklch(0.95 0.005 230);
+  --muted-foreground: oklch(0.48 0.01 230);
+  --accent: oklch(0.88 0.02 230);
+  --accent-foreground: oklch(0.25 0.015 230);
+  --destructive: oklch(0.55 0.22 10);
+  --destructive-foreground: oklch(0.98 0.003 10);
+  --border: oklch(0.88 0.008 230);
+  --input: oklch(0.88 0.008 230);
+  --ring: oklch(0.42 0.14 230);
+  
+  /* Chart Tokens */
+  --chart-1: oklch(0.52 0.16 230);
+  --chart-2: oklch(0.58 0.12 200);
+  --chart-3: oklch(0.48 0.10 260);
+  --chart-4: oklch(0.62 0.14 210);
+  --chart-5: oklch(0.55 0.08 240);
+  
+  /* Sidebar Tokens */
+  --sidebar: oklch(0.97 0.004 230);
+  --sidebar-foreground: oklch(0.28 0.012 230);
+  --sidebar-primary: oklch(0.42 0.14 230);
+  --sidebar-primary-foreground: oklch(0.98 0.003 230);
+  --sidebar-accent: oklch(0.90 0.015 230);
+  --sidebar-accent-foreground: oklch(0.25 0.015 230);
+  --sidebar-border: oklch(0.90 0.008 230);
+  --sidebar-ring: oklch(0.42 0.14 230);
+}
+
+.dark {
+  --background: oklch(0.12 0.01 230);
+  --foreground: oklch(0.92 0.005 230);
+  --card: oklch(0.15 0.012 230);
+  --card-foreground: oklch(0.90 0.006 230);
+  --popover: oklch(0.13 0.011 230);
+  --popover-foreground: oklch(0.92 0.005 230);
+  --primary: oklch(0.58 0.18 230);
+  --primary-foreground: oklch(0.12 0.01 230);
+  --secondary: oklch(0.22 0.015 230);
+  --secondary-foreground: oklch(0.88 0.008 230);
+  --muted: oklch(0.20 0.012 230);
+  --muted-foreground: oklch(0.62 0.01 230);
+  --accent: oklch(0.32 0.04 230);
+  --accent-foreground: oklch(0.90 0.008 230);
+  --destructive: oklch(0.62 0.24 10);
+  --destructive-foreground: oklch(0.95 0.005 10);
+  --border: oklch(0.25 0.015 230);
+  --input: oklch(0.25 0.015 230);
+  --ring: oklch(0.58 0.18 230);
+  
+  /* Chart Tokens */
+  --chart-1: oklch(0.62 0.20 230);
+  --chart-2: oklch(0.68 0.16 200);
+  --chart-3: oklch(0.58 0.14 260);
+  --chart-4: oklch(0.72 0.18 210);
+  --chart-5: oklch(0.65 0.12 240);
+  
+  /* Sidebar Tokens */
+  --sidebar: oklch(0.14 0.011 230);
+  --sidebar-foreground: oklch(0.78 0.008 230);
+  --sidebar-primary: oklch(0.58 0.18 230);
+  --sidebar-primary-foreground: oklch(0.12 0.01 230);
+  --sidebar-accent: oklch(0.28 0.025 230);
+  --sidebar-accent-foreground: oklch(0.88 0.008 230);
+  --sidebar-border: oklch(0.22 0.015 230);
+  --sidebar-ring: oklch(0.58 0.18 230);
+}
+
+@theme inline {
+  /* Shadcn Core Mapping */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Charts Mapping */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Sidebar Mapping */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Typography */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* Radius */
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply scroll-smooth antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans min-h-screen;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+
+  code, pre {
+    @apply font-mono;
+  }
+
+  ::selection {
+    @apply bg-primary/20 text-primary;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40;
+  }
+}
