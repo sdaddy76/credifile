@@ -32,8 +32,11 @@ export default function PratichePage() {
   async function load() {
     let query = supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)');
 
-    // Segreteria: filtra solo pratiche degli agenti assegnati
-    if (isSegreteria && user?.id) {
+    if (isAgente && user?.id) {
+      // Agente: vede solo le proprie pratiche
+      query = query.eq('created_by', user.id);
+    } else if (isSegreteria && user?.id) {
+      // Segreteria: vede le pratiche degli agenti assegnati
       const { data: assignments } = await supabase
         .from('segreteria_agent_assignments')
         .select('agent_user_id')
@@ -41,8 +44,14 @@ export default function PratichePage() {
       if (assignments && assignments.length > 0) {
         const agentIds = assignments.map((a: { agent_user_id: string }) => a.agent_user_id);
         query = query.in('created_by', agentIds);
+      } else {
+        // Nessun agente assegnato: mostra lista vuota
+        setPractices([]);
+        setLoading(false);
+        return;
       }
     }
+    // super_admin: nessun filtro, vede tutte
 
     const { data } = await query.order('created_at', { ascending: false });
     setPractices((data ?? []) as Practice[]);

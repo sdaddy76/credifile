@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, UserCog, Pencil, ShieldCheck, Building2, Link2 } from 'lucide-react';
+import { Plus, UserCog, Pencil, ShieldCheck, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 
@@ -22,9 +22,8 @@ interface AdminProfile {
 }
 
 const RUOLI = [
-  { value: 'agente', label: 'Agente', desc: 'Accesso completo: pratiche, clienti, banche, documenti, utenti', icon: ShieldCheck, color: 'bg-blue-100 text-blue-800' },
-  { value: 'supervisore_segreteria', label: 'Supervisore Segreteria', desc: 'Dashboard, pratiche filtrate, clienti — senza banche/template/utenti', icon: UserCog, color: 'bg-teal-100 text-teal-800' },
-  { value: 'banca', label: 'Referente Banca', desc: 'Vede pratiche (stato + motivazione), gestisce banche', icon: Building2, color: 'bg-purple-100 text-purple-800' },
+  { value: 'agente', label: 'Agente', desc: 'Gestisce propri clienti, carica documenti, invia codice accesso al cliente', icon: ShieldCheck, color: 'bg-blue-100 text-blue-800' },
+  { value: 'supervisore_segreteria', label: 'Segreteria', desc: 'Pratiche agenti assegnati, gestisce banche, cambia stato pratiche, richiede integrazioni', icon: UserCog, color: 'bg-teal-100 text-teal-800' },
 ];
 
 export default function UtentiPage() {

@@ -26,7 +26,7 @@ import {
 export default function PraticaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isAgente, canEdit, user } = useAuth();
+  const { isAgente, canEdit, canApprove, user } = useAuth();
   const adminFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [uploadingAdminDoc, setUploadingAdminDoc] = useState<string | null>(null);
 
@@ -257,7 +257,7 @@ export default function PraticaDetailPage() {
             {bank && ` · ${bank.nome}`}
           </p>
         </div>
-        {isAgente && (
+        {canApprove && (
           <Button variant="outline" size="sm" onClick={() => { setNewStatus(practice.status); setShowStatusChange(true); }}>
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
           </Button>
@@ -343,15 +343,19 @@ export default function PraticaDetailPage() {
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
-              {/* Actions — solo agente */}
-              {isAgente && (
+              {/* Actions */}
+              {(canEdit || canApprove) && (
               <div className="flex gap-2 flex-wrap">
+                {canEdit && (
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddDoc(true)}>
                   <Plus className="w-3.5 h-3.5" /> Aggiungi Documento
                 </Button>
+                )}
+                {canApprove && (
                 <Button size="sm" variant="outline" className="gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50" onClick={() => setShowIntegration(true)}>
                   <AlertCircle className="w-3.5 h-3.5" /> Richiedi Integrazione
                 </Button>
+                )}
               </div>
               )}
 
@@ -392,7 +396,7 @@ export default function PraticaDetailPage() {
                                   </div>
                                 )}
                               </div>
-                              {doc.status === 'caricato' && isAgente && (
+                              {doc.status === 'caricato' && canApprove && (
                                 <div className="flex gap-1 shrink-0">
                                   <Button size="sm" variant="ghost" className="h-7 px-2 text-green-600 hover:bg-green-50" onClick={() => approveDoc(doc.id)}>
                                     <CheckCircle className="w-3.5 h-3.5" />

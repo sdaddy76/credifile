@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
-export type UserRole = 'super_admin' | 'agente' | 'banca' | 'supervisore_segreteria' | null;
+export type UserRole = 'super_admin' | 'agente' | 'supervisore_segreteria' | null;
 
 interface AuthProfile {
   ruolo: UserRole;
@@ -65,7 +65,6 @@ export function useAuth() {
 
   const isSuperAdmin = role === 'super_admin';
   const isAgente     = role === 'agente';
-  const isBanca      = role === 'banca';
   const isSegreteria = role === 'supervisore_segreteria';
 
   return {
@@ -76,14 +75,15 @@ export function useAuth() {
     profileNome,
     isSuperAdmin,
     isAgente,
-    isBanca,
     isSegreteria,
-    // canEdit: può creare/modificare pratiche e documenti
-    canEdit: isSuperAdmin || isAgente || isSegreteria,
-    // canApprove: può approvare/rifiutare documenti
-    canApprove: isSuperAdmin || isAgente,
-    // canManageAll: accesso a utenti, banche, template
-    canManageAll: isSuperAdmin || isAgente,
+    // Può creare pratiche e inviare codice al cliente
+    canEdit: isSuperAdmin || isAgente,
+    // Può approvare/rifiutare documenti e cambiare stato pratica
+    canApprove: isSuperAdmin || isSegreteria,
+    // Può gestire banche
+    canManageBanks: isSuperAdmin || isSegreteria,
+    // Può gestire utenti e template documenti
+    canManageAll: isSuperAdmin,
     signIn,
     signOut,
   };
