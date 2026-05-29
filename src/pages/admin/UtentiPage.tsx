@@ -27,7 +27,7 @@ const RUOLI = [
 ];
 
 export default function UtentiPage() {
-  const { isAgente, isSuperAdmin, canManageAll, user } = useAuth();
+  const { isSuperAdmin, canManageAll, loading: authLoading, user } = useAuth();
   const [profiles, setProfiles] = useState<AdminProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -50,6 +50,12 @@ export default function UtentiPage() {
   const [savingAssign, setSavingAssign] = useState(false);
 
   // Solo agenti o super_admin possono accedere
+  // Aspetta che il ruolo sia caricato prima di reindirizzare
+  if (authLoading) return (
+    <div className="flex justify-center py-12">
+      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
   if (!canManageAll) return <Navigate to="/admin/pratiche" replace />;
 
   const load = useCallback(async () => {
@@ -95,31 +101,23 @@ export default function UtentiPage() {
     }
     setSaving(true);
 
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email: newEmail.trim().toLowerCase(),
-      password: newPassword,
-      options: { data: { nome: newNome } },
+    // Usa Edge Function con service_role — non disconnette l'admin corrente
+    const { data, error } = await supabase.functions.invoke('create-admin-user', {
+      body: {
+        email: newEmail.trim().toLowerCase(),
+        password: newPassword,
+        nome: newNome || null,
+        ruolo: newRuolo,
+      },
     });
 
-    if (signUpError || !signUpData.user) {
-      toast.error(signUpError?.message ?? 'Errore nella creazione utente');
+    if (error || !data?.success) {
+      toast.error(error?.message ?? data?.error ?? 'Errore nella creazione utente');
       setSaving(false);
       return;
     }
 
-    const { error: profileError } = await supabase.from('admin_profiles').upsert({
-      id: signUpData.user.id,
-      email: newEmail.trim().toLowerCase(),
-      nome: newNome || null,
-      ruolo: newRuolo,
-    });
-
-    if (profileError) {
-      toast.error('Utente creato ma errore nel profilo: ' + profileError.message);
-    } else {
-      toast.success(`Utente ${newEmail} creato con ruolo "${newRuolo}"`);
-    }
-
+    toast.success(`Utente ${newEmail} creato con ruolo "${newRuolo}"`);
     setSaving(false);
     setShowCreate(false);
     setNewEmail(''); setNewPassword(''); setNewNome(''); setNewRuolo('agente');
