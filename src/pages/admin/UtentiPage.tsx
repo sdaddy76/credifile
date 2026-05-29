@@ -45,19 +45,10 @@ export default function UtentiPage() {
   const [editNome, setEditNome] = useState('');
 
   // Assegnazioni segreteria ↔ agenti (solo super_admin)
-  // Map: segreteria_user_id → Set<agent_user_id>
   const [assignments, setAssignments] = useState<Record<string, Set<string>>>({});
   const [savingAssign, setSavingAssign] = useState(false);
 
-  // Solo agenti o super_admin possono accedere
-  // Aspetta che il ruolo sia caricato prima di reindirizzare
-  if (authLoading) return (
-    <div className="flex justify-center py-12">
-      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
-  if (!canManageAll) return <Navigate to="/admin/pratiche" replace />;
-
+  // ── Tutti gli hook PRIMA di qualsiasi return condizionale ──
   const load = useCallback(async () => {
     const { data } = await supabase
       .from('admin_profiles')
@@ -80,9 +71,18 @@ export default function UtentiPage() {
   }, []);
 
   useEffect(() => {
+    if (authLoading) return;
     load();
     if (isSuperAdmin) loadAssignments();
-  }, [load, loadAssignments, isSuperAdmin]);
+  }, [authLoading, isSuperAdmin, load, loadAssignments]);
+
+  // Return condizionali DOPO tutti gli hook
+  if (authLoading) return (
+    <div className="flex justify-center py-12">
+      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+  if (!canManageAll) return <Navigate to="/admin/pratiche" replace />;
 
   const openEdit = (p: AdminProfile) => {
     setShowEdit(p);
