@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
-  FileText, Clock, Download, RefreshCw, Building2, User, Euro, AlertCircle
+  FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -26,7 +26,9 @@ import {
 export default function PraticaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isAgente } = useAuth();
+  const { isAgente, canEdit, user } = useAuth();
+  const adminFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [uploadingAdminDoc, setUploadingAdminDoc] = useState<string | null>(null);
 
   const [practice, setPractice] = useState<Practice | null>(null);
   const [documents, setDocuments] = useState<PracticeDocument[]>([]);
@@ -70,7 +72,7 @@ export default function PraticaDetailPage() {
     supabase.from('banks').select('*').eq('attiva', true).then(r => setBanks(r.data ?? []));
   }, [load]);
 
-  // Genera codice accesso cliente
+  // Genera codice accesso cliente + invia email
   const generateAccessCode = async () => {
     if (!practice) return;
     const client = (practice as Practice & { clients?: { email: string } }).clients;
@@ -89,6 +91,52 @@ export default function PraticaDetailPage() {
     }
     await load();
     toast.success('Codice accesso generato!');
+
+    // Recupera nome consulente
+    const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
+    const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
+
+    // Costruisci link
+    const link = `${window.location.origin}${window.location.pathname}#/accesso?p=${practice.id}`;
+
+    // Lista documenti richiesti
+    const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
+    const docNames = (docs ?? []).map((d: { nome: string }) => d.nome);
+
+    // Invia email via edge function
+    const { error: emailError } = await supabase.functions.invoke('send-client-email', {
+      body: {
+        to: client.email,
+        consultant_name: consultantName,
+        documents: docNames,
+        link,
+        code: codice,
+        practice_number: practice.numero_pratica,
+      },
+    });
+    if (emailError) {
+      toast.warning('Codice generato ma email non inviata. Controlla la configurazione email.');
+    } else {
+      toast.success(`Email inviata a ${client.email}!`);
+    }
+  };
+
+  // Upload documento da admin (per conto del cliente)
+  const handleAdminUpload = async (docId: string, file: File) => {
+    if (!id) return;
+    if (file.size > 20 * 1024 * 1024) { toast.error('File troppo grande. Max 20 MB.'); return; }
+    setUploadingAdminDoc(docId);
+    const path = `${id}/${docId}/${Date.now()}_${file.name}`;
+    try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch (_e) { /* ignora errori storage */ }
+    await supabase.from('uploaded_files').insert({
+      practice_document_id: docId, practice_id: id,
+      nome_file: file.name, storage_path: path,
+      mime_type: file.type, dimensione: file.size, uploaded_by: 'admin',
+    });
+    await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
+    toast.success(`"${file.name}" caricato con successo`);
+    setUploadingAdminDoc(null);
+    load();
   };
 
   const copyLink = () => {
@@ -351,6 +399,24 @@ export default function PraticaDetailPage() {
                                   </Button>
                                   <Button size="sm" variant="ghost" className="h-7 px-2 text-red-500 hover:bg-red-50" onClick={() => setShowRejectDoc(doc.id)}>
                                     <XCircle className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              )}
+                              {canEdit && (
+                                <div className="shrink-0">
+                                  <input type="file" className="hidden"
+                                    ref={el => { adminFileRefs.current[doc.id] = el; }}
+                                    accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                                    onChange={e => { const f = e.target.files?.[0]; if (f) handleAdminUpload(doc.id, f); e.target.value = ''; }}
+                                  />
+                                  <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
+                                    disabled={uploadingAdminDoc === doc.id}
+                                    onClick={() => adminFileRefs.current[doc.id]?.click()}
+                                    title="Carica per il cliente"
+                                  >
+                                    {uploadingAdminDoc === doc.id
+                                      ? <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
+                                      : <><Upload className="w-3 h-3" /> Admin</>}
                                   </Button>
                                 </div>
                               )}

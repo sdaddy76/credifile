@@ -22,7 +22,8 @@ interface AdminProfile {
 
 const RUOLI = [
   { value: 'agente', label: 'Agente', desc: 'Accesso completo: pratiche, clienti, banche, documenti, utenti', icon: ShieldCheck, color: 'bg-blue-100 text-blue-800' },
-  { value: 'banca',  label: 'Referente Banca', desc: 'Vede pratiche (stato + motivazione), gestisce banche', icon: Building2,   color: 'bg-purple-100 text-purple-800' },
+  { value: 'supervisore_segreteria', label: 'Supervisore Segreteria', desc: 'Dashboard, pratiche (full), clienti — senza banche/template/utenti/approvazioni', icon: UserCog, color: 'bg-teal-100 text-teal-800' },
+  { value: 'banca',  label: 'Referente Banca', desc: 'Vede pratiche (stato + motivazione), gestisce banche', icon: Building2, color: 'bg-purple-100 text-purple-800' },
 ];
 
 export default function UtentiPage() {

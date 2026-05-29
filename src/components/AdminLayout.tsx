@@ -19,6 +19,12 @@ const NAV_AGENTE = [
   { to: '/admin/utenti',    icon: UserCog,           label: 'Utenti' },
 ];
 
+const NAV_SEGRETERIA = [
+  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/admin/pratiche',  icon: FolderOpen,       label: 'Pratiche' },
+  { to: '/admin/clienti',   icon: Users,             label: 'Clienti' },
+];
+
 const NAV_BANCA = [
   { to: '/admin/pratiche',  icon: FolderOpen,  label: 'Pratiche' },
   { to: '/admin/banche',    icon: Building2,   label: 'Banche' },
@@ -26,11 +32,13 @@ const NAV_BANCA = [
 
 const ROLE_LABEL: Record<string, string> = {
   agente: 'Agente',
-  banca: 'Referente Banca',
+  banca:  'Referente Banca',
+  supervisore_segreteria: 'Supervisore Segreteria',
 };
 const ROLE_COLOR: Record<string, string> = {
   agente: 'bg-blue-100 text-blue-800',
   banca:  'bg-purple-100 text-purple-800',
+  supervisore_segreteria: 'bg-teal-100 text-teal-800',
 };
 
 export default function AdminLayout() {
@@ -38,7 +46,7 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const navItems = role === 'banca' ? NAV_BANCA : NAV_AGENTE;
+  const navItems = role === 'banca' ? NAV_BANCA : role === 'supervisore_segreteria' ? NAV_SEGRETERIA : NAV_AGENTE;
 
   const handleSignOut = async () => {
     await signOut();
