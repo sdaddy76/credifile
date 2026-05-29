@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, UserCog, Pencil, ShieldCheck, Building2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Plus, UserCog, Pencil, ShieldCheck, Building2, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 
@@ -22,41 +23,61 @@ interface AdminProfile {
 
 const RUOLI = [
   { value: 'agente', label: 'Agente', desc: 'Accesso completo: pratiche, clienti, banche, documenti, utenti', icon: ShieldCheck, color: 'bg-blue-100 text-blue-800' },
-  { value: 'supervisore_segreteria', label: 'Supervisore Segreteria', desc: 'Dashboard, pratiche (full), clienti — senza banche/template/utenti/approvazioni', icon: UserCog, color: 'bg-teal-100 text-teal-800' },
-  { value: 'banca',  label: 'Referente Banca', desc: 'Vede pratiche (stato + motivazione), gestisce banche', icon: Building2, color: 'bg-purple-100 text-purple-800' },
+  { value: 'supervisore_segreteria', label: 'Supervisore Segreteria', desc: 'Dashboard, pratiche filtrate, clienti — senza banche/template/utenti', icon: UserCog, color: 'bg-teal-100 text-teal-800' },
+  { value: 'banca', label: 'Referente Banca', desc: 'Vede pratiche (stato + motivazione), gestisce banche', icon: Building2, color: 'bg-purple-100 text-purple-800' },
 ];
 
 export default function UtentiPage() {
-  const { isAgente, user } = useAuth();
+  const { isAgente, isSuperAdmin, canManageAll, user } = useAuth();
   const [profiles, setProfiles] = useState<AdminProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [showEdit, setShowEdit]   = useState<AdminProfile | null>(null);
+  const [showEdit, setShowEdit] = useState<AdminProfile | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Form crea utente
-  const [newEmail, setNewEmail]       = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [newNome, setNewNome]         = useState('');
-  const [newRuolo, setNewRuolo]       = useState('agente');
+  const [newNome, setNewNome] = useState('');
+  const [newRuolo, setNewRuolo] = useState('agente');
 
-  // Form modifica ruolo
+  // Form modifica
   const [editRuolo, setEditRuolo] = useState('');
-  const [editNome, setEditNome]   = useState('');
+  const [editNome, setEditNome] = useState('');
 
-  // Solo agenti possono accedere
-  if (!isAgente) return <Navigate to="/admin/pratiche" replace />;
+  // Assegnazioni segreteria ↔ agenti (solo super_admin)
+  // Map: segreteria_user_id → Set<agent_user_id>
+  const [assignments, setAssignments] = useState<Record<string, Set<string>>>({});
+  const [savingAssign, setSavingAssign] = useState(false);
 
-  async function load() {
+  // Solo agenti o super_admin possono accedere
+  if (!canManageAll) return <Navigate to="/admin/pratiche" replace />;
+
+  const load = useCallback(async () => {
     const { data } = await supabase
       .from('admin_profiles')
       .select('*')
       .order('created_at');
     setProfiles(data ?? []);
     setLoading(false);
-  }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  const loadAssignments = useCallback(async () => {
+    const { data } = await supabase
+      .from('segreteria_agent_assignments')
+      .select('segreteria_user_id, agent_user_id');
+    const map: Record<string, Set<string>> = {};
+    (data ?? []).forEach((row: { segreteria_user_id: string; agent_user_id: string }) => {
+      if (!map[row.segreteria_user_id]) map[row.segreteria_user_id] = new Set();
+      map[row.segreteria_user_id].add(row.agent_user_id);
+    });
+    setAssignments(map);
+  }, []);
+
+  useEffect(() => {
+    load();
+    if (isSuperAdmin) loadAssignments();
+  }, [load, loadAssignments, isSuperAdmin]);
 
   const openEdit = (p: AdminProfile) => {
     setShowEdit(p);
@@ -64,7 +85,6 @@ export default function UtentiPage() {
     setEditNome(p.nome ?? '');
   };
 
-  // Crea utente tramite Supabase Admin API (Edge Function) oppure direttamente
   const handleCreate = async () => {
     if (!newEmail.trim() || !newPassword.trim()) {
       toast.error('Email e password obbligatorie');
@@ -76,7 +96,6 @@ export default function UtentiPage() {
     }
     setSaving(true);
 
-    // Crea utente auth con signup (non serve admin API)
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email: newEmail.trim().toLowerCase(),
       password: newPassword,
@@ -89,7 +108,6 @@ export default function UtentiPage() {
       return;
     }
 
-    // Inserisci profilo con ruolo scelto
     const { error: profileError } = await supabase.from('admin_profiles').upsert({
       id: signUpData.user.id,
       email: newEmail.trim().toLowerCase(),
@@ -121,10 +139,42 @@ export default function UtentiPage() {
     load();
   };
 
+  // Toggle assegnazione agente per una segreteria
+  const toggleAssignment = (segreteriaId: string, agentId: string, checked: boolean) => {
+    setAssignments(prev => {
+      const next = { ...prev };
+      if (!next[segreteriaId]) next[segreteriaId] = new Set();
+      else next[segreteriaId] = new Set(next[segreteriaId]);
+      if (checked) next[segreteriaId].add(agentId);
+      else next[segreteriaId].delete(agentId);
+      return next;
+    });
+  };
+
+  const saveAssignments = async () => {
+    setSavingAssign(true);
+    // Elimina tutte le assegnazioni esistenti e reinserisce
+    await supabase.from('segreteria_agent_assignments').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    const rows: { segreteria_user_id: string; agent_user_id: string }[] = [];
+    Object.entries(assignments).forEach(([sId, agentSet]) => {
+      agentSet.forEach(aId => rows.push({ segreteria_user_id: sId, agent_user_id: aId }));
+    });
+    if (rows.length > 0) {
+      const { error } = await supabase.from('segreteria_agent_assignments').insert(rows);
+      if (error) { toast.error('Errore nel salvataggio assegnazioni'); setSavingAssign(false); return; }
+    }
+    toast.success('Assegnazioni salvate');
+    setSavingAssign(false);
+  };
+
   const getRuoloInfo = (ruolo: string) => RUOLI.find(r => r.value === ruolo) ?? RUOLI[0];
 
+  const segreteriaUsers = profiles.filter(p => p.ruolo === 'supervisore_segreteria');
+  const agentiUsers = profiles.filter(p => p.ruolo === 'agente');
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Utenti</h1>
@@ -180,9 +230,7 @@ export default function UtentiPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-semibold text-foreground text-sm">
-                          {p.nome || p.email}
-                        </p>
+                        <p className="font-semibold text-foreground text-sm">{p.nome || p.email}</p>
                         {isSelf && (
                           <span className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">Tu</span>
                         )}
@@ -215,6 +263,53 @@ export default function UtentiPage() {
             </CardContent></Card>
           )}
         </div>
+      )}
+
+      {/* ── Sezione assegnazioni (solo super_admin) ── */}
+      {isSuperAdmin && segreteriaUsers.length > 0 && agentiUsers.length > 0 && (
+        <Card className="border-border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-primary" />
+              Assegnazione Agenti a Supervisori Segreteria
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Seleziona quali agenti ogni supervisore di segreteria può visualizzare nelle pratiche.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {segreteriaUsers.map(seg => (
+              <div key={seg.id} className="rounded-lg border border-border p-3 space-y-2">
+                <p className="text-sm font-semibold text-foreground">
+                  {seg.nome || seg.email}
+                  <span className="ml-2 text-xs text-muted-foreground font-normal">{seg.email}</span>
+                </p>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {agentiUsers.map(ag => {
+                    const checked = assignments[seg.id]?.has(ag.id) ?? false;
+                    return (
+                      <label
+                        key={ag.id}
+                        className="flex items-center gap-2 cursor-pointer text-sm text-foreground hover:text-primary transition-colors"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(val) => toggleAssignment(seg.id, ag.id, !!val)}
+                        />
+                        <span>{ag.nome || ag.email}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <div className="flex justify-end pt-1">
+              <Button onClick={saveAssignments} disabled={savingAssign} size="sm">
+                {savingAssign ? 'Salvataggio...' : 'Salva Assegnazioni'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Dialog crea utente */}
@@ -264,9 +359,7 @@ export default function UtentiPage() {
       {/* Dialog modifica ruolo */}
       <Dialog open={!!showEdit} onOpenChange={() => setShowEdit(null)}>
         <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Modifica Utente</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Modifica Utente</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label>Nome</Label>

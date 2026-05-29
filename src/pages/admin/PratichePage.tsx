@@ -16,7 +16,7 @@ import { useAuth } from '@/hooks/useAuth';
 
 export default function PratichePage() {
   const navigate = useNavigate();
-  const { isAgente } = useAuth();
+  const { isAgente, isSuperAdmin, isSegreteria, canEdit, user } = useAuth();
   const [practices, setPractices] = useState<Practice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -30,10 +30,21 @@ export default function PratichePage() {
   });
 
   async function load() {
-    const { data } = await supabase
-      .from('practices')
-      .select('*, clients(ragione_sociale,email), banks(nome)')
-      .order('created_at', { ascending: false });
+    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)');
+
+    // Segreteria: filtra solo pratiche degli agenti assegnati
+    if (isSegreteria && user?.id) {
+      const { data: assignments } = await supabase
+        .from('segreteria_agent_assignments')
+        .select('agent_user_id')
+        .eq('segreteria_user_id', user.id);
+      if (assignments && assignments.length > 0) {
+        const agentIds = assignments.map((a: { agent_user_id: string }) => a.agent_user_id);
+        query = query.in('created_by', agentIds);
+      }
+    }
+
+    const { data } = await query.order('created_at', { ascending: false });
     setPractices((data ?? []) as Practice[]);
     setLoading(false);
   }
@@ -71,6 +82,7 @@ export default function PratichePage() {
       motivazione: form.motivazione || null,
       note_admin: form.note_admin || null,
       status: 'bozza',
+      created_by: user?.id ?? null,
     }).select().single();
 
     if (error) { toast.error('Errore nella creazione'); setSaving(false); return; }
@@ -130,7 +142,7 @@ export default function PratichePage() {
           <h1 className="text-2xl font-bold text-foreground">Pratiche</h1>
           <p className="text-muted-foreground text-sm mt-1">{practices.length} pratiche totali</p>
         </div>
-        {isAgente && (
+        {canEdit && (
           <Button onClick={() => setShowCreate(true)} className="gap-2">
             <Plus className="w-4 h-4" /> Nuova Pratica
           </Button>
