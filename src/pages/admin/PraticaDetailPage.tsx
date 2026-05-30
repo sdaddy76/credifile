@@ -37,6 +37,10 @@ export default function PraticaDetailPage() {
   const [accessCode, setAccessCode] = useState<PracticeAccessCode | null>(null);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
+  const [financing, setFinancing] = useState<{
+    id: string; tipologia: string; importo_iniziale: number | null;
+    rata: number | null; durata_mesi: number | null; debito_residuo: number | null; note: string | null;
+  }[]>([]);
 
   // Dialogs
   const [showStatusChange, setShowStatusChange] = useState(false);
@@ -102,6 +106,9 @@ export default function PraticaDetailPage() {
     setDocuments(docs.data as PracticeDocument[] ?? []);
     setLogs(l.data ?? []);
     setAccessCode(ac.data);
+    // Carica finanziamenti
+    const { data: fin } = await supabase.from('client_financing').select('*').eq('practice_id', id).order('ordinamento');
+    setFinancing(fin ?? []);
     setLoading(false);
   }, [id]);
 
@@ -389,6 +396,7 @@ export default function PraticaDetailPage() {
           <Tabs defaultValue="documenti">
             <TabsList>
               <TabsTrigger value="documenti">Documenti ({documents.length})</TabsTrigger>
+              <TabsTrigger value="finanziamenti">Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
               <TabsTrigger value="scheda">Scheda Rischio</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
             </TabsList>
@@ -488,6 +496,65 @@ export default function PraticaDetailPage() {
                 <div className="text-center py-10 text-muted-foreground text-sm">
                   <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
                   Nessun documento richiesto
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="finanziamenti" className="mt-3">
+              {financing.length === 0 ? (
+                <Card><CardContent className="py-10 text-center text-muted-foreground text-sm">
+                  Il cliente non ha ancora inserito finanziamenti in essere.
+                </CardContent></Card>
+              ) : (
+                <div className="space-y-3">
+                  <div className="overflow-x-auto rounded-xl border border-border">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="text-left px-3 py-2.5 font-semibold text-xs text-muted-foreground">Tipologia</th>
+                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Importo iniziale</th>
+                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Rata / mese</th>
+                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Durata</th>
+                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Debito residuo</th>
+                          <th className="text-left px-3 py-2.5 font-semibold text-xs text-muted-foreground">Note</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {financing.map((f, i) => (
+                          <tr key={f.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                            <td className="px-3 py-2.5 font-medium text-foreground">{f.tipologia || '—'}</td>
+                            <td className="px-3 py-2.5 text-right text-muted-foreground">
+                              {f.importo_iniziale != null ? `€ ${f.importo_iniziale.toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}
+                            </td>
+                            <td className="px-3 py-2.5 text-right text-muted-foreground">
+                              {f.rata != null ? `€ ${f.rata.toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}
+                            </td>
+                            <td className="px-3 py-2.5 text-right text-muted-foreground">
+                              {f.durata_mesi != null ? `${f.durata_mesi} mesi` : '—'}
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-semibold text-foreground">
+                              {f.debito_residuo != null ? `€ ${f.debito_residuo.toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}
+                            </td>
+                            <td className="px-3 py-2.5 text-muted-foreground text-xs">{f.note || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="border-t border-border bg-blue-50">
+                        <tr>
+                          <td className="px-3 py-2 font-bold text-xs text-blue-700 uppercase">Totali</td>
+                          <td className="px-3 py-2 text-right text-xs text-blue-700">—</td>
+                          <td className="px-3 py-2 text-right font-bold text-blue-800">
+                            € {financing.reduce((s, f) => s + (f.rata ?? 0), 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3 py-2 text-right text-xs text-blue-700">—</td>
+                          <td className="px-3 py-2 text-right font-bold text-blue-800">
+                            € {financing.reduce((s, f) => s + (f.debito_residuo ?? 0), 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                 </div>
               )}
             </TabsContent>
