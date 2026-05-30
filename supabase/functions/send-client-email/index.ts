@@ -14,13 +14,19 @@ Deno.serve(async (req: Request) => {
     const { to, consultant_name, documents, link, code, practice_number } = await req.json();
 
     if (!to || !consultant_name || !link || !code) {
-      return new Response(JSON.stringify({ error: "Parametri mancanti" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ success: false, error: "Parametri mancanti" }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const docListHtml = (documents as string[]).map((d) => `<li style="margin:4px 0;">${d}</li>`).join("");
-    const docListText = (documents as string[]).map((d) => `  • ${d}`).join("\n");
+    if (!RESEND_API_KEY) {
+      return new Response(JSON.stringify({ success: false, error: "RESEND_API_KEY non configurata" }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const docListHtml = (documents as string[] ?? []).map((d) => `<li style="margin:4px 0;">${d}</li>`).join("");
+    const docListText = (documents as string[] ?? []).map((d) => `  • ${d}`).join("\n");
 
     const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:20px;">
@@ -47,20 +53,34 @@ Deno.serve(async (req: Request) => {
   </div>
 </body></html>`;
 
-    const textBody = `Richiesta Documenti\n\nGentile cliente,\n\nil consulente ${consultant_name} ha richiesto dei documenti per iniziare la valutazione della sua azienda.\n\nDocumenti richiesti:\n${docListText}\n\nPer caricare i documenti basta cliccare sul seguente link:\n${link}\n\ned inserire il seguente codice: ${code}\n\nPer qualsiasi problema non esiti a contattare il suo consulente.\n\nDistinti Saluti\n${consultant_name}`;
+    const textBody = `Richiesta Documenti\n\nGentile cliente,\n\nil consulente ${consultant_name} ha richiesto dei documenti.\n\nDocumenti richiesti:\n${docListText}\n\nLink: ${link}\nCodice: ${code}\n\nDistinti Saluti\n${consultant_name}`;
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject: "Richiesta documenti", html: htmlBody, text: textBody }),
+      body: JSON.stringify({
+        from: FROM_EMAIL,
+        to: [to],
+        subject: "Richiesta documenti per la vostra pratica",
+        html: htmlBody,
+        text: textBody,
+      }),
     });
 
     const resData = await res.json();
     if (!res.ok) {
-      return new Response(JSON.stringify({ error: resData }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // Resend ha restituito un errore — lo propaghiamo nel body ma con status 200
+      // così il client può leggere i dettagli
+      return new Response(JSON.stringify({ success: false, error: resData }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
-    return new Response(JSON.stringify({ success: true, id: resData.id }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: true, id: resData.id }), {
+      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: false, error: String(err) }), {
+      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });

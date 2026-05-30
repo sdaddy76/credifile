@@ -65,7 +65,7 @@ export default function PraticaDetailPage() {
     const link = `${window.location.origin}${window.location.pathname}#/accesso?p=${practice.id}`;
     const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
     const docNames = (docs ?? []).map((d: { nome: string }) => d.nome);
-    const { error: emailError } = await supabase.functions.invoke('send-client-email', {
+    const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
       body: {
         to: client.email,
         consultant_name: consultantName,
@@ -76,8 +76,9 @@ export default function PraticaDetailPage() {
       },
     });
     setSendingEmail(false);
-    if (emailError) {
-      toast.error('Errore invio email: ' + emailError.message);
+    if (emailError || emailData?.success === false) {
+      const msg = emailData?.error ? JSON.stringify(emailData.error) : emailError?.message ?? 'Errore sconosciuto';
+      toast.error('Errore invio email: ' + msg);
     } else {
       toast.success(`Email inviata a ${client.email}!`);
     }
@@ -135,7 +136,7 @@ export default function PraticaDetailPage() {
     const docNames = (docs ?? []).map((d: { nome: string }) => d.nome);
 
     // Invia email via edge function
-    const { error: emailError } = await supabase.functions.invoke('send-client-email', {
+    const { data: emailData2, error: emailError2 } = await supabase.functions.invoke('send-client-email', {
       body: {
         to: client.email,
         consultant_name: consultantName,
@@ -145,8 +146,9 @@ export default function PraticaDetailPage() {
         practice_number: practice.numero_pratica,
       },
     });
-    if (emailError) {
-      toast.warning('Codice generato ma email non inviata. Controlla la configurazione email.');
+    if (emailError2 || emailData2?.success === false) {
+      const msg = emailData2?.error ? JSON.stringify(emailData2.error) : emailError2?.message ?? 'Errore sconosciuto';
+      toast.warning('Codice generato ma email non inviata: ' + msg);
     } else {
       toast.success(`Email inviata a ${client.email}!`);
     }
