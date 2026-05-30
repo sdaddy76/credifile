@@ -38,13 +38,16 @@ export default function ClientiPage() {
 
   const handleSave = async () => {
     if (!form.ragione_sociale.trim() || !form.email.trim()) { toast.error('Ragione sociale ed email obbligatori'); return; }
+    if (!user?.id) { toast.error('Sessione non valida. Ricarica la pagina.'); return; }
     setSaving(true);
     const payload = { ...form, piva: form.piva || null, codice_fiscale: form.codice_fiscale || null, telefono: form.telefono || null, indirizzo: form.indirizzo || null };
     if (editing) {
-      await supabase.from('clients').update(payload).eq('id', editing.id);
+      const { error } = await supabase.from('clients').update(payload).eq('id', editing.id);
+      if (error) { toast.error('Errore aggiornamento: ' + error.message); setSaving(false); return; }
       toast.success('Cliente aggiornato');
     } else {
-      await supabase.from('clients').insert({ ...payload, created_by: user?.id });
+      const { error } = await supabase.from('clients').insert({ ...payload, created_by: user.id });
+      if (error) { toast.error('Errore creazione: ' + error.message); setSaving(false); return; }
       toast.success('Cliente creato');
     }
     setSaving(false); setShowForm(false); load();

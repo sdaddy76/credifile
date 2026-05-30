@@ -15,7 +15,7 @@ import { Separator } from '@/components/ui/separator';
 import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
-  FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle
+  FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -52,6 +52,36 @@ export default function PraticaDetailPage() {
   const [integrationName, setIntegrationName] = useState('');
   const [integrationDesc, setIntegrationDesc] = useState('');
   const [saving, setSaving] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+
+  // Invia email richiesta documenti (senza rigenerare il codice)
+  const sendDocumentRequest = async () => {
+    if (!practice || !accessCode) return;
+    const client = (practice as Practice & { clients?: { email: string } }).clients;
+    if (!client?.email) { toast.error('Il cliente non ha un email'); return; }
+    setSendingEmail(true);
+    const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
+    const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
+    const link = `${window.location.origin}${window.location.pathname}#/accesso?p=${practice.id}`;
+    const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
+    const docNames = (docs ?? []).map((d: { nome: string }) => d.nome);
+    const { error: emailError } = await supabase.functions.invoke('send-client-email', {
+      body: {
+        to: client.email,
+        consultant_name: consultantName,
+        documents: docNames,
+        link,
+        code: accessCode.codice,
+        practice_number: practice.numero_pratica,
+      },
+    });
+    setSendingEmail(false);
+    if (emailError) {
+      toast.error('Errore invio email: ' + emailError.message);
+    } else {
+      toast.success(`Email inviata a ${client.email}!`);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -324,6 +354,17 @@ export default function PraticaDetailPage() {
                       <RefreshCw className="w-3 h-3" /> Rigenera
                     </Button>
                   </div>
+                  <Button
+                    className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    size="sm"
+                    onClick={sendDocumentRequest}
+                    disabled={sendingEmail}
+                  >
+                    {sendingEmail
+                      ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Invio in corso…</>
+                      : <><Mail className="w-3.5 h-3.5" /> Invia Richiesta Documenti</>
+                    }
+                  </Button>
                 </>
               ) : (
                 <Button className="w-full gap-2" size="sm" onClick={generateAccessCode}>
