@@ -13,7 +13,7 @@ import type { Client } from '@/lib/types';
 const empty = { ragione_sociale: '', piva: '', codice_fiscale: '', email: '', telefono: '', indirizzo: '' };
 
 export default function ClientiPage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -23,11 +23,15 @@ export default function ClientiPage() {
   const [saving, setSaving] = useState(false);
 
   async function load() {
-    const { data } = await supabase.from('clients').select('*').order('ragione_sociale');
+    const { data, error } = await supabase.from('clients').select('*').order('ragione_sociale');
+    if (error) toast.error('Errore caricamento clienti: ' + error.message);
     setClients(data ?? []);
     setLoading(false);
   }
-  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!authLoading && user?.id) load();
+  }, [authLoading, user?.id]);
 
   const openCreate = () => { setEditing(null); setForm(empty); setShowForm(true); };
   const openEdit = (c: Client) => {
