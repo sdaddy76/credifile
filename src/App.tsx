@@ -17,6 +17,7 @@ import MieiAgentiPage from "@/pages/admin/MieiAgentiPage";
 import StatistichePage from "@/pages/admin/StatistichePage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
+import SetPasswordPage from "@/pages/SetPasswordPage";
 
 const queryClient = new QueryClient();
 
@@ -46,6 +47,8 @@ const App = () => (
 
           {/* Auth */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/set-password" element={<SetPasswordPage />} />
+          <Route path="/reset-password" element={<SetPasswordPage />} />
 
           {/* Admin protetto */}
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>

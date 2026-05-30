@@ -43,7 +43,7 @@ export default function LoginPage() {
     if (!recoveryEmail.trim()) { toast.error('Inserisci la tua email'); return; }
     setSendingRecovery(true);
     const { error } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
-      redirectTo: `${window.location.origin}${window.location.pathname}#/reset-password`,
+      redirectTo: `https://credifile-eosin.vercel.app`,
     });
     setSendingRecovery(false);
     if (error) {
