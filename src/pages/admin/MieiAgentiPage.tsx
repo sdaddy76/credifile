@@ -8,8 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UserPlus, Upload, Copy, Check, Phone, Mail, Pencil, Link2, Trash2, AlertTriangle, SendHorizonal } from 'lucide-react';
+import { UserPlus, Upload, Copy, Check, Phone, Mail, Pencil, Link2, Trash2, AlertTriangle, SendHorizonal, Download } from 'lucide-react';
 import { toast } from 'sonner';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 interface AgentProfile {
   id: string;
@@ -48,6 +50,80 @@ export default function MieiAgentiPage() {
   const [reassignTo, setReassignTo] = useState<string>('none');
   const [segreterie, setSegreterie] = useState<{ id: string; nome?: string; email: string }[]>([]);
   const [sendingResend, setSendingResend] = useState<string | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupProgress, setBackupProgress] = useState('');
+
+  // ── Backup ZIP ──
+  const handleBackupZip = async () => {
+    if (!user?.id) return;
+    setBackingUp(true);
+    setBackupProgress('Recupero pratiche...');
+    try {
+      // 1. Ottieni ID agenti
+      let agentIds: string[] = [];
+      if (isSuperAdmin) {
+        const { data } = await supabase.from('admin_profiles').select('id').eq('ruolo', 'agente');
+        agentIds = (data ?? []).map((r: { id: string }) => r.id);
+      } else {
+        const { data } = await supabase.from('segreteria_agent_assignments').select('agent_user_id').eq('segreteria_user_id', user.id);
+        agentIds = (data ?? []).map((r: { agent_user_id: string }) => r.agent_user_id);
+      }
+      if (!agentIds.length) { toast.info('Nessun agente trovato'); setBackingUp(false); return; }
+
+      // 2. Ottieni tutte le pratiche degli agenti
+      setBackupProgress('Recupero documenti...');
+      const { data: practices } = await supabase
+        .from('practices')
+        .select('id, numero_pratica, nome_richiedente, clients(ragione_sociale)')
+        .in('created_by', agentIds);
+      if (!practices?.length) { toast.info('Nessuna pratica trovata'); setBackingUp(false); return; }
+
+      const practiceIds = practices.map((p: { id: string }) => p.id);
+
+      // 3. Ottieni tutti i file caricati
+      const { data: files } = await supabase
+        .from('uploaded_files')
+        .select('id, nome_file, storage_path, practice_id')
+        .in('practice_id', practiceIds);
+      if (!files?.length) { toast.info('Nessun file trovato da scaricare'); setBackingUp(false); return; }
+
+      // 4. Costruisci mappa pratica → info
+      type Practice = { id: string; numero_pratica: string; nome_richiedente?: string; clients?: { ragione_sociale?: string } };
+      const practiceMap: Record<string, Practice> = {};
+      (practices as Practice[]).forEach(p => { practiceMap[p.id] = p; });
+
+      // 5. Crea ZIP
+      const zip = new JSZip();
+      let downloaded = 0;
+
+      for (const f of files as { id: string; nome_file: string; storage_path: string; practice_id: string }[]) {
+        setBackupProgress(`Download file ${downloaded + 1}/${files.length}...`);
+        try {
+          const { data: signedUrl } = await supabase.storage.from('practice-files').createSignedUrl(f.storage_path, 300);
+          if (!signedUrl?.signedUrl) continue;
+          const resp = await fetch(signedUrl.signedUrl);
+          if (!resp.ok) continue;
+          const blob = await resp.blob();
+          const pr = practiceMap[f.practice_id];
+          const folderName = pr ? `${pr.numero_pratica} - ${pr.clients?.ragione_sociale ?? pr.nome_richiedente ?? pr.id}`.replace(/[/\\?%*:|"<>]/g, '_') : f.practice_id;
+          zip.folder(folderName)!.file(f.nome_file, blob);
+          downloaded++;
+        } catch { /* skip file on error */ }
+      }
+
+      if (!downloaded) { toast.error('Nessun file scaricabile'); setBackingUp(false); setBackupProgress(''); return; }
+
+      setBackupProgress('Creazione ZIP...');
+      const today = new Date().toISOString().split('T')[0];
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      saveAs(zipBlob, `credifile_backup_${today}.zip`);
+      toast.success(`Backup completato: ${downloaded} file scaricati`);
+    } catch (e) {
+      toast.error('Errore backup: ' + String(e));
+    }
+    setBackingUp(false);
+    setBackupProgress('');
+  };
 
   const handleResendInvite = async (ag: AgentProfile) => {
     setSendingResend(ag.id);
@@ -153,14 +229,20 @@ export default function MieiAgentiPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold">Miei Agenti</h1>
           <p className="text-muted-foreground text-sm mt-1">Gestisci gli agenti, invia inviti e riassegna pratiche</p>
         </div>
-        <Button className="gap-2" onClick={() => { setShowInvite(true); setInviteLink(''); setInviteEmail(''); setInviteNome(''); }}>
-          <UserPlus className="w-4 h-4" /> Invita Agente
-        </Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" className="gap-2" onClick={handleBackupZip} disabled={backingUp}>
+            <Download className="w-4 h-4" />
+            {backingUp ? (backupProgress || 'Backup...') : 'Scarica Backup ZIP'}
+          </Button>
+          <Button className="gap-2" onClick={() => { setShowInvite(true); setInviteLink(''); setInviteEmail(''); setInviteNome(''); }}>
+            <UserPlus className="w-4 h-4" /> Invita Agente
+          </Button>
+        </div>
       </div>
 
       {loading ? (
