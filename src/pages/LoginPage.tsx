@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { FileText, Lock, Mail } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { FileText, Lock, Mail, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
@@ -13,7 +15,13 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Recupera password
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [sendingRecovery, setSendingRecovery] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,9 +32,81 @@ export default function LoginPage() {
       toast.error('Credenziali non valide. Riprova.');
     } else {
       toast.success('Accesso effettuato');
+      if (remember) localStorage.setItem('credifile_remember', email);
+      else localStorage.removeItem('credifile_remember');
       navigate('/admin/dashboard');
     }
   };
+
+  const handleRecovery = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recoveryEmail.trim()) { toast.error('Inserisci la tua email'); return; }
+    setSendingRecovery(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
+      redirectTo: `${window.location.origin}${window.location.pathname}#/reset-password`,
+    });
+    setSendingRecovery(false);
+    if (error) {
+      toast.error('Errore invio email: ' + error.message);
+    } else {
+      toast.success('Email di recupero inviata! Controlla la tua casella.');
+      setShowRecovery(false);
+    }
+  };
+
+  // Schermata recupero password
+  if (showRecovery) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted p-4">
+        <div className="w-full max-w-md">
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mb-4 shadow-lg">
+              <FileText className="w-7 h-7 text-primary-foreground" />
+            </div>
+            <h1 className="text-2xl font-bold text-foreground">Credifile</h1>
+            <p className="text-muted-foreground text-sm mt-1">Recupero Password</p>
+          </div>
+          <Card className="border-border shadow-md">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg">Recupera Password</CardTitle>
+              <CardDescription>Inserisci la tua email e ti invieremo un link per reimpostare la password</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleRecovery} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="recovery-email">Email</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      id="recovery-email"
+                      type="email"
+                      placeholder="la-tua@email.it"
+                      className="pl-9"
+                      value={recoveryEmail}
+                      onChange={e => setRecoveryEmail(e.target.value)}
+                      required
+                      autoComplete="email"
+                    />
+                  </div>
+                </div>
+                <Button type="submit" className="w-full" disabled={sendingRecovery}>
+                  {sendingRecovery ? (
+                    <span className="flex items-center gap-2">
+                      <span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+                      Invio in corso...
+                    </span>
+                  ) : 'Invia Email di Recupero'}
+                </Button>
+                <Button type="button" variant="ghost" className="w-full gap-2" onClick={() => setShowRecovery(false)}>
+                  <ArrowLeft className="w-4 h-4" /> Torna al Login
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted p-4">
@@ -36,13 +116,13 @@ export default function LoginPage() {
           <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mb-4 shadow-lg">
             <FileText className="w-7 h-7 text-primary-foreground" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">DocFlow</h1>
+          <h1 className="text-2xl font-bold text-foreground">Credifile</h1>
           <p className="text-muted-foreground text-sm mt-1">Gestione Pratiche Finanziarie</p>
         </div>
 
         <Card className="border-border shadow-md">
           <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Accesso Agente</CardTitle>
+            <CardTitle className="text-lg">Accesso</CardTitle>
             <CardDescription>Inserisci le tue credenziali per accedere al pannello</CardDescription>
           </CardHeader>
           <CardContent>
@@ -59,11 +139,21 @@ export default function LoginPage() {
                     value={email}
                     onChange={e => setEmail(e.target.value)}
                     required
+                    autoComplete="email"
                   />
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Password</Label>
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => { setRecoveryEmail(email); setShowRecovery(true); }}
+                  >
+                    Recupera password
+                  </button>
+                </div>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
@@ -74,8 +164,19 @@ export default function LoginPage() {
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                     required
+                    autoComplete="current-password"
                   />
                 </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="remember"
+                  checked={remember}
+                  onCheckedChange={v => setRemember(v === true)}
+                />
+                <Label htmlFor="remember" className="text-sm font-normal cursor-pointer">
+                  Ricorda login
+                </Label>
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? (
