@@ -62,7 +62,7 @@ export default function PraticaDetailPage() {
     setSendingEmail(true);
     const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
     const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
-    const link = `${window.location.origin}${window.location.pathname}#/accesso?p=${practice.id}`;
+    const link = `https://credifile-eosin.vercel.app/#/accesso?p=${practice.id}`;
     const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
     const docNames = (docs ?? []).map((d: { nome: string }) => d.nome);
     const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
@@ -129,7 +129,7 @@ export default function PraticaDetailPage() {
     const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
 
     // Costruisci link
-    const link = `${window.location.origin}${window.location.pathname}#/accesso?p=${practice.id}`;
+    const link = `https://credifile-eosin.vercel.app/#/accesso?p=${practice.id}`;
 
     // Lista documenti richiesti
     const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
@@ -173,7 +173,7 @@ export default function PraticaDetailPage() {
   };
 
   const copyLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}#/accesso?p=${id}`;
+    const url = `https://credifile-eosin.vercel.app/#/accesso?p=${id}`;
     navigator.clipboard.writeText(url);
     toast.success('Link copiato negli appunti');
   };
