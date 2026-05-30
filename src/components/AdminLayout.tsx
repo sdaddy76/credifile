@@ -5,31 +5,34 @@ import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
-  UserCircle, UsersRound
+  UserCircle, UsersRound, BarChart3
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const NAV_SUPER = [
-  { to: '/admin/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/pratiche',    icon: FolderOpen,      label: 'Pratiche' },
-  { to: '/admin/clienti',     icon: Users,           label: 'Clienti' },
-  { to: '/admin/banche',      icon: Building2,       label: 'Banche' },
-  { to: '/admin/documenti',   icon: FileText,        label: 'Documenti Standard' },
-  { to: '/admin/utenti',      icon: UserCog,         label: 'Utenti' },
-  { to: '/admin/miei-agenti', icon: UsersRound,      label: 'Miei Agenti' },
-  { to: '/admin/profilo',     icon: UserCircle,      label: 'Profilo' },
+  { to: '/admin/dashboard',    icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/admin/pratiche',     icon: FolderOpen,      label: 'Pratiche' },
+  { to: '/admin/clienti',      icon: Users,           label: 'Clienti' },
+  { to: '/admin/banche',       icon: Building2,       label: 'Banche' },
+  { to: '/admin/documenti',    icon: FileText,        label: 'Documenti Standard' },
+  { to: '/admin/statistiche',  icon: BarChart3,       label: 'Statistiche' },
+  { to: '/admin/utenti',       icon: UserCog,         label: 'Utenti' },
+  { to: '/admin/miei-agenti',  icon: UsersRound,      label: 'Miei Agenti' },
+  { to: '/admin/profilo',      icon: UserCircle,      label: 'Profilo' },
 ];
 
 const NAV_SEGRETERIA = [
-  { to: '/admin/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/pratiche',    icon: FolderOpen,      label: 'Pratiche' },
-  { to: '/admin/clienti',     icon: Users,           label: 'Clienti' },
-  { to: '/admin/banche',      icon: Building2,       label: 'Banche' },
-  { to: '/admin/miei-agenti', icon: UsersRound,      label: 'Miei Agenti' },
-  { to: '/admin/profilo',     icon: UserCircle,      label: 'Profilo' },
+  { to: '/admin/dashboard',    icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/admin/pratiche',     icon: FolderOpen,      label: 'Pratiche' },
+  { to: '/admin/clienti',      icon: Users,           label: 'Clienti' },
+  { to: '/admin/banche',       icon: Building2,       label: 'Banche' },
+  { to: '/admin/statistiche',  icon: BarChart3,       label: 'Statistiche' },
+  { to: '/admin/miei-agenti',  icon: UsersRound,      label: 'Miei Agenti' },
+  { to: '/admin/profilo',      icon: UserCircle,      label: 'Profilo' },
 ];
+
 
 const NAV_AGENTE = [
   { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { User, Phone, Mail, Upload, Trash2, Save } from 'lucide-react';
+import { User, Phone, Mail, Upload, Trash2, Save, Lock, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ProfiloPage() {
@@ -18,6 +18,24 @@ export default function ProfiloPage() {
   const [logoUrl, setLogoUrl] = useState('');
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Cambio password
+  const [nuovaPassword, setNuovaPassword] = useState('');
+  const [confermaPwd, setConfermaPwd] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
+  const [savingPwd, setSavingPwd] = useState(false);
+
+  const handleChangePassword = async () => {
+    if (!nuovaPassword) { toast.error('Inserisci la nuova password'); return; }
+    if (nuovaPassword.length < 6) { toast.error('La password deve avere almeno 6 caratteri'); return; }
+    if (nuovaPassword !== confermaPwd) { toast.error('Le password non coincidono'); return; }
+    setSavingPwd(true);
+    const { error } = await supabase.auth.updateUser({ password: nuovaPassword });
+    setSavingPwd(false);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    toast.success('Password aggiornata con successo');
+    setNuovaPassword(''); setConfermaPwd('');
+  };
 
   useEffect(() => {
     if (!user?.id) return;
@@ -111,6 +129,28 @@ export default function ProfiloPage() {
           </div>
           <Button className="w-full gap-2" onClick={handleSave} disabled={saving}>
             <Save className="w-4 h-4" /> {saving ? 'Salvataggio...' : 'Salva modifiche'}
+          </Button>
+        </CardContent>
+      </Card>
+      {/* Cambio password */}
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Lock className="w-3.5 h-3.5" />Cambia Password</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Nuova Password</Label>
+            <div className="relative">
+              <Input type={showPwd ? 'text' : 'password'} placeholder="Minimo 6 caratteri" value={nuovaPassword} onChange={e => setNuovaPassword(e.target.value)} className="pr-10" autoComplete="new-password" />
+              <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => setShowPwd(!showPwd)}>
+                {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Conferma Password</Label>
+            <Input type={showPwd ? 'text' : 'password'} placeholder="Ripeti la nuova password" value={confermaPwd} onChange={e => setConfermaPwd(e.target.value)} autoComplete="new-password" />
+          </div>
+          <Button className="w-full gap-2" onClick={handleChangePassword} disabled={savingPwd}>
+            <Lock className="w-4 h-4" /> {savingPwd ? 'Aggiornamento...' : 'Aggiorna Password'}
           </Button>
         </CardContent>
       </Card>

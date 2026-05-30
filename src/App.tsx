@@ -14,6 +14,7 @@ import DocumentiTemplatePage from "@/pages/admin/DocumentiTemplatePage";
 import UtentiPage from "@/pages/admin/UtentiPage";
 import ProfiloPage from "@/pages/admin/ProfiloPage";
 import MieiAgentiPage from "@/pages/admin/MieiAgentiPage";
+import StatistichePage from "@/pages/admin/StatistichePage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 
@@ -57,6 +58,7 @@ const App = () => (
             <Route path="documenti" element={<DocumentiTemplatePage />} />
             <Route path="utenti" element={<UtentiPage />} />
             <Route path="profilo" element={<ProfiloPage />} />
+            <Route path="statistiche" element={<StatistichePage />} />
             <Route path="miei-agenti" element={<MieiAgentiPage />} />
           </Route>
 
