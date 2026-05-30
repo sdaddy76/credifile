@@ -26,15 +26,16 @@ export default function PratichePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    client_id: '', bank_id: '', importo_richiesto: '', motivazione: '', note_admin: ''
+    client_id: '', bank_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: ''
   });
+  const [agents, setAgents] = useState<{ id: string; nome?: string; email: string }[]>([]);
 
   async function load() {
-    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)');
+    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)');
 
     if (isAgente && user?.id) {
-      // Agente: vede solo le proprie pratiche
-      query = query.eq('created_by', user.id);
+      // Agente: vede le proprie E quelle assegnate a lui
+      query = query.or(`created_by.eq.${user.id},assigned_to.eq.${user.id}`);
     } else if (isSegreteria && user?.id) {
       // Segreteria: vede le pratiche degli agenti assegnati
       const { data: assignments } = await supabase
@@ -62,6 +63,9 @@ export default function PratichePage() {
     load();
     supabase.from('clients').select('*').order('ragione_sociale').then(r => setClients(r.data ?? []));
     supabase.from('banks').select('*').eq('attiva', true).order('nome').then(r => setBanks(r.data ?? []));
+    // Carica agenti (per segreteria/superadmin che assegnano pratiche)
+    supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome')
+      .then(r => setAgents(r.data ?? []));
   }, []);
 
   const filtered = practices.filter(p => {
@@ -101,6 +105,7 @@ export default function PratichePage() {
       note_admin: form.note_admin || null,
       status: 'bozza',
       created_by: user?.id ?? null,
+      assigned_to: form.assigned_to || null,
     }).select().single();
 
     if (error) { toast.error('Errore nella creazione'); setSaving(false); return; }
@@ -148,7 +153,7 @@ export default function PratichePage() {
     toast.success(`Pratica ${numero_pratica} creata con successo`);
     setSaving(false);
     setShowCreate(false);
-    setForm({ client_id: '', bank_id: '', importo_richiesto: '', motivazione: '', note_admin: '' });
+    setForm({ client_id: '', bank_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: '' });
     load();
     navigate(`/admin/pratiche/${practice.id}`);
   };
@@ -201,6 +206,7 @@ export default function PratichePage() {
           {filtered.map(p => {
             const client = (p as Practice & { clients?: { ragione_sociale: string; email: string } }).clients;
             const bank = (p as Practice & { banks?: { nome: string } }).banks;
+            const assignedAgent = (p as Practice & { assigned_agent?: { id: string; nome?: string; email: string } }).assigned_agent;
             return (
               <Card key={p.id} className="border-border hover:border-primary/30 transition-colors cursor-pointer" onClick={() => navigate(`/admin/pratiche/${p.id}`)}>
                 <CardContent className="py-3 px-4">
@@ -212,6 +218,7 @@ export default function PratichePage() {
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
                         {bank && <span>🏦 {bank.nome}</span>}
+                        {assignedAgent && !isAgente && <span>👤 {assignedAgent.nome || assignedAgent.email}</span>}
                         {p.importo_richiesto && <span className="flex items-center gap-1"><Euro className="w-3 h-3" />{p.importo_richiesto.toLocaleString('it-IT')}</span>}
                         <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(p.created_at).toLocaleDateString('it-IT')}</span>
                       </div>
@@ -273,6 +280,21 @@ export default function PratichePage() {
               <Label>Note interne</Label>
               <Textarea placeholder="Note per uso interno..." rows={2} value={form.note_admin} onChange={e => setForm(f => ({ ...f, note_admin: e.target.value }))} />
             </div>
+            {!isAgente && agents.length > 0 && (
+              <div className="space-y-2">
+                <Label>Assegna ad Agente</Label>
+                <Select value={form.assigned_to} onValueChange={v => setForm(f => ({ ...f, assigned_to: v === 'nessuno' ? '' : v }))}>
+                  <SelectTrigger><SelectValue placeholder="Seleziona agente (opzionale)..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="nessuno">— Nessuna assegnazione —</SelectItem>
+                    {agents.map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">L'agente potrà vedere e gestire questa pratica.</p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>Annulla</Button>

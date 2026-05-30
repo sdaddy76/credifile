@@ -37,6 +37,9 @@ export default function PraticaDetailPage() {
   const [accessCode, setAccessCode] = useState<PracticeAccessCode | null>(null);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
+  const [agentsForReassign, setAgentsForReassign] = useState<{id:string;nome?:string;email:string}[]>([]);
+  const [showReassign, setShowReassign] = useState(false);
+  const [reassignTo, setReassignTo] = useState('');
   const [financing, setFinancing] = useState<{
     id: string; tipologia: string; banca_finanziaria?: string; importo_iniziale: number | null;
     rata: number | null; durata_mesi: number | null; debito_residuo: number | null; note: string | null;
@@ -97,7 +100,7 @@ export default function PraticaDetailPage() {
   const load = useCallback(async () => {
     if (!id) return;
     const [p, docs, l, ac] = await Promise.all([
-      supabase.from('practices').select('*, clients(*), banks(*)').eq('id', id).single(),
+      supabase.from('practices').select('*, clients(*), banks(*), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)').eq('id', id).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', id).order('created_at'),
       supabase.from('practice_status_log').select('*').eq('practice_id', id).order('created_at', { ascending: false }),
       supabase.from('practice_access_codes').select('*').eq('practice_id', id).maybeSingle(),
@@ -115,6 +118,7 @@ export default function PraticaDetailPage() {
   useEffect(() => {
     load();
     supabase.from('banks').select('*').eq('attiva', true).then(r => setBanks(r.data ?? []));
+    supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome').then(r => setAgentsForReassign(r.data ?? []));
   }, [load]);
 
   // Genera codice accesso cliente + invia email
@@ -280,6 +284,7 @@ export default function PraticaDetailPage() {
 
   const client = (practice as Practice & { clients?: { ragione_sociale: string; email: string; piva?: string; telefono?: string } }).clients;
   const bank = (practice as Practice & { banks?: { nome: string } }).banks;
+  const assignedAgent = (practice as Practice & { assigned_agent?: {id:string;nome?:string;email:string} }).assigned_agent;
   const docsStandard = documents.filter(d => d.tipo === 'standard');
   const docsBanca = documents.filter(d => d.tipo === 'banca');
   const docsIntegrazione = documents.filter(d => d.tipo === 'integrazione');
@@ -300,12 +305,17 @@ export default function PraticaDetailPage() {
           </div>
           <p className="text-sm text-muted-foreground mt-1">
             Creata il {new Date(practice.created_at).toLocaleDateString('it-IT')}
-            {bank && ` · ${bank.nome}`}
+            {bank && ` · ${bank.nome}`}{assignedAgent && ` · 👤 ${assignedAgent.nome || assignedAgent.email}`}
           </p>
         </div>
         {canApprove && (
           <Button variant="outline" size="sm" onClick={() => { setNewStatus(practice.status); setShowStatusChange(true); }}>
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
+          </Button>
+        )}
+        {!isAgente && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setReassignTo(practice.assigned_to ?? ''); setShowReassign(true); }}>
+            👤 Riassegna Agente
           </Button>
         )}
         {canEdit && (
@@ -421,7 +431,12 @@ export default function PraticaDetailPage() {
               {/* Actions */}
               {(canEdit || canApprove) && (
               <div className="flex gap-2 flex-wrap">
-                {canEdit && (
+                {!isAgente && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setReassignTo(practice.assigned_to ?? ''); setShowReassign(true); }}>
+            👤 Riassegna Agente
+          </Button>
+        )}
+        {canEdit && (
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddDoc(true)}>
                   <Plus className="w-3.5 h-3.5" /> Aggiungi Documento
                 </Button>
@@ -481,7 +496,12 @@ export default function PraticaDetailPage() {
                                   </Button>
                                 </div>
                               )}
-                              {canEdit && (
+                              {!isAgente && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setReassignTo(practice.assigned_to ?? ''); setShowReassign(true); }}>
+            👤 Riassegna Agente
+          </Button>
+        )}
+        {canEdit && (
                                 <div className="shrink-0">
                                   <input type="file" className="hidden"
                                     ref={el => { adminFileRefs.current[doc.id] = el; }}
@@ -605,6 +625,36 @@ export default function PraticaDetailPage() {
           </Tabs>
         </div>
       </div>
+
+      {/* Dialog riassegna agente */}
+      <Dialog open={showReassign} onOpenChange={setShowReassign}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>👤 Riassegna Pratica</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">Seleziona l'agente a cui assegnare questa pratica.</p>
+            <Select value={reassignTo} onValueChange={setReassignTo}>
+              <SelectTrigger><SelectValue placeholder="Seleziona agente..." /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="nessuno">— Rimuovi assegnazione —</SelectItem>
+                {agentsForReassign.map(a => (
+                  <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowReassign(false)}>Annulla</Button>
+            <Button onClick={async () => {
+              const val = reassignTo === 'nessuno' ? null : (reassignTo || null);
+              const { error } = await supabase.from('practices').update({ assigned_to: val }).eq('id', practice!.id);
+              if (error) { toast.error('Errore: ' + error.message); return; }
+              toast.success('Pratica riassegnata');
+              setShowReassign(false);
+              load();
+            }}>Salva</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog cambio stato */}
       <Dialog open={showStatusChange} onOpenChange={setShowStatusChange}>
