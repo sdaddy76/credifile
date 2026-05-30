@@ -39,6 +39,7 @@ export default function ClientPortalPage() {
   interface Financing {
     id?: string;
     tipologia: string;
+    banca_finanziaria: string;
     importo_iniziale: string;
     rata: string;
     durata_mesi: string;
@@ -66,6 +67,7 @@ export default function ClientPortalPage() {
     setFinancing((data ?? []).map(r => ({
       id: r.id,
       tipologia: r.tipologia ?? '',
+      banca_finanziaria: r.banca_finanziaria ?? '',
       importo_iniziale: r.importo_iniziale?.toString() ?? '',
       rata: r.rata?.toString() ?? '',
       durata_mesi: r.durata_mesi?.toString() ?? '',
@@ -80,7 +82,7 @@ export default function ClientPortalPage() {
 
   const addFinRow = () => {
     setFinancing(prev => [...prev, {
-      tipologia: '', importo_iniziale: '', rata: '', durata_mesi: '', debito_residuo: '', note: '', _new: true, _dirty: true,
+      tipologia: '', banca_finanziaria: '', importo_iniziale: '', rata: '', durata_mesi: '', debito_residuo: '', note: '', _new: true, _dirty: true,
     }]);
   };
 
@@ -103,6 +105,7 @@ export default function ClientPortalPage() {
         const payload = {
           practice_id: practiceId,
           tipologia: r.tipologia,
+          banca_finanziaria: r.banca_finanziaria || null,
           importo_iniziale: r.importo_iniziale ? parseFloat(r.importo_iniziale) : null,
           rata: r.rata ? parseFloat(r.rata) : null,
           durata_mesi: r.durata_mesi ? parseInt(r.durata_mesi) : null,
@@ -486,6 +489,17 @@ export default function ClientPortalPage() {
                           {TIPOLOGIE.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    {/* Banca / Finanziaria */}
+                    <div>
+                      <label className="text-xs text-muted-foreground font-medium mb-1 block">Banca / Finanziaria *</label>
+                      <Input
+                        placeholder="es. Banca Intesa, Findomestic, UniCredit..."
+                        className="h-9 text-sm"
+                        value={row.banca_finanziaria}
+                        onChange={e => updateFinRow(idx, 'banca_finanziaria', e.target.value)}
+                      />
                     </div>
 
                     {/* Importo iniziale + Rata */}

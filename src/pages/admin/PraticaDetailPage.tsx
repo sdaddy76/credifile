@@ -38,7 +38,7 @@ export default function PraticaDetailPage() {
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
   const [financing, setFinancing] = useState<{
-    id: string; tipologia: string; importo_iniziale: number | null;
+    id: string; tipologia: string; banca_finanziaria?: string; importo_iniziale: number | null;
     rata: number | null; durata_mesi: number | null; debito_residuo: number | null; note: string | null;
   }[]>([]);
 
@@ -528,6 +528,7 @@ export default function PraticaDetailPage() {
                       <thead className="bg-muted/50">
                         <tr>
                           <th className="text-left px-3 py-2.5 font-semibold text-xs text-muted-foreground">Tipologia</th>
+                          <th className="text-left px-3 py-2.5 font-semibold text-xs text-muted-foreground">Banca / Finanziaria</th>
                           <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Importo iniziale</th>
                           <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Rata / mese</th>
                           <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Durata</th>
@@ -539,6 +540,7 @@ export default function PraticaDetailPage() {
                         {financing.map((f, i) => (
                           <tr key={f.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
                             <td className="px-3 py-2.5 font-medium text-foreground">{f.tipologia || '—'}</td>
+                            <td className="px-3 py-2.5 text-muted-foreground">{f.banca_finanziaria || '—'}</td>
                             <td className="px-3 py-2.5 text-right text-muted-foreground">
                               {f.importo_iniziale != null ? `€ ${f.importo_iniziale.toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}
                             </td>
