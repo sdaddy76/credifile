@@ -610,7 +610,7 @@ export default function PraticaDetailPage() {
                               {canApprove && (
                                 <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
                                   onClick={async () => {
-                                    if (!confirm(\`Rimuovere \${pb.banks?.nome} dalla pratica?\`)) return;
+                                    if (!confirm(`Rimuovere ${pb.banks?.nome} dalla pratica?`)) return;
                                     await supabase.from('practice_banks').delete().eq('id', pb.id);
                                     toast.success('Banca rimossa'); load();
                                   }}>
@@ -650,7 +650,7 @@ export default function PraticaDetailPage() {
                             });
                             setSendingBankId(null);
                             if (error || !data?.success) { toast.error('Errore: ' + (error?.message ?? data?.error)); return; }
-                            toast.success(\`Pratica inviata a \${data.sent_to}!\`);
+                            toast.success(`Pratica inviata a ${data.sent_to}!`);
                             setShowSendBankDialog(null); load();
                           }}>
                           {sendingBankId === pb.id ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>Invio...</> : '✉️ Invia'}
