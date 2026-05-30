@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,6 +13,7 @@ import type { Client } from '@/lib/types';
 const empty = { ragione_sociale: '', piva: '', codice_fiscale: '', email: '', telefono: '', indirizzo: '' };
 
 export default function ClientiPage() {
+  const { user } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -42,7 +44,7 @@ export default function ClientiPage() {
       await supabase.from('clients').update(payload).eq('id', editing.id);
       toast.success('Cliente aggiornato');
     } else {
-      await supabase.from('clients').insert(payload);
+      await supabase.from('clients').insert({ ...payload, created_by: user?.id });
       toast.success('Cliente creato');
     }
     setSaving(false); setShowForm(false); load();
