@@ -15,7 +15,7 @@ import { Separator } from '@/components/ui/separator';
 import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
-  FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail
+  FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -306,6 +306,22 @@ export default function PraticaDetailPage() {
         {canApprove && (
           <Button variant="outline" size="sm" onClick={() => { setNewStatus(practice.status); setShowStatusChange(true); }}>
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
+          </Button>
+        )}
+        {canEdit && (
+          <Button
+            variant="ghost" size="sm"
+            className="text-destructive hover:bg-destructive/10 shrink-0"
+            onClick={async () => {
+              if (!confirm(`Eliminare la pratica "${practice.numero_pratica}"?\nSaranno eliminati tutti i documenti associati. L'operazione è irreversibile.`)) return;
+              const { error } = await supabase.from('practices').delete().eq('id', practice.id);
+              if (error) { toast.error('Errore eliminazione: ' + error.message); return; }
+              toast.success('Pratica eliminata');
+              navigate('/admin/pratiche');
+            }}
+            title="Elimina pratica"
+          >
+            <Trash2 className="w-4 h-4" />
           </Button>
         )}
       </div>

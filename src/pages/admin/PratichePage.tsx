@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Search, FolderOpen, Eye, Calendar, Euro } from 'lucide-react';
+import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -76,6 +76,15 @@ export default function PratichePage() {
     const y = new Date().getFullYear();
     const n = String(Math.floor(Math.random() * 9000) + 1000);
     return `PRA-${y}-${n}`;
+  };
+
+  const handleDeletePractice = async (e: React.MouseEvent, id: string, numero: string) => {
+    e.stopPropagation();
+    if (!confirm(`Eliminare la pratica "${numero}"? L'operazione è irreversibile.`)) return;
+    const { error } = await supabase.from('practices').delete().eq('id', id);
+    if (error) { toast.error('Errore eliminazione: ' + error.message); return; }
+    toast.success(`Pratica ${numero} eliminata`);
+    load();
   };
 
   const handleCreate = async () => {
@@ -212,6 +221,16 @@ export default function PratichePage() {
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                         <Eye className="w-4 h-4" />
                       </Button>
+                      {canEdit && (
+                        <Button
+                          variant="ghost" size="sm"
+                          className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
+                          onClick={e => handleDeletePractice(e, p.id, p.numero_pratica)}
+                          title="Elimina pratica"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardContent>
