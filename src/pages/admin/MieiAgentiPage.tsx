@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UserPlus, Upload, Copy, Check, Phone, Mail, Pencil, Link2, Trash2, AlertTriangle } from 'lucide-react';
+import { UserPlus, Upload, Copy, Check, Phone, Mail, Pencil, Link2, Trash2, AlertTriangle, SendHorizonal } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface AgentProfile {
@@ -47,6 +47,17 @@ export default function MieiAgentiPage() {
   const [deleting, setDeleting] = useState(false);
   const [reassignTo, setReassignTo] = useState<string>('none');
   const [segreterie, setSegreterie] = useState<{ id: string; nome?: string; email: string }[]>([]);
+  const [sendingResend, setSendingResend] = useState<string | null>(null);
+
+  const handleResendInvite = async (ag: AgentProfile) => {
+    setSendingResend(ag.id);
+    const { data, error } = await supabase.functions.invoke('invite-agent', {
+      body: { email: ag.email, nome: ag.nome || null, segreteria_user_id: !isSuperAdmin ? user?.id : null, resend: true },
+    });
+    if (error || !data?.success) toast.error('Errore: ' + (error?.message ?? data?.error));
+    else toast.success(`Link reinviato a ${ag.email}`);
+    setSendingResend(null);
+  };
 
   const loadAgents = useCallback(async () => {
     if (!user?.id) return;
@@ -178,6 +189,9 @@ export default function MieiAgentiPage() {
                     {ag.telefono && <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3 shrink-0" />{ag.telefono}</p>}
                   </div>
                   <div className="flex gap-1 shrink-0">
+                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-primary hover:bg-primary/10" onClick={() => handleResendInvite(ag)} disabled={sendingResend === ag.id} title="Reinvia invito">
+                      {sendingResend === ag.id ? <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" /> : <SendHorizonal className="w-3.5 h-3.5" />}
+                    </Button>
                     <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => openEdit(ag)} title="Modifica">
                       <Pencil className="w-3.5 h-3.5" />
                     </Button>
