@@ -47,6 +47,9 @@ export default function PraticaDetailPage() {
 
   // Dialogs
   const [showStatusChange, setShowStatusChange] = useState(false);
+  const [showSendToBank, setShowSendToBank] = useState(false);
+  const [sendNote, setSendNote] = useState('');
+  const [sendingToBank, setSendingToBank] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [showRejectDoc, setShowRejectDoc] = useState<string | null>(null);
   const [showIntegration, setShowIntegration] = useState(false);
@@ -308,6 +311,11 @@ export default function PraticaDetailPage() {
             {bank && ` · ${bank.nome}`}{assignedAgent && ` · 👤 ${assignedAgent.nome || assignedAgent.email}`}
           </p>
         </div>
+        {canApprove && practice.bank_id && (
+          <Button variant="outline" size="sm" className="gap-1.5 bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100" onClick={() => { setSendNote(''); setShowSendToBank(true); }}>
+            ✉️ Invia alla Banca
+          </Button>
+        )}
         {canApprove && (
           <Button variant="outline" size="sm" onClick={() => { setNewStatus(practice.status); setShowStatusChange(true); }}>
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
@@ -625,6 +633,62 @@ export default function PraticaDetailPage() {
           </Tabs>
         </div>
       </div>
+
+      {/* Dialog invia alla banca */}
+      <Dialog open={showSendToBank} onOpenChange={setShowSendToBank}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>✉️ Invia Pratica alla Banca</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5 text-sm text-blue-800">
+              <p className="font-semibold mb-0.5">Riepilogo invio:</p>
+              <p>Pratica: <strong>{practice?.numero_pratica}</strong></p>
+              <p>Cliente: <strong>{(practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale}</strong></p>
+              <p>Banca: <strong>{(practice as Practice & { banks?: { nome: string; email_invio_banca?: string; email?: string } }).banks?.nome}</strong></p>
+              <p className="text-xs text-blue-600 mt-1">
+                Destinatario: {(practice as Practice & { banks?: { email_invio_banca?: string; email?: string } }).banks?.email_invio_banca || (practice as Practice & { banks?: { email?: string } }).banks?.email || 'Email banca non configurata'}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Note per la banca (opzionale)</Label>
+              <Textarea
+                placeholder="es. Allego documentazione completa per la pratica di mutuo. Rimango disponibile per eventuali integrazioni..."
+                rows={4}
+                value={sendNote}
+                onChange={e => setSendNote(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Verranno inviati link firmati (7 giorni) a tutti i documenti caricati. Lo stato della pratica sarà aggiornato a "Inviata Banca".
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSendToBank(false)}>Annulla</Button>
+            <Button
+              className="gap-2 bg-blue-600 hover:bg-blue-700"
+              disabled={sendingToBank}
+              onClick={async () => {
+                if (!practice) return;
+                setSendingToBank(true);
+                const { data, error } = await supabase.functions.invoke('send-to-bank', {
+                  body: { practice_id: practice.id, note: sendNote || null }
+                });
+                setSendingToBank(false);
+                if (error || !data?.success) {
+                  toast.error('Errore: ' + (error?.message ?? data?.error ?? 'Errore sconosciuto'));
+                  return;
+                }
+                toast.success(`Pratica inviata a ${data.sent_to}!`);
+                setShowSendToBank(false);
+                load();
+              }}
+            >
+              {sendingToBank ? (
+                <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Invio...</>
+              ) : '✉️ Invia alla Banca'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog riassegna agente */}
       <Dialog open={showReassign} onOpenChange={setShowReassign}>
