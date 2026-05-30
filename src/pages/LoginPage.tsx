@@ -42,12 +42,12 @@ export default function LoginPage() {
     e.preventDefault();
     if (!recoveryEmail.trim()) { toast.error('Inserisci la tua email'); return; }
     setSendingRecovery(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
-      redirectTo: `https://credifile-eosin.vercel.app`,
+    const { data, error } = await supabase.functions.invoke('reset-password', {
+      body: { email: recoveryEmail.trim().toLowerCase() },
     });
     setSendingRecovery(false);
-    if (error) {
-      toast.error('Errore invio email: ' + error.message);
+    if (error || !data?.success) {
+      toast.error('Errore invio email: ' + (error?.message ?? data?.error ?? 'Errore sconosciuto'));
     } else {
       toast.success('Email di recupero inviata! Controlla la tua casella.');
       setShowRecovery(false);
