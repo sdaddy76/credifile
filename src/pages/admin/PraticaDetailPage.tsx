@@ -40,6 +40,11 @@ export default function PraticaDetailPage() {
   const [agentsForReassign, setAgentsForReassign] = useState<{id:string;nome?:string;email:string}[]>([]);
   const [showReassign, setShowReassign] = useState(false);
   const [reassignTo, setReassignTo] = useState('');
+  const [practiceBanks, setPracticeBanks] = useState<{id:string;bank_id:string;status:string;note?:string;data_invio?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
+  const [addingBank, setAddingBank] = useState('');
+  const [sendingBankId, setSendingBankId] = useState<string|null>(null);
+  const [bankNote, setBankNote] = useState('');
+  const [showSendBankDialog, setShowSendBankDialog] = useState<string|null>(null);
   const [financing, setFinancing] = useState<{
     id: string; tipologia: string; banca_finanziaria?: string; importo_iniziale: number | null;
     rata: number | null; durata_mesi: number | null; debito_residuo: number | null; note: string | null;
@@ -47,10 +52,7 @@ export default function PraticaDetailPage() {
 
   // Dialogs
   const [showStatusChange, setShowStatusChange] = useState(false);
-  const [showSendToBank, setShowSendToBank] = useState(false);
-  const [sendNote, setSendNote] = useState('');
-  const [sendingToBank, setSendingToBank] = useState(false);
-  const [showAddDoc, setShowAddDoc] = useState(false);
+    const [showAddDoc, setShowAddDoc] = useState(false);
   const [showRejectDoc, setShowRejectDoc] = useState<string | null>(null);
   const [showIntegration, setShowIntegration] = useState(false);
 
@@ -115,6 +117,8 @@ export default function PraticaDetailPage() {
     // Carica finanziamenti
     const { data: fin } = await supabase.from('client_financing').select('*').eq('practice_id', id).order('ordinamento');
     setFinancing(fin ?? []);
+    const { data: pb } = await supabase.from('practice_banks').select('*, banks(nome,email,email_invio_banca)').eq('practice_id', id).order('created_at');
+    setPracticeBanks(pb ?? []);
     setLoading(false);
   }, [id]);
 
@@ -430,6 +434,7 @@ export default function PraticaDetailPage() {
           <Tabs defaultValue="documenti">
             <TabsList>
               <TabsTrigger value="documenti">Documenti ({documents.length})</TabsTrigger>
+              <TabsTrigger value="banche">Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
               <TabsTrigger value="finanziamenti">Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
               <TabsTrigger value="scheda">Scheda Rischio</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
@@ -544,6 +549,119 @@ export default function PraticaDetailPage() {
               )}
             </TabsContent>
 
+            <TabsContent value="banche" className="mt-3 space-y-3">
+              {/* Assegna nuova banca — solo canApprove */}
+              {canApprove && (
+                <div className="flex gap-2">
+                  <Select value={addingBank} onValueChange={setAddingBank}>
+                    <SelectTrigger className="flex-1"><SelectValue placeholder="Seleziona banca da assegnare..." /></SelectTrigger>
+                    <SelectContent>
+                      {banks.filter(b => !practiceBanks.some(pb => pb.bank_id === b.id)).map(b => (
+                        <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button disabled={!addingBank} onClick={async () => {
+                    if (!addingBank || !id) return;
+                    // Inserisci in practice_banks
+                    const { error } = await supabase.from('practice_banks').insert({ practice_id: id, bank_id: addingBank, status: 'assegnata' });
+                    if (error) { toast.error('Errore: ' + error.message); return; }
+                    // Crea documenti specifici banca
+                    const { data: bankReqs } = await supabase.from('bank_document_requirements').select('*').eq('bank_id', addingBank);
+                    if (bankReqs && bankReqs.length > 0) {
+                      await supabase.from('practice_documents').insert(bankReqs.map(r => ({
+                        practice_id: id, bank_requirement_id: r.id, nome: r.nome,
+                        descrizione: r.descrizione, tipo: 'banca', obbligatorio: r.obbligatorio, status: 'richiesto',
+                      })));
+                    }
+                    toast.success('Banca assegnata' + (bankReqs?.length ? ` — ${bankReqs.length} documenti aggiunti` : ''));
+                    setAddingBank(''); load();
+                  }}>Assegna</Button>
+                </div>
+              )}
+
+              {practiceBanks.length === 0 ? (
+                <Card><CardContent className="py-10 text-center text-muted-foreground text-sm">
+                  Nessuna banca assegnata. La segreteria assegna le banche dopo la raccolta dei documenti standard.
+                </CardContent></Card>
+              ) : (
+                <div className="space-y-3">
+                  {practiceBanks.map(pb => {
+                    const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
+                    return (
+                      <Card key={pb.id} className="border-border">
+                        <CardContent className="py-3 px-4">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div>
+                              <p className="font-semibold text-foreground">{pb.banks?.nome}</p>
+                              <p className="text-xs text-muted-foreground">{bankEmail || 'Email non configurata'}</p>
+                              {pb.data_invio && <p className="text-xs text-green-600 mt-0.5">✅ Inviata il {new Date(pb.data_invio).toLocaleDateString('it-IT')}</p>}
+                            </div>
+                            <div className="flex gap-2 items-center">
+                              <span className={`text-xs px-2 py-1 rounded-full font-medium ${pb.status === 'inviata' ? 'bg-blue-100 text-blue-700' : pb.status === 'deliberata' ? 'bg-green-100 text-green-700' : pb.status === 'rifiutata' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {pb.status === 'assegnata' ? '🕐 Assegnata' : pb.status === 'inviata' ? '📤 Inviata' : pb.status === 'deliberata' ? '✅ Deliberata' : pb.status === 'rifiutata' ? '❌ Rifiutata' : pb.status}
+                              </span>
+                              {canApprove && bankEmail && (
+                                <Button size="sm" variant="outline" className="gap-1.5 text-blue-700 border-blue-300 hover:bg-blue-50"
+                                  onClick={() => { setBankNote(''); setShowSendBankDialog(pb.id); }}>
+                                  ✉️ Invia
+                                </Button>
+                              )}
+                              {canApprove && (
+                                <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
+                                  onClick={async () => {
+                                    if (!confirm(\`Rimuovere \${pb.banks?.nome} dalla pratica?\`)) return;
+                                    await supabase.from('practice_banks').delete().eq('id', pb.id);
+                                    toast.success('Banca rimossa'); load();
+                                  }}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Dialog invia a banca specifica */}
+              {showSendBankDialog && (() => {
+                const pb = practiceBanks.find(p => p.id === showSendBankDialog);
+                if (!pb) return null;
+                const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
+                return (
+                  <Dialog open={true} onOpenChange={() => setShowSendBankDialog(null)}>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader><DialogTitle>✉️ Invia a {pb.banks?.nome}</DialogTitle></DialogHeader>
+                      <div className="space-y-3 py-2">
+                        <p className="text-sm text-muted-foreground">Destinatario: <strong>{bankEmail}</strong></p>
+                        <Textarea placeholder="Note per la banca (opzionale)..." rows={3} value={bankNote} onChange={e => setBankNote(e.target.value)} />
+                        <p className="text-xs text-muted-foreground">Verranno inviati i link firmati (7gg) a tutti i documenti. Lo stato sarà aggiornato.</p>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowSendBankDialog(null)}>Annulla</Button>
+                        <Button className="bg-blue-600 hover:bg-blue-700 gap-2" disabled={sendingBankId === pb.id}
+                          onClick={async () => {
+                            setSendingBankId(pb.id);
+                            const { data, error } = await supabase.functions.invoke('send-to-bank', {
+                              body: { practice_id: practice!.id, bank_id: pb.bank_id, note: bankNote || null }
+                            });
+                            setSendingBankId(null);
+                            if (error || !data?.success) { toast.error('Errore: ' + (error?.message ?? data?.error)); return; }
+                            toast.success(\`Pratica inviata a \${data.sent_to}!\`);
+                            setShowSendBankDialog(null); load();
+                          }}>
+                          {sendingBankId === pb.id ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>Invio...</> : '✉️ Invia'}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                );
+              })()}
+            </TabsContent>
+
             <TabsContent value="finanziamenti" className="mt-3">
               {financing.length === 0 ? (
                 <Card><CardContent className="py-10 text-center text-muted-foreground text-sm">
@@ -633,63 +751,6 @@ export default function PraticaDetailPage() {
           </Tabs>
         </div>
       </div>
-
-      {/* Dialog invia alla banca */}
-      <Dialog open={showSendToBank} onOpenChange={setShowSendToBank}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>✉️ Invia Pratica alla Banca</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5 text-sm text-blue-800">
-              <p className="font-semibold mb-0.5">Riepilogo invio:</p>
-              <p>Pratica: <strong>{practice?.numero_pratica}</strong></p>
-              <p>Cliente: <strong>{(practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale}</strong></p>
-              <p>Banca: <strong>{(practice as Practice & { banks?: { nome: string; email_invio_banca?: string; email?: string } }).banks?.nome}</strong></p>
-              <p className="text-xs text-blue-600 mt-1">
-                Destinatario: {(practice as Practice & { banks?: { email_invio_banca?: string; email?: string } }).banks?.email_invio_banca || (practice as Practice & { banks?: { email?: string } }).banks?.email || 'Email banca non configurata'}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>Note per la banca (opzionale)</Label>
-              <Textarea
-                placeholder="es. Allego documentazione completa per la pratica di mutuo. Rimango disponibile per eventuali integrazioni..."
-                rows={4}
-                value={sendNote}
-                onChange={e => setSendNote(e.target.value)}
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Verranno inviati link firmati (7 giorni) a tutti i documenti caricati. Lo stato della pratica sarà aggiornato a "Inviata Banca".
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSendToBank(false)}>Annulla</Button>
-            <Button
-              className="gap-2 bg-blue-600 hover:bg-blue-700"
-              disabled={sendingToBank}
-              onClick={async () => {
-                if (!practice) return;
-                setSendingToBank(true);
-                const { data, error } = await supabase.functions.invoke('send-to-bank', {
-                  body: { practice_id: practice.id, note: sendNote || null }
-                });
-                setSendingToBank(false);
-                if (error || !data?.success) {
-                  toast.error('Errore: ' + (error?.message ?? data?.error ?? 'Errore sconosciuto'));
-                  return;
-                }
-                toast.success(`Pratica inviata a ${data.sent_to}!`);
-                setShowSendToBank(false);
-                load();
-              }}
-            >
-              {sendingToBank ? (
-                <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Invio...</>
-              ) : '✉️ Invia alla Banca'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Dialog riassegna agente */}
       <Dialog open={showReassign} onOpenChange={setShowReassign}>
         <DialogContent className="max-w-md">

@@ -26,7 +26,7 @@ export default function PratichePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    client_id: '', bank_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: ''
+    client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: ''
   });
   const [agents, setAgents] = useState<{ id: string; nome?: string; email: string }[]>([]);
 
@@ -98,7 +98,6 @@ export default function PratichePage() {
 
     const { data: practice, error } = await supabase.from('practices').insert({
       client_id: form.client_id,
-      bank_id: form.bank_id || null,
       numero_pratica,
       importo_richiesto: form.importo_richiesto ? Number(form.importo_richiesto) : null,
       motivazione: form.motivazione || null,
@@ -153,7 +152,7 @@ export default function PratichePage() {
     toast.success(`Pratica ${numero_pratica} creata con successo`);
     setSaving(false);
     setShowCreate(false);
-    setForm({ client_id: '', bank_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: '' });
+    setForm({ client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: '' });
     load();
     navigate(`/admin/pratiche/${practice.id}`);
   };
@@ -263,16 +262,7 @@ export default function PratichePage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Banca (opzionale)</Label>
-              <Select value={form.bank_id} onValueChange={v => setForm(f => ({ ...f, bank_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Seleziona banca..." /></SelectTrigger>
-                <SelectContent>
-                  {banks.map(b => <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
+              <div className="space-y-2">
               <Label>Importo Richiesto (€)</Label>
               <Input type="number" placeholder="es. 150000" value={form.importo_richiesto} onChange={e => setForm(f => ({ ...f, importo_richiesto: e.target.value }))} />
             </div>
