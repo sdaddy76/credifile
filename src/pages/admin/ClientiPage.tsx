@@ -48,6 +48,16 @@ export default function ClientiPage() {
     if (editing) {
       const { error } = await supabase.from('clients').update(payload).eq('id', editing.id);
       if (error) { toast.error('Errore aggiornamento: ' + error.message); setSaving(false); return; }
+      // Se l'email è cambiata, aggiorna email_cliente in tutti i codici accesso delle pratiche di questo cliente
+      if (payload.email && payload.email !== editing.email) {
+        const { data: practices } = await supabase.from('practices').select('id').eq('client_id', editing.id);
+        if (practices && practices.length > 0) {
+          const ids = practices.map((p: { id: string }) => p.id);
+          await supabase.from('practice_access_codes')
+            .update({ email_cliente: payload.email.trim().toLowerCase() })
+            .in('practice_id', ids);
+        }
+      }
       toast.success('Cliente aggiornato');
     } else {
       const { error } = await supabase.from('clients').insert({ ...payload, created_by: user.id });

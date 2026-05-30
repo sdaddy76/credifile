@@ -60,6 +60,12 @@ export default function PraticaDetailPage() {
     const client = (practice as Practice & { clients?: { email: string } }).clients;
     if (!client?.email) { toast.error('Il cliente non ha un email'); return; }
     setSendingEmail(true);
+
+    // Aggiorna sempre email_cliente al valore attuale del cliente
+    await supabase.from('practice_access_codes')
+      .update({ email_cliente: client.email.trim().toLowerCase() })
+      .eq('id', accessCode.id);
+
     const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
     const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
     const link = `https://credifile-eosin.vercel.app/#/accesso?p=${practice.id}`;
