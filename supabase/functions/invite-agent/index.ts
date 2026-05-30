@@ -17,9 +17,16 @@ Deno.serve(async (req) => {
       if (le || !ld) return fail(le?.message ?? 'Errore generazione link')
       inviteLink = ld.properties.action_link; agentId = ld.user.id
     } else {
-      // Controlla se utente esiste già
+      // Controlla se utente esiste già in admin_profiles
       const { data: existing } = await sb.from('admin_profiles').select('id').eq('email', email.trim().toLowerCase()).maybeSingle()
       if (existing) return fail(`Un agente con email ${email} esiste già nel sistema`)
+      // Controlla anche auth.users (utenti orfani cancellati solo dall'elenco ma non da auth)
+      const { data: authList } = await sb.auth.admin.listUsers({ perPage: 1000 })
+      const authMatch = authList?.users?.find((u: { email?: string }) => u.email?.toLowerCase() === email.trim().toLowerCase())
+      if (authMatch) {
+        // Auto-cancella l'utente orfano e procedi con il nuovo invito
+        await sb.auth.admin.deleteUser(authMatch.id)
+      }
       const { data, error } = await sb.auth.admin.generateLink({ type: 'invite', email: email.trim().toLowerCase(), options: { data: { nome: nome || null } } })
       if (error || !data) return fail(error?.message ?? 'Errore generazione invito')
       inviteLink = data.properties.action_link; agentId = data.user.id
