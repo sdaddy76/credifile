@@ -262,9 +262,28 @@ export default function PraticaDetailPage() {
     load();
   };
 
-  // Elimina documento: file su storage + record practice_documents
+  // Elimina solo il file caricato (non il campo documento)
+  const handleDeleteFile = async (
+    fileId: string, storagePath: string, nomeFile: string,
+    docId: string, totalFiles: number
+  ) => {
+    if (!confirm(`Eliminare il file "${nomeFile}"?\nIl campo documento rimarrà presente. L'operazione è irreversibile.`)) return;
+    // Rimuovi da storage
+    await supabase.storage.from('practice-files').remove([storagePath]);
+    // Rimuovi record uploaded_files
+    const { error } = await supabase.from('uploaded_files').delete().eq('id', fileId);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    // Se era l'ultimo file, rimetti lo stato del documento a "richiesto"
+    if (totalFiles <= 1) {
+      await supabase.from('practice_documents').update({ status: 'richiesto' }).eq('id', docId);
+    }
+    toast.success(`File "${nomeFile}" eliminato`);
+    load();
+  };
+
+  // Elimina documento: campo + tutti i file (operazione completa)
   const handleDeleteDoc = async (docId: string, docNome: string, files: { storage_path: string }[]) => {
-    if (!confirm(`Eliminare il documento "${docNome}"?\nVerranno rimossi anche tutti i file caricati. L'operazione è irreversibile.`)) return;
+    if (!confirm(`Eliminare il campo documento "${docNome}"?\nVerranno rimossi anche tutti i file caricati. L'operazione è irreversibile.`)) return;
     if (files.length > 0) {
       await supabase.storage.from('practice-files').remove(files.map(f => f.storage_path));
     }
@@ -538,13 +557,23 @@ export default function PraticaDetailPage() {
                                 {files.length > 0 && (
                                   <div className="mt-2 space-y-1">
                                     {files.map(f => (
-                                      <button
-                                        key={f.id}
-                                        className="flex items-center gap-2 text-xs text-primary hover:underline"
-                                        onClick={() => downloadFile(f.storage_path, f.nome_file)}
-                                      >
-                                        <Download className="w-3 h-3" /> {f.nome_file}
-                                      </button>
+                                      <div key={f.id} className="flex items-center gap-1 group">
+                                        <button
+                                          className="flex items-center gap-2 text-xs text-primary hover:underline"
+                                          onClick={() => downloadFile(f.storage_path, f.nome_file)}
+                                        >
+                                          <Download className="w-3 h-3" /> {f.nome_file}
+                                        </button>
+                                        {canEdit && (
+                                          <button
+                                            className="opacity-0 group-hover:opacity-100 ml-1 text-destructive hover:text-destructive/80 transition-opacity"
+                                            title="Elimina solo questo file"
+                                            onClick={() => handleDeleteFile(f.id, f.storage_path, f.nome_file, doc.id, files.length)}
+                                          >
+                                            <XCircle className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                      </div>
                                     ))}
                                   </div>
                                 )}
