@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2 } from 'lucide-react';
+import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send, CheckCircle2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -34,6 +34,52 @@ export default function PratichePage() {
   const [assignBankNote, setAssignBankNote] = useState('');
   const [sendBankEmail, setSendBankEmail] = useState(false);
   const [savingBank, setSavingBank] = useState(false);
+  const [existingPracticeBanks, setExistingPracticeBanks] = useState<{id:string;bank_id:string;status:string;note?:string;data_invio?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
+  const [loadingBankDialog, setLoadingBankDialog] = useState(false);
+  const [sendingBankId, setSendingBankId] = useState<string|null>(null);
+  const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
+
+  async function openBankDialog(practice: Practice) {
+    setShowAssignBank(practice);
+    setAssignBankId('');
+    setAssignBankNote('');
+    setSendBankEmail(false);
+    setLoadingBankDialog(true);
+    const { data } = await supabase
+      .from('practice_banks')
+      .select('*, banks(nome,email,email_invio_banca)')
+      .eq('practice_id', practice.id)
+      .order('created_at');
+    setExistingPracticeBanks((data ?? []) as typeof existingPracticeBanks);
+    setLoadingBankDialog(false);
+  }
+
+  function closeBankDialog() {
+    setShowAssignBank(null);
+    setAssignBankId('');
+    setAssignBankNote('');
+    setSendBankEmail(false);
+    setExistingPracticeBanks([]);
+    setSendNoteFor({});
+  }
+
+  async function handleSendExisting(bankId: string) {
+    if (!showAssignBank) return;
+    setSendingBankId(bankId);
+    const { data, error } = await supabase.functions.invoke('send-to-bank', {
+      body: { practice_id: showAssignBank.id, bank_id: bankId, note: sendNoteFor[bankId] || null },
+    });
+    if (error || data?.error) {
+      toast.error('Errore invio: ' + (error?.message ?? data?.error));
+    } else {
+      toast.success(`Email inviata alla banca (${data?.docs_sent ?? 0} documenti allegati)`);
+      // Aggiorna stato locale
+      setExistingPracticeBanks(prev =>
+        prev.map(pb => pb.bank_id === bankId ? { ...pb, status: 'inviata', data_invio: new Date().toISOString() } : pb)
+      );
+    }
+    setSendingBankId(null);
+  }
 
   async function load() {
     let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)');
@@ -162,7 +208,7 @@ export default function PratichePage() {
     const { error } = await supabase.from('practice_banks').insert({
       practice_id: showAssignBank.id,
       bank_id: assignBankId,
-      status: sendBankEmail ? 'da_inviare' : 'da_inviare',
+      status: 'da_inviare',
     });
     if (error) {
       setSavingBank(false);
@@ -171,22 +217,28 @@ export default function PratichePage() {
     }
     // Invia email alla banca se richiesto
     if (sendBankEmail) {
-      const { error: fnError } = await supabase.functions.invoke('send-to-bank', {
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('send-to-bank', {
         body: { practice_id: showAssignBank.id, bank_id: assignBankId, note: assignBankNote || null },
       });
-      if (fnError) {
-        toast.warning('Banca assegnata ma errore invio email: ' + fnError.message);
+      if (fnError || fnData?.error) {
+        toast.warning('Banca assegnata ma errore invio email: ' + (fnError?.message ?? fnData?.error));
       } else {
-        toast.success('Banca assegnata e email inviata alla banca');
+        toast.success(`Banca assegnata e email inviata (${fnData?.docs_sent ?? 0} documenti)`);
       }
     } else {
-      toast.success('Banca assegnata alla pratica');
+      toast.success('Banca assegnata. Puoi inviare l\'email dalla sezione "Banche assegnate".');
     }
     setSavingBank(false);
-    setShowAssignBank(null);
     setAssignBankId('');
     setAssignBankNote('');
     setSendBankEmail(false);
+    // Ricarica le banche nel dialog senza chiuderlo
+    const { data: refreshed } = await supabase
+      .from('practice_banks')
+      .select('*, banks(nome,email,email_invio_banca)')
+      .eq('practice_id', showAssignBank.id)
+      .order('created_at');
+    setExistingPracticeBanks((refreshed ?? []) as typeof existingPracticeBanks);
     load();
   };
 
@@ -260,7 +312,7 @@ export default function PratichePage() {
                           variant="ghost" size="sm"
                           className="h-8 w-8 p-0 text-primary hover:bg-primary/10"
                           title="Assegna banca"
-                          onClick={e => { e.stopPropagation(); setAssignBankId(''); setShowAssignBank(p); }}
+                          onClick={e => { e.stopPropagation(); openBankDialog(p); }}
                         >
                           <Building2 className="w-4 h-4" />
                         </Button>
@@ -336,15 +388,16 @@ export default function PratichePage() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog assegna banca */}
-      <Dialog open={!!showAssignBank} onOpenChange={(open) => { if (!open) { setShowAssignBank(null); setAssignBankId(''); setAssignBankNote(''); setSendBankEmail(false); } }}>
-        <DialogContent className="max-w-md">
+      {/* Dialog gestione banche pratica */}
+      <Dialog open={!!showAssignBank} onOpenChange={(open) => { if (!open) closeBankDialog(); }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-primary" /> Assegna Banca
+              <Building2 className="w-5 h-5 text-primary" /> Gestione Banche
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="space-y-5 py-1">
+            {/* Info pratica */}
             {showAssignBank && (
               <div className="bg-muted/50 rounded-lg px-4 py-2 text-sm">
                 <p className="font-semibold">
@@ -353,41 +406,111 @@ export default function PratichePage() {
                 <p className="text-xs text-muted-foreground font-mono">{showAssignBank.numero_pratica}</p>
               </div>
             )}
-            <div className="space-y-2">
-              <Label>Banca *</Label>
-              <Select value={assignBankId} onValueChange={setAssignBankId}>
-                <SelectTrigger><SelectValue placeholder="Seleziona banca..." /></SelectTrigger>
-                <SelectContent>
-                  {banks.map(b => (
-                    <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+
+            {/* Banche già assegnate */}
+            <div>
+              <p className="text-sm font-semibold text-foreground mb-2">Banche assegnate</p>
+              {loadingBankDialog ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  Caricamento...
+                </div>
+              ) : existingPracticeBanks.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic py-1">Nessuna banca ancora assegnata.</p>
+              ) : (
+                <div className="space-y-3">
+                  {existingPracticeBanks.map(pb => (
+                    <div key={pb.id} className="border border-border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          {pb.status === 'inviata'
+                            ? <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                            : <Clock className="w-4 h-4 text-amber-500 shrink-0" />}
+                          <span className="font-medium text-sm">{pb.banks?.nome}</span>
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${pb.status === 'inviata' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {pb.status === 'inviata' ? 'Inviata' : 'Da inviare'}
+                        </span>
+                      </div>
+                      {pb.status === 'inviata' && pb.data_invio && (
+                        <p className="text-xs text-muted-foreground">
+                          Inviata il {new Date(pb.data_invio).toLocaleDateString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
+                        </p>
+                      )}
+                      {/* Textarea nota + bottone invia */}
+                      <div className="space-y-1.5">
+                        <Textarea
+                          placeholder="Note per l'invio (opzionale)..."
+                          rows={2}
+                          className="text-xs"
+                          value={sendNoteFor[pb.bank_id] ?? ''}
+                          onChange={e => setSendNoteFor(prev => ({ ...prev, [pb.bank_id]: e.target.value }))}
+                        />
+                        <Button
+                          size="sm"
+                          variant={pb.status === 'inviata' ? 'outline' : 'default'}
+                          className="gap-1.5 w-full"
+                          disabled={sendingBankId === pb.bank_id}
+                          onClick={() => handleSendExisting(pb.bank_id)}
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          {sendingBankId === pb.bank_id
+                            ? 'Invio in corso...'
+                            : pb.status === 'inviata'
+                              ? 'Reinvia documenti'
+                              : 'Invia documenti alla banca'}
+                        </Button>
+                      </div>
+                    </div>
                   ))}
-                </SelectContent>
-              </Select>
+                </div>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label>Note per la banca (opzionale)</Label>
-              <Textarea
-                placeholder="Eventuali note da allegare all'invio..."
-                rows={3}
-                value={assignBankNote}
-                onChange={e => setAssignBankNote(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="sendBankEmailCheck"
-                checked={sendBankEmail}
-                onChange={e => setSendBankEmail(e.target.checked)}
-                className="h-4 w-4 accent-primary cursor-pointer"
-              />
-              <label htmlFor="sendBankEmailCheck" className="text-sm cursor-pointer select-none">
-                Invia subito email alla banca con i documenti disponibili
-              </label>
+
+            {/* Separatore */}
+            <div className="border-t border-border" />
+
+            {/* Aggiungi nuova banca */}
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-foreground">Aggiungi nuova banca</p>
+              <div className="space-y-2">
+                <Label>Banca *</Label>
+                <Select value={assignBankId} onValueChange={setAssignBankId}>
+                  <SelectTrigger><SelectValue placeholder="Seleziona banca..." /></SelectTrigger>
+                  <SelectContent>
+                    {banks
+                      .filter(b => !existingPracticeBanks.some(pb => pb.bank_id === b.id))
+                      .map(b => (
+                        <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Note per la banca (opzionale)</Label>
+                <Textarea
+                  placeholder="Eventuali note da allegare all'invio..."
+                  rows={2}
+                  value={assignBankNote}
+                  onChange={e => setAssignBankNote(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="sendBankEmailCheck"
+                  checked={sendBankEmail}
+                  onChange={e => setSendBankEmail(e.target.checked)}
+                  className="h-4 w-4 accent-primary cursor-pointer"
+                />
+                <label htmlFor="sendBankEmailCheck" className="text-sm cursor-pointer select-none">
+                  Invia subito email alla banca con i documenti disponibili
+                </label>
+              </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowAssignBank(null); setAssignBankId(''); setAssignBankNote(''); setSendBankEmail(false); }}>Annulla</Button>
+            <Button variant="outline" onClick={closeBankDialog}>Chiudi</Button>
             <Button onClick={handleAssignBank} disabled={savingBank || !assignBankId}>
               {savingBank ? 'Salvataggio...' : sendBankEmail ? 'Assegna e Invia Email' : 'Assegna Banca'}
             </Button>

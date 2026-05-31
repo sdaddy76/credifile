@@ -46,7 +46,7 @@ serve(async (req) => {
       );
     }
 
-    // 2. Carica practice_banks + banca
+    // 2. Carica assegnazione banca
     const pbRes = await fetch(
       `${SUPA_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca)&limit=1`,
       { headers: restHeaders },
@@ -68,20 +68,29 @@ serve(async (req) => {
       );
     }
 
-    // 3. Documenti approvati/caricati
-    const docsRes = await fetch(
-      `${SUPA_URL}/rest/v1/practice_documents?practice_id=eq.${encodeURIComponent(practice_id)}&status=in.(approvato,caricato)&select=*`,
+    // 3. Carica file caricati per questa pratica (con nome documento dal join)
+    const filesRes = await fetch(
+      `${SUPA_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`,
       { headers: restHeaders },
     );
-    const docs: { id: string; nome: string; file_path: string | null; status: string }[] =
-      await docsRes.json() ?? [];
+    const files: {
+      id: string;
+      nome_file: string;
+      storage_path: string;
+      practice_documents: { nome: string; status: string } | null;
+    }[] = (await filesRes.json()) ?? [];
 
-    // 4. Genera signed URL per ogni file
-    const docLinks: { nome: string; url: string }[] = [];
-    for (const doc of docs) {
-      if (!doc.file_path) continue;
+    // 4. Genera signed URL per ogni file (bucket: practice-files)
+    const docLinks: { nomeDoc: string; nomeFile: string; url: string }[] = [];
+    for (const f of files) {
+      if (!f.storage_path) continue;
+      // Encode ogni segmento del path preservando i separatori "/"
+      const encodedPath = f.storage_path
+        .split('/')
+        .map((seg) => encodeURIComponent(seg))
+        .join('/');
       const signRes = await fetch(
-        `${SUPA_URL}/storage/v1/object/sign/practice-documents/${doc.file_path}`,
+        `${SUPA_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
         {
           method: 'POST',
           headers: restHeaders,
@@ -90,10 +99,18 @@ serve(async (req) => {
       );
       if (signRes.ok) {
         const signData = await signRes.json();
-        const signedUrl = signData?.signedURL
-          ? `${SUPA_URL}/storage/v1${signData.signedURL}`
-          : signData?.signedUrl;
-        if (signedUrl) docLinks.push({ nome: doc.nome, url: signedUrl });
+        // La risposta può avere signedURL (relativo) o signedUrl (assoluto)
+        let signedUrl = signData?.signedUrl ?? null;
+        if (!signedUrl && signData?.signedURL) {
+          signedUrl = `${SUPA_URL}/storage/v1${signData.signedURL}`;
+        }
+        if (signedUrl) {
+          docLinks.push({
+            nomeDoc: f.practice_documents?.nome ?? f.nome_file,
+            nomeFile: f.nome_file,
+            url: signedUrl,
+          });
+        }
       }
     }
 
@@ -101,39 +118,43 @@ serve(async (req) => {
     const cliente =
       pratica.clients?.ragione_sociale ?? pratica.clients?.codice_fiscale ?? 'N/D';
     const notaHtml = note
-      ? `<p style="color:#555;"><strong>Note:</strong> ${note}</p>`
+      ? `<p style="color:#555;margin-top:12px;"><strong>Note:</strong> ${note}</p>`
       : '';
     const docsHtml =
       docLinks.length > 0
         ? docLinks
             .map(
               (d) =>
-                `<li style="margin:6px 0;"><a href="${d.url}" style="color:#2563eb;">${d.nome}</a> <span style="font-size:11px;color:#888;">(link valido 7 giorni)</span></li>`,
+                `<li style="margin:8px 0;">` +
+                `<a href="${d.url}" style="color:#2563eb;font-weight:600;">${d.nomeDoc}</a>` +
+                ` <span style="color:#888;font-size:11px;">(${d.nomeFile} — link valido 7 giorni)</span>` +
+                `</li>`,
             )
             .join('')
-        : '<li style="color:#888;">Nessun documento caricato disponibile</li>';
+        : '<li style="color:#888;">Nessun documento caricato disponibile al momento</li>';
 
-    const htmlBody = `<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:auto;padding:24px;">
+    const htmlBody = `<!DOCTYPE html>
+<html><body style="font-family:sans-serif;max-width:600px;margin:auto;padding:24px;">
 <h2 style="color:#1e3a5f;">Credifile — Pratica inviata</h2>
 <p>Gentile <strong>${pb.banks?.nome}</strong>,</p>
-<p>Le trasmettiamo la documentazione relativa alla pratica di <strong>${cliente}</strong>.</p>
+<p>Le trasmettiamo la documentazione relativa alla pratica di <strong>${cliente}</strong>
+(rif. <code>${pratica.numero_pratica}</code>).</p>
 ${notaHtml}
-<h3 style="color:#1e3a5f;margin-top:20px;">Documenti allegati:</h3>
-<ul>${docsHtml}</ul>
-<p style="margin-top:24px;font-size:12px;color:#999;">Questo messaggio è stato inviato automaticamente da <a href="${APP}">Credifile</a>.</p>
+<h3 style="color:#1e3a5f;margin-top:20px;">Documenti allegati (${docLinks.length}):</h3>
+<ul style="padding-left:20px;">${docsHtml}</ul>
+<p style="margin-top:24px;font-size:12px;color:#999;">
+  Questo messaggio è stato inviato automaticamente da <a href="${APP}">Credifile</a>.
+</p>
 </body></html>`;
 
     // 6. Invia email via Resend
     const emailRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_KEY}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         from: FROM,
         to: [bankEmail],
-        subject: `Pratica ${cliente} — Credifile`,
+        subject: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
         html: htmlBody,
       }),
     });
