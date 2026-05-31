@@ -38,6 +38,7 @@ export default function StatistichePage() {
   const [uploads, setUploads] = useState<UploadStat[]>([]);
   const [accessCodes, setAccessCodes] = useState<AccessStat[]>([]);
   const [totaleClienti, setTotaleClienti] = useState(0);
+  const [totaleBanche, setTotaleBanche] = useState(0);
 
   // Attende che l'auth sia pronta (role caricato) prima di caricare i dati
   useEffect(() => {
@@ -98,6 +99,10 @@ export default function StatistichePage() {
     const { count } = await cq;
     setTotaleClienti(count ?? 0);
 
+    // Totale banche
+    const { count: bCount } = await supabase.from('banks').select('id', { count: 'exact', head: true });
+    setTotaleBanche(bCount ?? 0);
+
     setLoading(false);
   };
 
@@ -110,6 +115,8 @@ export default function StatistichePage() {
   const inCorso     = (byStatus['raccolta_documenti'] ?? 0) + (byStatus['inviata_banca'] ?? 0) + (byStatus['integrazioni_richieste'] ?? 0);
   const bozze       = byStatus['bozza'] ?? 0;
   const rifiutate   = byStatus['rifiutata'] ?? 0;
+  // Pratiche ancora aperte (qualsiasi stato non terminale)
+  const daCompletare = totale - completate - rifiutate;
   const tasso       = totale > 0 ? Math.round((completate / totale) * 100) : 0;
 
   // Durata media pratiche attive (giorni da creazione)
@@ -182,8 +189,8 @@ export default function StatistichePage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { icon: <FolderOpen className="w-4 h-4 text-blue-600"/>, bg:'bg-blue-100', val: totale, label: 'Pratiche totali' },
+          { icon: <Clock className="w-4 h-4 text-amber-600"/>, bg:'bg-amber-100', val: daCompletare, label: 'Da completare' },
           { icon: <CheckCircle className="w-4 h-4 text-green-600"/>, bg:'bg-green-100', val: completate, label: 'Completate' },
-          { icon: <Clock className="w-4 h-4 text-amber-600"/>, bg:'bg-amber-100', val: inCorso, label: 'In corso' },
           { icon: <Users className="w-4 h-4 text-purple-600"/>, bg:'bg-purple-100', val: totaleClienti, label: 'Clienti' },
         ].map((k, i) => (
           <Card key={i}><CardContent className="pt-5 pb-4">
@@ -200,8 +207,8 @@ export default function StatistichePage() {
         {[
           { icon: <Target className="w-4 h-4 text-green-600"/>, bg:'bg-green-50 border-green-200', val:`${tasso}%`, label:'Tasso completamento' },
           { icon: <Timer className="w-4 h-4 text-blue-600"/>, bg:'bg-blue-50 border-blue-200', val: fmt(durataMediaAttiva), label:'Durata media (attive)' },
-          { icon: <Activity className="w-4 h-4 text-violet-600"/>, bg:'bg-violet-50 border-violet-200', val: tempiRisposta.length ? fmt(tempoMedioRisposta) : '—', label:'Tempo medio risposta cliente' },
           { icon: <FileWarning className="w-4 h-4 text-red-600"/>, bg:'bg-red-50 border-red-200', val: praticheConDocMancanti, label:'Pratiche con doc mancanti' },
+          { icon: <Activity className="w-4 h-4 text-violet-600"/>, bg:'bg-violet-50 border-violet-200', val: totaleBanche, label:'Banche disponibili' },
         ].map((k, i) => (
           <Card key={i} className={`border ${k.bg}`}><CardContent className="pt-5 pb-4">
             <div className="flex items-center gap-3">
@@ -252,11 +259,13 @@ export default function StatistichePage() {
           <CardContent>
             <div className="space-y-3 text-sm">
               {[
-                { label: 'Bozze aperte', val: bozze, color: 'text-gray-600' },
-                { label: 'In corso', val: inCorso, color: 'text-amber-600' },
+                { label: 'Bozze da attivare', val: bozze, color: 'text-gray-600' },
+                { label: 'In raccolta documenti', val: byStatus['raccolta_documenti'] ?? 0, color: 'text-amber-600' },
+                { label: 'Inviate alla banca', val: byStatus['inviata_banca'] ?? 0, color: 'text-blue-600' },
+                { label: 'Integrazioni richieste', val: byStatus['integrazioni_richieste'] ?? 0, color: 'text-orange-600' },
                 { label: 'Completate / Approvate', val: completate, color: 'text-green-600' },
                 { label: 'Rifiutate', val: rifiutate, color: 'text-red-600' },
-                { label: 'Doc. mancanti', val: praticheConDocMancanti, color: 'text-orange-600' },
+                { label: 'Pratiche con doc mancanti', val: praticheConDocMancanti, color: 'text-rose-600' },
               ].map(r => (
                 <div key={r.label} className="flex items-center justify-between py-1 border-b border-border last:border-0">
                   <span className="text-muted-foreground">{r.label}</span>
