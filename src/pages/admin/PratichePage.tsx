@@ -38,6 +38,7 @@ export default function PratichePage() {
   const [loadingBankDialog, setLoadingBankDialog] = useState(false);
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [removingBankId, setRemovingBankId] = useState<string|null>(null);
+  const [allAssignedBankIds, setAllAssignedBankIds] = useState<string[]>([]);
   const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
   const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
 
@@ -47,6 +48,13 @@ export default function PratichePage() {
     setAssignBankNote('');
     setSendBankEmail(false);
     setLoadingBankDialog(true);
+    // Carica tutti i bank_id assegnati alla pratica (senza filtro created_by) per il dropdown
+    const { data: allBanks } = await supabase
+      .from('practice_banks')
+      .select('bank_id')
+      .eq('practice_id', practice.id);
+    setAllAssignedBankIds((allBanks ?? []).map((r: { bank_id: string }) => r.bank_id));
+    // Carica le banche visibili a questa segreteria (filtrate per created_by)
     let q = supabase
       .from('practice_banks')
       .select('*, banks(nome,email,email_invio_banca)')
@@ -64,6 +72,7 @@ export default function PratichePage() {
     setAssignBankNote('');
     setSendBankEmail(false);
     setExistingPracticeBanks([]);
+    setAllAssignedBankIds([]);
     setSendNoteFor({});
     setShowNoteFor({});
   }
@@ -95,6 +104,10 @@ export default function PratichePage() {
     } else {
       toast.success(`Banca "${bankNome}" rimossa dalla pratica`);
       setExistingPracticeBanks(prev => prev.filter(pb => pb.id !== pbId));
+      setAllAssignedBankIds(prev => prev.filter(id => {
+        const removed = existingPracticeBanks.find(pb => pb.id === pbId);
+        return id !== removed?.bank_id;
+      }));
     }
     setRemovingBankId(null);
   }
@@ -260,6 +273,12 @@ export default function PratichePage() {
     if (isSegreteria && user?.id) rq = rq.eq('created_by', user.id);
     const { data: refreshed } = await rq.order('created_at');
     setExistingPracticeBanks((refreshed ?? []) as typeof existingPracticeBanks);
+    // Aggiorna anche la lista completa dei bank_id per il dropdown
+    const { data: allBanksRefresh } = await supabase
+      .from('practice_banks')
+      .select('bank_id')
+      .eq('practice_id', showAssignBank.id);
+    setAllAssignedBankIds((allBanksRefresh ?? []).map((r: { bank_id: string }) => r.bank_id));
     load();
   };
 
@@ -523,7 +542,7 @@ export default function PratichePage() {
                   <SelectTrigger><SelectValue placeholder="Seleziona banca..." /></SelectTrigger>
                   <SelectContent>
                     {banks
-                      .filter(b => !existingPracticeBanks.some(pb => pb.bank_id === b.id))
+                      .filter(b => !allAssignedBankIds.includes(b.id))
                       .map(b => (
                         <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
                       ))}
