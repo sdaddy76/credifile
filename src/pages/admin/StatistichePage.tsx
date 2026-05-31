@@ -349,7 +349,7 @@ export default function StatistichePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {practices.slice(0, 20).map((p, i) => {
+                  {practices.map((p, i) => {
                     const pDocs = docs.filter(d => d.practice_id === p.id);
                     const mancanti = pDocs.filter(d => d.status === 'richiesto' || d.status === 'rifiutato').length;
                     const ok = pDocs.filter(d => d.status === 'approvato' || d.status === 'caricato').length;
@@ -381,11 +381,6 @@ export default function StatistichePage() {
                   })}
                 </tbody>
               </table>
-              {practices.length > 20 && (
-                <p className="text-xs text-muted-foreground text-center py-3 border-t border-border">
-                  Mostrate le 20 più recenti su {practices.length} totali
-                </p>
-              )}
             </div>
           )}
         </CardContent>
