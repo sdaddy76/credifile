@@ -11,7 +11,7 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
   try {
-    const { to, consultant_name, documents, link, code, practice_number } = await req.json();
+    const { to, consultant_name, documents, link, code, practice_number, company_name } = await req.json();
 
     if (!to || !consultant_name || !link || !code) {
       return new Response(JSON.stringify({ success: false, error: "Parametri mancanti" }), {
@@ -28,22 +28,33 @@ Deno.serve(async (req: Request) => {
     const docListHtml = (documents as string[] ?? []).map((d) => `<li style="margin:4px 0;">${d}</li>`).join("");
     const docListText = (documents as string[] ?? []).map((d) => `  • ${d}`).join("\n");
 
+    // Oggetto con nome azienda se disponibile
+    const subject = company_name
+      ? `Richiesta documenti — ${company_name}`
+      : "Richiesta documenti per la vostra pratica";
+
+    // Intestazione con nome azienda
+    const companyLine = company_name
+      ? `<p style="font-size:15px;">In riferimento all'azienda <strong>${company_name}</strong>, il consulente <strong>${consultant_name}</strong> ha richiesto i seguenti documenti per avviare la valutazione della pratica.</p>`
+      : `<p>Il consulente <strong>${consultant_name}</strong> ha richiesto dei documenti per iniziare la valutazione della sua azienda.</p>`;
+
     const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:20px;">
   <div style="background:#1e40af;padding:20px 24px;border-radius:8px 8px 0 0;">
     <h1 style="color:white;margin:0;font-size:20px;">Richiesta Documenti</h1>
+    ${company_name ? `<p style="color:#bfdbfe;margin:4px 0 0 0;font-size:14px;">${company_name}</p>` : ""}
   </div>
   <div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;padding:24px;">
     <p>Gentile cliente,</p>
-    <p>il consulente <strong>${consultant_name}</strong> ha richiesto dei documenti per iniziare la valutazione della sua azienda.</p>
-    ${practice_number ? `<p style="color:#6b7280;font-size:13px;">Pratica: <code>${practice_number}</code></p>` : ""}
+    ${companyLine}
+    ${practice_number ? `<p style="color:#6b7280;font-size:13px;">Numero pratica: <code>${practice_number}</code></p>` : ""}
     <p><strong>Documenti richiesti:</strong></p>
     <ul style="background:white;border:1px solid #e2e8f0;border-radius:6px;padding:12px 12px 12px 28px;margin:8px 0;">${docListHtml}</ul>
-    <p>Per caricare i documenti basta cliccare sul seguente link:</p>
+    <p>Per caricare i documenti clicca sul seguente link:</p>
     <div style="text-align:center;margin:20px 0;">
       <a href="${link}" style="background:#1e40af;color:white;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">Carica i Documenti</a>
     </div>
-    <p>ed inserire il seguente codice:</p>
+    <p>e inserisci il seguente codice di accesso:</p>
     <div style="text-align:center;margin:16px 0;">
       <span style="font-family:monospace;font-size:28px;font-weight:bold;letter-spacing:8px;color:#1e40af;background:#eff6ff;padding:12px 24px;border-radius:8px;border:2px solid #bfdbfe;">${code}</span>
     </div>
@@ -53,24 +64,16 @@ Deno.serve(async (req: Request) => {
   </div>
 </body></html>`;
 
-    const textBody = `Richiesta Documenti\n\nGentile cliente,\n\nil consulente ${consultant_name} ha richiesto dei documenti.\n\nDocumenti richiesti:\n${docListText}\n\nLink: ${link}\nCodice: ${code}\n\nDistinti Saluti\n${consultant_name}`;
+    const textBody = `Richiesta Documenti${company_name ? ` — ${company_name}` : ""}\n\nGentile cliente,\n\nIl consulente ${consultant_name} ha richiesto dei documenti${company_name ? ` per l'azienda ${company_name}` : ""}.\n\nDocumenti richiesti:\n${docListText}\n\nLink: ${link}\nCodice: ${code}\n\nDistinti Saluti\n${consultant_name}`;
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        to: [to],
-        subject: "Richiesta documenti per la vostra pratica",
-        html: htmlBody,
-        text: textBody,
-      }),
+      body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, html: htmlBody, text: textBody }),
     });
 
     const resData = await res.json();
     if (!res.ok) {
-      // Resend ha restituito un errore — lo propaghiamo nel body ma con status 200
-      // così il client può leggere i dettagli
       return new Response(JSON.stringify({ success: false, error: resData }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
