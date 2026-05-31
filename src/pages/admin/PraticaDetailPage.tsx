@@ -315,6 +315,13 @@ export default function PraticaDetailPage() {
       a.href = data.signedUrl;
       a.download = name;
       a.click();
+      // Audit log in background
+      supabase.from('download_logs').insert({
+        user_id: user?.id ?? null,
+        practice_id: id ?? null,
+        file_path: path,
+        file_name: name,
+      }).then(() => {/* silent */});
     }
   };
 

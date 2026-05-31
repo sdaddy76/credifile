@@ -18,9 +18,39 @@ export default function ClientAccessPage() {
   // Pre-fill practice ID from URL if present
   const practiceIdFromUrl = searchParams.get('p');
 
+  // Rate limiting: max 5 tentativi falliti in 1 ora per sessione browser
+  const RATE_KEY = `portal_attempts_${practiceIdFromUrl ?? 'x'}`;
+  const checkRateLimit = (): boolean => {
+    try {
+      const raw = localStorage.getItem(RATE_KEY);
+      const attempts: number[] = raw ? JSON.parse(raw) : [];
+      const oneHourAgo = Date.now() - 3600000;
+      const recent = attempts.filter(t => t > oneHourAgo);
+      if (recent.length >= 5) return false; // bloccato
+    } catch { /* ignora */ }
+    return true;
+  };
+  const recordFailedAttempt = () => {
+    try {
+      const raw = localStorage.getItem(RATE_KEY);
+      const attempts: number[] = raw ? JSON.parse(raw) : [];
+      const oneHourAgo = Date.now() - 3600000;
+      const recent = attempts.filter(t => t > oneHourAgo);
+      recent.push(Date.now());
+      localStorage.setItem(RATE_KEY, JSON.stringify(recent));
+    } catch { /* ignora */ }
+  };
+
   const handleAccess = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!codice.trim() || !email.trim()) { toast.error('Inserisci codice e email'); return; }
+
+    // Rate limiting
+    if (!checkRateLimit()) {
+      toast.error('Troppi tentativi falliti. Riprova tra 1 ora o contatta il tuo agente.');
+      return;
+    }
+
     setLoading(true);
 
     const { data: accessRecord, error } = await supabase
@@ -31,7 +61,11 @@ export default function ClientAccessPage() {
       .maybeSingle();
 
     if (error || !accessRecord) {
-      toast.error('Codice o email non validi. Controlla i dati e riprova.');
+      recordFailedAttempt();
+      const raw = localStorage.getItem(RATE_KEY);
+      const cnt = raw ? JSON.parse(raw).filter((t:number) => t > Date.now()-3600000).length : 1;
+      const rimasti = Math.max(0, 5 - cnt);
+      toast.error(`Codice o email non validi. ${rimasti > 0 ? `Tentativi rimasti: ${rimasti}.` : 'Accesso bloccato per 1 ora.'}`);
       setLoading(false);
       return;
     }
