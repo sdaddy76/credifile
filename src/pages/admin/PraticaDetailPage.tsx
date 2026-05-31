@@ -552,17 +552,18 @@ export default function PraticaDetailPage() {
                                 {files.length > 0 && (
                                   <div className="mt-2 space-y-1">
                                     {files.map(f => (
-                                      <div key={f.id} className="flex items-center gap-1 group">
+                                      <div key={f.id} className="flex items-center gap-1">
                                         <button
-                                          className="flex items-center gap-2 text-xs text-primary hover:underline"
+                                          className="flex items-center gap-2 text-xs text-primary hover:underline flex-1 min-w-0 text-left"
                                           onClick={() => downloadFile(f.storage_path, f.nome_file)}
                                         >
-                                          <Download className="w-3 h-3" /> {f.nome_file}
+                                          <Download className="w-3 h-3 shrink-0" />
+                                          <span className="truncate">{f.nome_file}</span>
                                         </button>
                                         {canEdit && (
                                           <button
-                                            className="opacity-0 group-hover:opacity-100 ml-1 text-destructive hover:text-destructive/80 transition-opacity"
-                                            title="Elimina solo questo file"
+                                            className="ml-1 shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+                                            title="Elimina questo file"
                                             onClick={() => handleDeleteFile(f.id, f.storage_path, f.nome_file, doc.id, files.length)}
                                           >
                                             <XCircle className="w-3.5 h-3.5" />
