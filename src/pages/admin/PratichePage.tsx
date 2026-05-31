@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2 } from 'lucide-react';
+import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -28,6 +28,10 @@ export default function PratichePage() {
     client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: ''
   });
   const [agents, setAgents] = useState<{ id: string; nome?: string; email: string }[]>([]);
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [showAssignBank, setShowAssignBank] = useState<Practice | null>(null);
+  const [assignBankId, setAssignBankId] = useState('');
+  const [savingBank, setSavingBank] = useState(false);
 
   async function load() {
     let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)');
@@ -61,9 +65,10 @@ export default function PratichePage() {
   useEffect(() => {
     load();
     supabase.from('clients').select('*').order('ragione_sociale').then(r => setClients(r.data ?? []));
-    // Carica agenti (per segreteria/superadmin che assegnano pratiche)
     supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome')
       .then(r => setAgents(r.data ?? []));
+    supabase.from('banks').select('*').order('nome')
+      .then(r => setBanks(r.data ?? []));
   }, []);
 
   const filtered = practices.filter(p => {
@@ -137,6 +142,34 @@ export default function PratichePage() {
     navigate(`/admin/pratiche/${practice.id}`);
   };
 
+  const handleAssignBank = async () => {
+    if (!showAssignBank || !assignBankId) { toast.error('Seleziona una banca'); return; }
+    setSavingBank(true);
+    // Evita duplicati
+    const { data: existing } = await supabase
+      .from('practice_banks')
+      .select('id')
+      .eq('practice_id', showAssignBank.id)
+      .eq('bank_id', assignBankId)
+      .single();
+    if (existing) {
+      toast.error('Questa banca è già assegnata alla pratica');
+      setSavingBank(false);
+      return;
+    }
+    const { error } = await supabase.from('practice_banks').insert({
+      practice_id: showAssignBank.id,
+      bank_id: assignBankId,
+      status: 'da_inviare',
+    });
+    setSavingBank(false);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    toast.success('Banca assegnata alla pratica');
+    setShowAssignBank(null);
+    setAssignBankId('');
+    load();
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -202,6 +235,16 @@ export default function PratichePage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge className={`text-xs ${STATUS_COLORS[p.status]}`}>{STATUS_LABELS[p.status]}</Badge>
+                      {!isAgente && (
+                        <Button
+                          variant="ghost" size="sm"
+                          className="h-8 w-8 p-0 text-primary hover:bg-primary/10"
+                          title="Assegna banca"
+                          onClick={e => { e.stopPropagation(); setAssignBankId(''); setShowAssignBank(p); }}
+                        >
+                          <Building2 className="w-4 h-4" />
+                        </Button>
+                      )}
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                         <Eye className="w-4 h-4" />
                       </Button>
@@ -268,6 +311,47 @@ export default function PratichePage() {
             <Button variant="outline" onClick={() => setShowCreate(false)}>Annulla</Button>
             <Button onClick={handleCreate} disabled={saving}>
               {saving ? 'Creazione...' : 'Crea Pratica'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog assegna banca */}
+      <Dialog open={!!showAssignBank} onOpenChange={() => setShowAssignBank(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-primary" /> Assegna Banca
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {showAssignBank && (
+              <div className="bg-muted/50 rounded-lg px-4 py-2 text-sm">
+                <p className="font-semibold">
+                  {(showAssignBank as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? '—'}
+                </p>
+                <p className="text-xs text-muted-foreground font-mono">{showAssignBank.numero_pratica}</p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Banca *</Label>
+              <Select value={assignBankId} onValueChange={setAssignBankId}>
+                <SelectTrigger><SelectValue placeholder="Seleziona banca..." /></SelectTrigger>
+                <SelectContent>
+                  {banks.map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                La banca verrà aggiunta alla pratica con stato "Da inviare". Puoi inviare i documenti dalla scheda pratica → tab Banche.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAssignBank(null)}>Annulla</Button>
+            <Button onClick={handleAssignBank} disabled={savingBank || !assignBankId}>
+              {savingBank ? 'Salvataggio...' : 'Assegna Banca'}
             </Button>
           </DialogFooter>
         </DialogContent>

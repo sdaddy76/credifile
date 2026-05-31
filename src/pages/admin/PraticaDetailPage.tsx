@@ -506,12 +506,7 @@ export default function PraticaDetailPage() {
               {/* Actions */}
               {(canEdit || canApprove) && (
               <div className="flex gap-2 flex-wrap">
-                {!isAgente && (
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setReassignTo(practice.assigned_to ?? ''); setShowReassign(true); }}>
-            👤 Riassegna Agente
-          </Button>
-        )}
-        {canEdit && (
+                {canEdit && (
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddDoc(true)}>
                   <Plus className="w-3.5 h-3.5" /> Aggiungi Documento
                 </Button>
@@ -588,11 +583,6 @@ export default function PraticaDetailPage() {
                                   </Button>
                                 </div>
                               )}
-                              {!isAgente && (
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setReassignTo(practice.assigned_to ?? ''); setShowReassign(true); }}>
-            👤 Riassegna Agente
-          </Button>
-        )}
                               {canEdit && (
                                 <div className="shrink-0 flex gap-1">
                                   <input type="file" className="hidden"
