@@ -29,7 +29,7 @@ function fmt(days: number) {
 }
 
 export default function StatistichePage() {
-  const { user, isSuperAdmin, isSegreteria } = useAuth();
+  const { user, isSuperAdmin, isSegreteria, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(true);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [agentProfiles, setAgentProfiles] = useState<{ id: string; nome: string; email: string }[]>([]);
@@ -39,7 +39,10 @@ export default function StatistichePage() {
   const [accessCodes, setAccessCodes] = useState<AccessStat[]>([]);
   const [totaleClienti, setTotaleClienti] = useState(0);
 
-  useEffect(() => { if (user?.id) load(); }, [user?.id]);
+  // Attende che l'auth sia pronta (role caricato) prima di caricare i dati
+  useEffect(() => {
+    if (!authLoading && user?.id) load();
+  }, [user?.id, authLoading, isSegreteria, isSuperAdmin]);
 
   const load = async () => {
     setLoading(true);
