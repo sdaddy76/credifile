@@ -16,7 +16,7 @@ import { useAuth } from '@/hooks/useAuth';
 
 export default function PratichePage() {
   const navigate = useNavigate();
-  const { isAgente, isSuperAdmin, isSegreteria, canEdit, user } = useAuth();
+  const { isAgente, isSuperAdmin, isSegreteria, canEdit, user, loading: authLoading } = useAuth();
   const [practices, setPractices] = useState<Practice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,13 +111,14 @@ export default function PratichePage() {
   }
 
   useEffect(() => {
+    if (authLoading) return;
     load();
     supabase.from('clients').select('*').order('ragione_sociale').then(r => setClients(r.data ?? []));
     supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome')
       .then(r => setAgents(r.data ?? []));
     supabase.from('banks').select('*').order('nome')
       .then(r => setBanks(r.data ?? []));
-  }, []);
+  }, [authLoading, isAgente, isSegreteria, isSuperAdmin, user?.id]);
 
   const filtered = practices.filter(p => {
     const rs = (p as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? '';
@@ -307,7 +308,7 @@ export default function PratichePage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge className={`text-xs ${STATUS_COLORS[p.status]}`}>{STATUS_LABELS[p.status]}</Badge>
-                      {!isAgente && (
+                      {(isSuperAdmin || isSegreteria) && (
                         <Button
                           variant="ghost" size="sm"
                           className="h-8 w-8 p-0 text-primary hover:bg-primary/10"
