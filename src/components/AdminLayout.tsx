@@ -1,11 +1,12 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useAutoBackup } from '@/hooks/useAutoBackup';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
-  UserCircle, UsersRound, BarChart3
+  UserCircle, UsersRound, BarChart3, Settings
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -20,6 +21,7 @@ const NAV_SUPER = [
   { to: '/admin/statistiche',  icon: BarChart3,       label: 'Statistiche' },
   { to: '/admin/utenti',       icon: UserCog,         label: 'Utenti' },
   { to: '/admin/miei-agenti',  icon: UsersRound,      label: 'Miei Agenti' },
+  { to: '/admin/impostazioni', icon: Settings,        label: 'Impostazioni' },
   { to: '/admin/profilo',      icon: UserCircle,      label: 'Profilo' },
 ];
 
@@ -30,6 +32,7 @@ const NAV_SEGRETERIA = [
   { to: '/admin/banche',       icon: Building2,       label: 'Banche' },
   { to: '/admin/statistiche',  icon: BarChart3,       label: 'Statistiche' },
   { to: '/admin/miei-agenti',  icon: UsersRound,      label: 'Miei Agenti' },
+  { to: '/admin/impostazioni', icon: Settings,        label: 'Impostazioni' },
   { to: '/admin/profilo',      icon: UserCircle,      label: 'Profilo' },
 ];
 
@@ -53,9 +56,12 @@ const ROLE_COLOR: Record<string, string> = {
 };
 
 export default function AdminLayout() {
-  const { user, role, profileNome, signOut } = useAuth();
+  const { user, role, profileNome, signOut, loading: authLoading, isSegreteria } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Backup automatico al login per la segreteria
+  useAutoBackup(user?.id, isSegreteria, !authLoading);
 
   const navItems =
     role === 'super_admin'            ? NAV_SUPER :

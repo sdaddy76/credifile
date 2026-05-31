@@ -15,6 +15,7 @@ import UtentiPage from "@/pages/admin/UtentiPage";
 import ProfiloPage from "@/pages/admin/ProfiloPage";
 import MieiAgentiPage from "@/pages/admin/MieiAgentiPage";
 import StatistichePage from "@/pages/admin/StatistichePage";
+import ImpostazioniPage from "@/pages/admin/ImpostazioniPage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
@@ -62,6 +63,7 @@ const App = () => (
             <Route path="utenti" element={<UtentiPage />} />
             <Route path="profilo" element={<ProfiloPage />} />
             <Route path="statistiche" element={<StatistichePage />} />
+            <Route path="impostazioni" element={<ImpostazioniPage />} />
             <Route path="miei-agenti" element={<MieiAgentiPage />} />
           </Route>
 
