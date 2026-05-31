@@ -562,7 +562,7 @@ export default function PraticaDetailPage() {
                                         </button>
                                         {canEdit && (
                                           <button
-                                            className="ml-1 shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+                                            className="ml-1 shrink-0 text-destructive/50 hover:text-destructive transition-colors"
                                             title="Elimina questo file"
                                             onClick={() => handleDeleteFile(f.id, f.storage_path, f.nome_file, doc.id, files.length)}
                                           >
