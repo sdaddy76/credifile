@@ -31,6 +31,8 @@ export default function PratichePage() {
   const [banks, setBanks] = useState<Bank[]>([]);
   const [showAssignBank, setShowAssignBank] = useState<Practice | null>(null);
   const [assignBankId, setAssignBankId] = useState('');
+  const [assignBankNote, setAssignBankNote] = useState('');
+  const [sendBankEmail, setSendBankEmail] = useState(false);
   const [savingBank, setSavingBank] = useState(false);
 
   async function load() {
@@ -160,13 +162,31 @@ export default function PratichePage() {
     const { error } = await supabase.from('practice_banks').insert({
       practice_id: showAssignBank.id,
       bank_id: assignBankId,
-      status: 'da_inviare',
+      status: sendBankEmail ? 'da_inviare' : 'da_inviare',
     });
+    if (error) {
+      setSavingBank(false);
+      toast.error('Errore: ' + error.message);
+      return;
+    }
+    // Invia email alla banca se richiesto
+    if (sendBankEmail) {
+      const { error: fnError } = await supabase.functions.invoke('send-to-bank', {
+        body: { practice_id: showAssignBank.id, bank_id: assignBankId, note: assignBankNote || null },
+      });
+      if (fnError) {
+        toast.warning('Banca assegnata ma errore invio email: ' + fnError.message);
+      } else {
+        toast.success('Banca assegnata e email inviata alla banca');
+      }
+    } else {
+      toast.success('Banca assegnata alla pratica');
+    }
     setSavingBank(false);
-    if (error) { toast.error('Errore: ' + error.message); return; }
-    toast.success('Banca assegnata alla pratica');
     setShowAssignBank(null);
     setAssignBankId('');
+    setAssignBankNote('');
+    setSendBankEmail(false);
     load();
   };
 
@@ -317,7 +337,7 @@ export default function PratichePage() {
       </Dialog>
 
       {/* Dialog assegna banca */}
-      <Dialog open={!!showAssignBank} onOpenChange={() => setShowAssignBank(null)}>
+      <Dialog open={!!showAssignBank} onOpenChange={(open) => { if (!open) { setShowAssignBank(null); setAssignBankId(''); setAssignBankNote(''); setSendBankEmail(false); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -343,15 +363,33 @@ export default function PratichePage() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                La banca verrà aggiunta alla pratica con stato "Da inviare". Puoi inviare i documenti dalla scheda pratica → tab Banche.
-              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Note per la banca (opzionale)</Label>
+              <Textarea
+                placeholder="Eventuali note da allegare all'invio..."
+                rows={3}
+                value={assignBankNote}
+                onChange={e => setAssignBankNote(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="sendBankEmailCheck"
+                checked={sendBankEmail}
+                onChange={e => setSendBankEmail(e.target.checked)}
+                className="h-4 w-4 accent-primary cursor-pointer"
+              />
+              <label htmlFor="sendBankEmailCheck" className="text-sm cursor-pointer select-none">
+                Invia subito email alla banca con i documenti disponibili
+              </label>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAssignBank(null)}>Annulla</Button>
+            <Button variant="outline" onClick={() => { setShowAssignBank(null); setAssignBankId(''); setAssignBankNote(''); setSendBankEmail(false); }}>Annulla</Button>
             <Button onClick={handleAssignBank} disabled={savingBank || !assignBankId}>
-              {savingBank ? 'Salvataggio...' : 'Assegna Banca'}
+              {savingBank ? 'Salvataggio...' : sendBankEmail ? 'Assegna e Invia Email' : 'Assegna Banca'}
             </Button>
           </DialogFooter>
         </DialogContent>
