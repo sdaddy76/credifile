@@ -5,7 +5,7 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 const ok   = (d: unknown) => new Response(JSON.stringify(d),              { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } });
-const fail = (msg: string, s = 400) => new Response(JSON.stringify({ success: false, error: msg }), { status: s,   headers: { ...cors, 'Content-Type': 'application/json' } });
+const fail = (msg: string) => new Response(JSON.stringify({ success: false, error: msg }), { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -17,11 +17,11 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const serviceKey  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-    if (!supabaseUrl || !serviceKey) return fail('Configurazione server mancante', 500);
+    if (!supabaseUrl || !serviceKey) return fail('Configurazione server mancante');
 
-    // PATCH /auth/v1/admin/users/{user_id}  →  aggiorna password
+    // PUT /auth/v1/admin/users/{user_id}  →  aggiorna password
     const r = await fetch(`${supabaseUrl}/auth/v1/admin/users/${user_id}`, {
-      method: 'PATCH',
+      method: 'PUT',
       headers: {
         'Authorization': `Bearer ${serviceKey}`,
         'apikey': serviceKey,
