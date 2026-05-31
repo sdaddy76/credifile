@@ -16,7 +16,7 @@ import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
-  PlusCircle, Save
+  PlusCircle, Save, BellRing
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -76,6 +76,8 @@ export default function PraticaDetailPage() {
   const [integrationDesc, setIntegrationDesc] = useState('');
   const [saving, setSaving] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [showSollecita, setShowSollecita] = useState(false);
+  const [sollecitando, setSollecitando] = useState(false);
 
   // Invia email richiesta documenti (senza rigenerare il codice)
   const sendDocumentRequest = async () => {
@@ -472,6 +474,13 @@ export default function PraticaDetailPage() {
         {canEdit && (
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAddDoc(true)}>
                   <Plus className="w-3.5 h-3.5" /> Aggiungi Documento
+                </Button>
+                )}
+                {canEdit && accessCode && documents.some(d => d.status === 'richiesto' || d.status === 'rifiutato') && (
+                <Button size="sm" variant="outline"
+                  className="gap-1.5 text-orange-700 border-orange-300 hover:bg-orange-50"
+                  onClick={() => setShowSollecita(true)}>
+                  <BellRing className="w-3.5 h-3.5" /> Sollecita Cliente
                 </Button>
                 )}
                 {canApprove && (
@@ -1011,6 +1020,73 @@ export default function PraticaDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+
+      {/* Dialog sollecita cliente */}
+      {showSollecita && (() => {
+        const docMancanti = documents.filter(d => d.status === 'richiesto');
+        const docRifiutati = documents.filter(d => d.status === 'rifiutato');
+        return (
+          <Dialog open={true} onOpenChange={() => setShowSollecita(false)}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <BellRing className="w-4 h-4 text-orange-600" /> Sollecita Cliente
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 py-2 text-sm">
+                <p className="text-muted-foreground">
+                  Verrà inviata un'email a <strong>{(practice as Practice & { clients?: { email: string } }).clients?.email}</strong> con il riepilogo dei documenti da caricare.
+                </p>
+                {docMancanti.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-amber-700 mb-1">📋 Da caricare ({docMancanti.length})</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
+                      {docMancanti.map(d => <li key={d.id}>{d.nome}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {docRifiutati.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-red-700 mb-1">❌ Da ricaricare ({docRifiutati.length})</p>
+                    <ul className="space-y-1">
+                      {docRifiutati.map(d => (
+                        <li key={d.id} className="bg-red-50 rounded px-2 py-1">
+                          <span className="font-medium">{d.nome}</span>
+                          {d.note_rifiuto && <span className="block text-xs text-red-600">Motivo: {d.note_rifiuto}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowSollecita(false)}>Annulla</Button>
+                <Button
+                  className="bg-orange-600 hover:bg-orange-700 gap-2"
+                  disabled={sollecitando}
+                  onClick={async () => {
+                    setSollecitando(true);
+                    const { data, error } = await supabase.functions.invoke('sollecita-cliente', {
+                      body: { practice_id: practice!.id },
+                    });
+                    setSollecitando(false);
+                    if (error || !data?.success) {
+                      toast.error('Errore: ' + (error?.message ?? data?.error));
+                      return;
+                    }
+                    toast.success(`Sollecito inviato a ${data.sent_to} (${data.mancanti} mancanti, ${data.rifiutati} rifiutati)`);
+                    setShowSollecita(false);
+                  }}>
+                  {sollecitando
+                    ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Invio...</>
+                    : <><BellRing className="w-4 h-4" />Invia Sollecito</>}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {/* Dialog rifiuto documento */}
       <Dialog open={!!showRejectDoc} onOpenChange={() => setShowRejectDoc(null)}>
