@@ -193,7 +193,7 @@ export default function ClientPortalPage() {
   const handleFileSelect = (docId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 20 * 1024 * 1024) { toast.error('File troppo grande. Massimo 20 MB.'); return; }
+      if (file.size > 30 * 1024 * 1024) { toast.error('File troppo grande. Massimo 30 MB.'); return; }
       handleFileUpload(docId, file);
     }
     e.target.value = '';
@@ -337,7 +337,7 @@ export default function ClientPortalPage() {
                             )}
                           </Button>
                           <p className="text-xs text-muted-foreground text-center mt-1">
-                            PDF, Word, Excel, immagini — max 20 MB
+                            PDF, Word, Excel, immagini — max 30 MB
                           </p>
                         </div>
                       )}

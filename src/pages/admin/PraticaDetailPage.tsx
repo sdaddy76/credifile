@@ -203,7 +203,7 @@ export default function PraticaDetailPage() {
   // Upload documento da admin (per conto del cliente)
   const handleAdminUpload = async (docId: string, file: File) => {
     if (!id) return;
-    if (file.size > 20 * 1024 * 1024) { toast.error('File troppo grande. Max 20 MB.'); return; }
+    if (file.size > 30 * 1024 * 1024) { toast.error('File troppo grande. Max 30 MB.'); return; }
     setUploadingAdminDoc(docId);
     const path = `${id}/${docId}/${Date.now()}_${file.name}`;
     try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch (_e) { /* ignora errori storage */ }
