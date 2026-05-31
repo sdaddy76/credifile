@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { User, Phone, Mail, Upload, Trash2, Save, Lock, Eye, EyeOff } from 'lucide-react';
+import { User, Phone, Mail, Upload, Trash2, Save, Lock, Eye, EyeOff, Shield, Monitor } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ProfiloPage() {
@@ -18,6 +18,10 @@ export default function ProfiloPage() {
   const [logoUrl, setLogoUrl] = useState('');
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Accessi recenti
+  const [accessLogs, setAccessLogs] = useState<{id:string;ip_address:string;user_agent:string;is_new_ip:boolean;created_at:string}[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
 
   // Cambio password
   const [nuovaPassword, setNuovaPassword] = useState('');
@@ -47,6 +51,11 @@ export default function ProfiloPage() {
           setLogoUrl(data.logo_url ?? '');
         }
       });
+    // Carica log accessi
+    setLoadingLogs(true);
+    supabase.from('user_access_logs').select('*').eq('user_id', user.id)
+      .order('created_at', { ascending: false }).limit(15)
+      .then(({ data }) => { setAccessLogs(data ?? []); setLoadingLogs(false); });
   }, [user?.id]);
 
   const handleLogoUpload = async (file: File) => {
@@ -152,6 +161,45 @@ export default function ProfiloPage() {
           <Button className="w-full gap-2" onClick={handleChangePassword} disabled={savingPwd}>
             <Lock className="w-4 h-4" /> {savingPwd ? 'Aggiornamento...' : 'Aggiorna Password'}
           </Button>
+        </CardContent>
+      </Card>
+      {/* Accessi recenti */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Shield className="w-3.5 h-3.5" /> Accessi recenti
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loadingLogs ? (
+            <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
+              <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              Caricamento...
+            </div>
+          ) : accessLogs.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">Nessun accesso registrato.</p>
+          ) : (
+            <div className="space-y-2">
+              {accessLogs.map(log => (
+                <div key={log.id} className={`flex items-start gap-3 p-3 rounded-lg border text-sm ${log.is_new_ip ? 'border-amber-200 bg-amber-50' : 'border-border bg-muted/30'}`}>
+                  <Monitor className={`w-4 h-4 mt-0.5 flex-shrink-0 ${log.is_new_ip ? 'text-amber-500' : 'text-muted-foreground'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-xs font-semibold">{log.ip_address}</span>
+                      {log.is_new_ip && (
+                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">⚠️ IP nuovo</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 truncate">{log.user_agent || 'Dispositivo sconosciuto'}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {new Date(log.created_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              <p className="text-xs text-muted-foreground pt-1">Mostrati gli ultimi 15 accessi.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

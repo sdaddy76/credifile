@@ -16,40 +16,71 @@ export function useAuth() {
   const [role, setRole] = useState<UserRole>(null);
   const [profileNome, setProfileNome] = useState<string | null>(null);
 
-  async function fetchRole(userId: string) {
-    const { data } = await supabase
-      .from('admin_profiles')
-      .select('ruolo, nome')
-      .eq('id', userId)
-      .maybeSingle();
-    const profile = data as AuthProfile | null;
-    setRole(profile?.ruolo ?? 'agente');
-    setProfileNome(profile?.nome ?? null);
+  async function fetchRole(userId: string): Promise<void> {
+    try {
+      // Timeout: se la query admin_profiles non risponde in 6s, fallback ad 'agente'
+      const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000));
+      const query = supabase
+        .from('admin_profiles')
+        .select('ruolo, nome')
+        .eq('id', userId)
+        .maybeSingle();
+
+      const data = await Promise.race([
+        query.then(r => r.data as AuthProfile | null),
+        timeout,
+      ]);
+
+      setRole(data?.ruolo ?? 'agente');
+      setProfileNome(data?.nome ?? null);
+    } catch {
+      // Su errori di rete fallback sicuro
+      setRole('agente');
+    }
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchRole(session.user.id).finally(() => setLoading(false));
-      } else {
+    // Timeout di sicurezza assoluto: dopo 8s forziamo loading=false
+    // Evita spinner infinito su mobile con rete lenta
+    const safetyTimer = setTimeout(() => setLoading(false), 8000);
+
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          fetchRole(session.user.id).finally(() => {
+            clearTimeout(safetyTimer);
+            setLoading(false);
+          });
+        } else {
+          clearTimeout(safetyTimer);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        clearTimeout(safetyTimer);
         setLoading(false);
-      }
-    });
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchRole(session.user.id);
+        // Non blocchiamo il loading qui (già gestito da getSession),
+        // ma aggiorniamo ruolo se cambia sessione
+        fetchRole(session.user.id).finally(() => setLoading(false));
       } else {
         setRole(null);
         setProfileNome(null);
+        setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(safetyTimer);
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {
@@ -76,14 +107,10 @@ export function useAuth() {
     isSuperAdmin,
     isAgente,
     isSegreteria,
-    // Può creare pratiche e inviare codice al cliente
-    canEdit: isSuperAdmin || isAgente,
-    // Può approvare/rifiutare documenti e cambiare stato pratica
-    canApprove: isSuperAdmin || isSegreteria,
-    // Può gestire banche
+    canEdit:       isSuperAdmin || isAgente,
+    canApprove:    isSuperAdmin || isSegreteria,
     canManageBanks: isSuperAdmin || isSegreteria,
-    // Può gestire utenti e template documenti
-    canManageAll: isSuperAdmin,
+    canManageAll:  isSuperAdmin,
     signIn,
     signOut,
   };

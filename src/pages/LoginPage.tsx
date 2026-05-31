@@ -35,6 +35,8 @@ export default function LoginPage() {
       if (remember) localStorage.setItem('credifile_remember', email);
       else localStorage.removeItem('credifile_remember');
       navigate('/admin/dashboard');
+      // Log accesso in background (non blocca il navigate)
+      supabase.functions.invoke('log-access').catch(() => {/* silent */});
     }
   };
 
