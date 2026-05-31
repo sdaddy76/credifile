@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, UserCog, Pencil, ShieldCheck, Link2 } from 'lucide-react';
+import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 
@@ -43,6 +43,13 @@ export default function UtentiPage() {
   // Form modifica
   const [editRuolo, setEditRuolo] = useState('');
   const [editNome, setEditNome] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [showEditPwd, setShowEditPwd] = useState(false);
+  const [changingPwd, setChangingPwd] = useState(false);
+
+  // Elimina utente
+  const [showDelete, setShowDelete] = useState<AdminProfile | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Assegnazioni segreteria ↔ agenti (solo super_admin)
   const [assignments, setAssignments] = useState<Record<string, Set<string>>>({});
@@ -88,6 +95,40 @@ export default function UtentiPage() {
     setShowEdit(p);
     setEditRuolo(p.ruolo);
     setEditNome(p.nome ?? '');
+    setEditPassword('');
+    setShowEditPwd(false);
+  };
+
+  const handleDelete = async () => {
+    if (!showDelete) return;
+    setDeleting(true);
+    const { data, error } = await supabase.functions.invoke('delete-agent', {
+      body: { agent_id: showDelete.id },
+    });
+    setDeleting(false);
+    if (error || !data?.success) {
+      toast.error(error?.message ?? data?.error ?? 'Errore nella cancellazione');
+      return;
+    }
+    toast.success(`Utente ${showDelete.email} eliminato`);
+    setShowDelete(null);
+    load();
+  };
+
+  const handleChangePassword = async () => {
+    if (!showEdit) return;
+    if (editPassword.length < 6) { toast.error('Password minimo 6 caratteri'); return; }
+    setChangingPwd(true);
+    const { data, error } = await supabase.functions.invoke('admin-update-user', {
+      body: { user_id: showEdit.id, password: editPassword },
+    });
+    setChangingPwd(false);
+    if (error || !data?.success) {
+      toast.error(error?.message ?? data?.error ?? 'Errore cambio password');
+      return;
+    }
+    toast.success('Password aggiornata con successo');
+    setEditPassword('');
   };
 
   const handleCreate = async () => {
@@ -244,10 +285,20 @@ export default function UtentiPage() {
                       variant="ghost" size="sm"
                       className="h-8 w-8 p-0 shrink-0"
                       onClick={() => openEdit(p)}
-                      title="Modifica ruolo"
+                      title="Modifica ruolo/password"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </Button>
+                    {!isSelf && isSuperAdmin && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-8 w-8 p-0 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => setShowDelete(p)}
+                        title="Elimina utente"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -381,11 +432,75 @@ export default function UtentiPage() {
             <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
               Il cambio ruolo avrà effetto al prossimo accesso dell'utente.
             </p>
+
+            {/* ── Cambio password ── */}
+            <div className="border-t border-border pt-4 space-y-2">
+              <Label className="flex items-center gap-2 text-sm font-semibold">
+                <KeyRound className="w-4 h-4 text-primary" /> Cambia password
+              </Label>
+              <p className="text-xs text-muted-foreground">Lascia vuoto per non modificare la password.</p>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    type={showEditPwd ? 'text' : 'password'}
+                    placeholder="Nuova password (min. 6 caratteri)"
+                    value={editPassword}
+                    onChange={e => setEditPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowEditPwd(v => !v)}
+                  >
+                    {showEditPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleChangePassword}
+                  disabled={changingPwd || editPassword.length < 6}
+                  className="shrink-0"
+                >
+                  {changingPwd ? 'Salvo...' : 'Aggiorna'}
+                </Button>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEdit(null)}>Annulla</Button>
             <Button onClick={handleUpdateRole} disabled={saving}>
               {saving ? 'Salvo...' : 'Salva Modifiche'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Dialog conferma eliminazione */}
+      <Dialog open={!!showDelete} onOpenChange={() => setShowDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" /> Elimina Utente
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-2 space-y-3">
+            <p className="text-sm text-foreground">
+              Stai per eliminare definitivamente l'utente:
+            </p>
+            <div className="bg-muted/50 rounded-lg px-4 py-3">
+              <p className="font-semibold text-sm">{showDelete?.nome || showDelete?.email}</p>
+              <p className="text-xs text-muted-foreground">{showDelete?.email}</p>
+            </div>
+            <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
+              ⚠️ Questa operazione è irreversibile. Le pratiche create dall'utente resteranno nel sistema ma senza assegnazione.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDelete(null)}>Annulla</Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? 'Eliminazione...' : 'Elimina definitivamente'}
             </Button>
           </DialogFooter>
         </DialogContent>
