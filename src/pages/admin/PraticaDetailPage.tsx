@@ -260,6 +260,18 @@ export default function PraticaDetailPage() {
     load();
   };
 
+  // Elimina documento: file su storage + record practice_documents
+  const handleDeleteDoc = async (docId: string, docNome: string, files: { storage_path: string }[]) => {
+    if (!confirm(`Eliminare il documento "${docNome}"?\nVerranno rimossi anche tutti i file caricati. L'operazione è irreversibile.`)) return;
+    if (files.length > 0) {
+      await supabase.storage.from('practice-files').remove(files.map(f => f.storage_path));
+    }
+    const { error } = await supabase.from('practice_documents').delete().eq('id', docId);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    toast.success(`Documento "${docNome}" eliminato`);
+    load();
+  };
+
   // Aggiunta doc manuale
   const handleAddDoc = async () => {
     if (!newDocName.trim()) { toast.error('Inserisci il nome del documento'); return; }
@@ -543,8 +555,8 @@ export default function PraticaDetailPage() {
             👤 Riassegna Agente
           </Button>
         )}
-        {canEdit && (
-                                <div className="shrink-0">
+                              {canEdit && (
+                                <div className="shrink-0 flex gap-1">
                                   <input type="file" className="hidden"
                                     ref={el => { adminFileRefs.current[doc.id] = el; }}
                                     accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
@@ -558,6 +570,13 @@ export default function PraticaDetailPage() {
                                     {uploadingAdminDoc === doc.id
                                       ? <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
                                       : <><Upload className="w-3 h-3" /> Upload</>}
+                                  </Button>
+                                  <Button size="sm" variant="ghost"
+                                    className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                                    title="Elimina documento e file"
+                                    onClick={() => handleDeleteDoc(doc.id, doc.nome, files)}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </Button>
                                 </div>
                               )}
