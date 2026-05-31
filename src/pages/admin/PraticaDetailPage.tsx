@@ -15,7 +15,8 @@ import { Separator } from '@/components/ui/separator';
 import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
-  FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2
+  FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
+  PlusCircle, Save
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -45,10 +46,20 @@ export default function PraticaDetailPage() {
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [bankNote, setBankNote] = useState('');
   const [showSendBankDialog, setShowSendBankDialog] = useState<string|null>(null);
-  const [financing, setFinancing] = useState<{
-    id: string; tipologia: string; banca_finanziaria?: string; importo_iniziale: number | null;
-    rata: number | null; durata_mesi: number | null; debito_residuo: number | null; note: string | null;
-  }[]>([]);
+  // Financing — gestito come stringhe per l'editing inline
+  interface FinRow {
+    id: string; tipologia: string; banca_finanziaria: string;
+    importo_iniziale: string; rata: string; durata_mesi: string;
+    debito_residuo: string; note: string;
+    _new?: boolean; _dirty?: boolean;
+  }
+  const TIPOLOGIE_FIN = [
+    'Mutuo ipotecario', 'Prestito personale', 'Cessione del quinto',
+    'Leasing auto', 'Leasing strumentale', 'Apertura di credito',
+    'Fido bancario', 'Carta di credito revolving', 'Altro',
+  ];
+  const [financing, setFinancing] = useState<FinRow[]>([]);
+  const [savingFin, setSavingFin] = useState(false);
 
   // Dialogs
   const [showStatusChange, setShowStatusChange] = useState(false);
@@ -116,7 +127,16 @@ export default function PraticaDetailPage() {
     setAccessCode(ac.data);
     // Carica finanziamenti
     const { data: fin } = await supabase.from('client_financing').select('*').eq('practice_id', id).order('ordinamento');
-    setFinancing(fin ?? []);
+    setFinancing((fin ?? []).map(r => ({
+      id: r.id,
+      tipologia: r.tipologia ?? '',
+      banca_finanziaria: r.banca_finanziaria ?? '',
+      importo_iniziale: r.importo_iniziale != null ? String(r.importo_iniziale) : '',
+      rata: r.rata != null ? String(r.rata) : '',
+      durata_mesi: r.durata_mesi != null ? String(r.durata_mesi) : '',
+      debito_residuo: r.debito_residuo != null ? String(r.debito_residuo) : '',
+      note: r.note ?? '',
+    })));
     const { data: pb } = await supabase.from('practice_banks').select('*, banks(nome,email,email_invio_banca)').eq('practice_id', id).order('created_at');
     setPracticeBanks(pb ?? []);
     setLoading(false);
@@ -662,63 +682,205 @@ export default function PraticaDetailPage() {
               })()}
             </TabsContent>
 
-            <TabsContent value="finanziamenti" className="mt-3">
+            <TabsContent value="finanziamenti" className="mt-3 space-y-3">
+              {/* Header con pulsante aggiungi (solo canEdit) */}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm text-muted-foreground">
+                  {canEdit
+                    ? 'Aggiungi o modifica i finanziamenti in essere del cliente.'
+                    : 'Situazione finanziamenti in essere del cliente (sola lettura).'}
+                </p>
+                {canEdit && (
+                  <Button size="sm" variant="outline" className="gap-1.5"
+                    onClick={() => setFinancing(prev => [...prev, {
+                      id: crypto.randomUUID(), tipologia: '', banca_finanziaria: '',
+                      importo_iniziale: '', rata: '', durata_mesi: '', debito_residuo: '', note: '',
+                      _new: true, _dirty: true,
+                    }])}>
+                    <PlusCircle className="w-3.5 h-3.5" /> Aggiungi finanziamento
+                  </Button>
+                )}
+              </div>
+
               {financing.length === 0 ? (
-                <Card><CardContent className="py-10 text-center text-muted-foreground text-sm">
-                  Il cliente non ha ancora inserito finanziamenti in essere.
-                </CardContent></Card>
+                <Card>
+                  <CardContent className="py-10 text-center text-muted-foreground text-sm">
+                    {canEdit
+                      ? 'Nessun finanziamento. Clicca "Aggiungi finanziamento" per iniziare.'
+                      : 'Nessun finanziamento inserito.'}
+                  </CardContent>
+                </Card>
               ) : (
                 <div className="space-y-3">
-                  <div className="overflow-x-auto rounded-xl border border-border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="text-left px-3 py-2.5 font-semibold text-xs text-muted-foreground">Tipologia</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-xs text-muted-foreground">Banca / Finanziaria</th>
-                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Importo iniziale</th>
-                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Rata / mese</th>
-                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Durata</th>
-                          <th className="text-right px-3 py-2.5 font-semibold text-xs text-muted-foreground">Debito residuo</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-xs text-muted-foreground">Note</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {financing.map((f, i) => (
-                          <tr key={f.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                            <td className="px-3 py-2.5 font-medium text-foreground">{f.tipologia || '—'}</td>
-                            <td className="px-3 py-2.5 text-muted-foreground">{f.banca_finanziaria || '—'}</td>
-                            <td className="px-3 py-2.5 text-right text-muted-foreground">
-                              {f.importo_iniziale != null ? `€ ${f.importo_iniziale.toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}
-                            </td>
-                            <td className="px-3 py-2.5 text-right text-muted-foreground">
-                              {f.rata != null ? `€ ${f.rata.toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}
-                            </td>
-                            <td className="px-3 py-2.5 text-right text-muted-foreground">
-                              {f.durata_mesi != null ? `${f.durata_mesi} mesi` : '—'}
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-semibold text-foreground">
-                              {f.debito_residuo != null ? `€ ${f.debito_residuo.toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}
-                            </td>
-                            <td className="px-3 py-2.5 text-muted-foreground text-xs">{f.note || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot className="border-t border-border bg-blue-50">
-                        <tr>
-                          <td className="px-3 py-2 font-bold text-xs text-blue-700 uppercase">Totali</td>
-                          <td className="px-3 py-2 text-right text-xs text-blue-700">—</td>
-                          <td className="px-3 py-2 text-right font-bold text-blue-800">
-                            € {financing.reduce((s, f) => s + (f.rata ?? 0), 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="px-3 py-2 text-right text-xs text-blue-700">—</td>
-                          <td className="px-3 py-2 text-right font-bold text-blue-800">
-                            € {financing.reduce((s, f) => s + (f.debito_residuo ?? 0), 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td></td>
-                        </tr>
-                      </tfoot>
-                    </table>
+                  {financing.map((f, idx) => (
+                    <Card key={f.id} className={`border ${f._dirty ? 'border-amber-300 bg-amber-50/30' : 'border-border'}`}>
+                      <CardContent className="py-3 px-4 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            Finanziamento {idx + 1}
+                          </span>
+                          {canEdit && (
+                            <Button size="sm" variant="ghost"
+                              className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                              onClick={async () => {
+                                if (!f._new && !confirm('Eliminare questo finanziamento?')) return;
+                                if (!f._new) await supabase.from('client_financing').delete().eq('id', f.id);
+                                setFinancing(prev => prev.filter((_, i) => i !== idx));
+                              }}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          {/* Tipologia */}
+                          <div className="col-span-2 sm:col-span-1">
+                            <label className="text-xs text-muted-foreground font-medium mb-1 block">Tipologia *</label>
+                            {canEdit ? (
+                              <Select value={f.tipologia}
+                                onValueChange={v => setFinancing(prev => prev.map((r, i) => i === idx ? { ...r, tipologia: v, _dirty: true } : r))}>
+                                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Seleziona..." /></SelectTrigger>
+                                <SelectContent>
+                                  {TIPOLOGIE_FIN.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <p className="text-sm font-medium">{f.tipologia || '—'}</p>
+                            )}
+                          </div>
+
+                          {/* Banca / Finanziaria */}
+                          <div className="col-span-2 sm:col-span-1">
+                            <label className="text-xs text-muted-foreground font-medium mb-1 block">Banca / Finanziaria</label>
+                            {canEdit ? (
+                              <Input className="h-8 text-sm" placeholder="es. Intesa Sanpaolo"
+                                value={f.banca_finanziaria}
+                                onChange={e => setFinancing(prev => prev.map((r, i) => i === idx ? { ...r, banca_finanziaria: e.target.value, _dirty: true } : r))} />
+                            ) : (
+                              <p className="text-sm">{f.banca_finanziaria || '—'}</p>
+                            )}
+                          </div>
+
+                          {/* Importo iniziale */}
+                          <div>
+                            <label className="text-xs text-muted-foreground font-medium mb-1 block">Importo iniziale (€)</label>
+                            {canEdit ? (
+                              <Input className="h-8 text-sm" type="number" placeholder="0,00"
+                                value={f.importo_iniziale}
+                                onChange={e => setFinancing(prev => prev.map((r, i) => i === idx ? { ...r, importo_iniziale: e.target.value, _dirty: true } : r))} />
+                            ) : (
+                              <p className="text-sm">{f.importo_iniziale ? `€ ${parseFloat(f.importo_iniziale).toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}</p>
+                            )}
+                          </div>
+
+                          {/* Rata mensile */}
+                          <div>
+                            <label className="text-xs text-muted-foreground font-medium mb-1 block">Rata mensile (€)</label>
+                            {canEdit ? (
+                              <Input className="h-8 text-sm" type="number" placeholder="0,00"
+                                value={f.rata}
+                                onChange={e => setFinancing(prev => prev.map((r, i) => i === idx ? { ...r, rata: e.target.value, _dirty: true } : r))} />
+                            ) : (
+                              <p className="text-sm">{f.rata ? `€ ${parseFloat(f.rata).toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}</p>
+                            )}
+                          </div>
+
+                          {/* Durata */}
+                          <div>
+                            <label className="text-xs text-muted-foreground font-medium mb-1 block">Durata (mesi)</label>
+                            {canEdit ? (
+                              <Input className="h-8 text-sm" type="number" placeholder="es. 120"
+                                value={f.durata_mesi}
+                                onChange={e => setFinancing(prev => prev.map((r, i) => i === idx ? { ...r, durata_mesi: e.target.value, _dirty: true } : r))} />
+                            ) : (
+                              <p className="text-sm">{f.durata_mesi ? `${f.durata_mesi} mesi` : '—'}</p>
+                            )}
+                          </div>
+
+                          {/* Debito residuo */}
+                          <div>
+                            <label className="text-xs text-muted-foreground font-medium mb-1 block">Debito residuo (€)</label>
+                            {canEdit ? (
+                              <Input className="h-8 text-sm" type="number" placeholder="0,00"
+                                value={f.debito_residuo}
+                                onChange={e => setFinancing(prev => prev.map((r, i) => i === idx ? { ...r, debito_residuo: e.target.value, _dirty: true } : r))} />
+                            ) : (
+                              <p className="text-sm font-semibold">{f.debito_residuo ? `€ ${parseFloat(f.debito_residuo).toLocaleString('it-IT', { minimumFractionDigits: 2 })}` : '—'}</p>
+                            )}
+                          </div>
+
+                          {/* Note */}
+                          <div className="col-span-2">
+                            <label className="text-xs text-muted-foreground font-medium mb-1 block">Note</label>
+                            {canEdit ? (
+                              <Input className="h-8 text-sm" placeholder="Note aggiuntive..."
+                                value={f.note}
+                                onChange={e => setFinancing(prev => prev.map((r, i) => i === idx ? { ...r, note: e.target.value, _dirty: true } : r))} />
+                            ) : (
+                              <p className="text-sm text-muted-foreground">{f.note || '—'}</p>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+
+                  {/* Totali */}
+                  <div className="flex gap-6 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-sm">
+                    <div>
+                      <span className="text-xs text-blue-600 font-medium uppercase">Tot. rate mensili</span>
+                      <p className="font-bold text-blue-800">
+                        € {financing.reduce((s, r) => s + (parseFloat(r.rata) || 0), 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-blue-600 font-medium uppercase">Tot. debito residuo</span>
+                      <p className="font-bold text-blue-800">
+                        € {financing.reduce((s, r) => s + (parseFloat(r.debito_residuo) || 0), 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
                   </div>
+
+                  {/* Pulsante salva (solo canEdit, solo se ci sono modifiche) */}
+                  {canEdit && financing.some(r => r._dirty) && (
+                    <Button className="w-full gap-2" disabled={savingFin}
+                      onClick={async () => {
+                        if (!id) return;
+                        setSavingFin(true);
+                        try {
+                          for (let i = 0; i < financing.length; i++) {
+                            const r = financing[i];
+                            if (!r._dirty) continue;
+                            const payload = {
+                              practice_id: id,
+                              tipologia: r.tipologia,
+                              banca_finanziaria: r.banca_finanziaria || null,
+                              importo_iniziale: parseFloat(r.importo_iniziale) || null,
+                              rata: parseFloat(r.rata) || null,
+                              durata_mesi: parseInt(r.durata_mesi) || null,
+                              debito_residuo: parseFloat(r.debito_residuo) || null,
+                              note: r.note || null,
+                              ordinamento: i,
+                            };
+                            if (r._new) {
+                              const { data: ins } = await supabase.from('client_financing').insert(payload).select('id').single();
+                              if (ins) setFinancing(prev => prev.map((row, idx) => idx === i ? { ...row, id: ins.id, _new: false, _dirty: false } : row));
+                            } else {
+                              await supabase.from('client_financing').update(payload).eq('id', r.id);
+                              setFinancing(prev => prev.map((row, idx) => idx === i ? { ...row, _dirty: false } : row));
+                            }
+                          }
+                          toast.success('Finanziamenti salvati!');
+                        } catch {
+                          toast.error('Errore nel salvataggio');
+                        } finally {
+                          setSavingFin(false);
+                        }
+                      }}>
+                      <Save className="w-4 h-4" />
+                      {savingFin ? 'Salvataggio...' : 'Salva finanziamenti'}
+                    </Button>
+                  )}
                 </div>
               )}
             </TabsContent>
