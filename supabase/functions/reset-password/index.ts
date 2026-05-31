@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     const { data, error } = await sb.auth.admin.generateLink({
       type: 'recovery',
       email: email.trim().toLowerCase(),
-      options: { redirectTo: appUrl },
+      options: { redirectTo: `${appUrl}/#/reset-password` },
     })
     if (error || !data) return fail(error?.message ?? 'Errore generazione link')
 
