@@ -19,7 +19,6 @@ export default function PratichePage() {
   const { isAgente, isSuperAdmin, isSegreteria, canEdit, user } = useAuth();
   const [practices, setPractices] = useState<Practice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('tutti');
@@ -31,7 +30,7 @@ export default function PratichePage() {
   const [agents, setAgents] = useState<{ id: string; nome?: string; email: string }[]>([]);
 
   async function load() {
-    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)');
+    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)');
 
     if (isAgente && user?.id) {
       // Agente: vede le proprie E quelle assegnate a lui
@@ -62,7 +61,6 @@ export default function PratichePage() {
   useEffect(() => {
     load();
     supabase.from('clients').select('*').order('ragione_sociale').then(r => setClients(r.data ?? []));
-    supabase.from('banks').select('*').eq('attiva', true).order('nome').then(r => setBanks(r.data ?? []));
     // Carica agenti (per segreteria/superadmin che assegnano pratiche)
     supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome')
       .then(r => setAgents(r.data ?? []));
@@ -125,24 +123,6 @@ export default function PratichePage() {
       );
     }
 
-    // Se c'è una banca, aggiungi i suoi documenti specifici
-    if (form.bank_id) {
-      const { data: bankReqs } = await supabase.from('bank_document_requirements')
-        .select('*').eq('bank_id', form.bank_id);
-      if (bankReqs && bankReqs.length > 0) {
-        await supabase.from('practice_documents').insert(
-          bankReqs.map(r => ({
-            practice_id: practice.id,
-            bank_requirement_id: r.id,
-            nome: r.nome,
-            descrizione: r.descrizione,
-            tipo: 'banca',
-            obbligatorio: r.obbligatorio,
-            status: 'richiesto',
-          }))
-        );
-      }
-    }
 
     // Log stato
     await supabase.from('practice_status_log').insert({
@@ -204,7 +184,6 @@ export default function PratichePage() {
         <div className="space-y-2">
           {filtered.map(p => {
             const client = (p as Practice & { clients?: { ragione_sociale: string; email: string } }).clients;
-            const bank = (p as Practice & { banks?: { nome: string } }).banks;
             const assignedAgent = (p as Practice & { assigned_agent?: { id: string; nome?: string; email: string } }).assigned_agent;
             return (
               <Card key={p.id} className="border-border hover:border-primary/30 transition-colors cursor-pointer" onClick={() => navigate(`/admin/pratiche/${p.id}`)}>
@@ -216,7 +195,6 @@ export default function PratichePage() {
                         <code className="text-xs text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">{p.numero_pratica}</code>
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
-                        {bank && <span>🏦 {bank.nome}</span>}
                         {assignedAgent && !isAgente && <span>👤 {assignedAgent.nome || assignedAgent.email}</span>}
                         {p.importo_richiesto && <span className="flex items-center gap-1"><Euro className="w-3 h-3" />{p.importo_richiesto.toLocaleString('it-IT')}</span>}
                         <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(p.created_at).toLocaleDateString('it-IT')}</span>
