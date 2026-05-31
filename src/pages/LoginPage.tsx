@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
@@ -11,17 +11,34 @@ import { FileText, Lock, Mail, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
-  const { signIn } = useAuth();
+  const { signIn, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [waitingForAuth, setWaitingForAuth] = useState(false);
 
   // Recupera password
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [sendingRecovery, setSendingRecovery] = useState(false);
+
+  // Se già loggato (es. refresh con sessione attiva) → redirect diretto
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/admin/dashboard', { replace: true });
+    }
+  }, [authLoading, user]);
+
+  // Naviga SOLO quando onAuthStateChange ha aggiornato user
+  // Evita la race condition su mobile (navigate() prima che user sia nel state)
+  useEffect(() => {
+    if (waitingForAuth && user) {
+      navigate('/admin/dashboard', { replace: true });
+      supabase.functions.invoke('log-access').catch(() => {/* silent */});
+    }
+  }, [waitingForAuth, user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,9 +51,9 @@ export default function LoginPage() {
       toast.success('Accesso effettuato');
       if (remember) localStorage.setItem('credifile_remember', email);
       else localStorage.removeItem('credifile_remember');
-      navigate('/admin/dashboard');
-      // Log accesso in background (non blocca il navigate)
-      supabase.functions.invoke('log-access').catch(() => {/* silent */});
+      // Non navigare subito: aspetta che onAuthStateChange aggiorni user
+      // Risolve la race condition su mobile (Safari/Android)
+      setWaitingForAuth(true);
     }
   };
 
