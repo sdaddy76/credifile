@@ -37,6 +37,7 @@ export default function PratichePage() {
   const [existingPracticeBanks, setExistingPracticeBanks] = useState<{id:string;bank_id:string;status:string;note?:string;data_invio?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
   const [loadingBankDialog, setLoadingBankDialog] = useState(false);
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
+  const [removingBankId, setRemovingBankId] = useState<string|null>(null);
   const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
   const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
 
@@ -46,11 +47,13 @@ export default function PratichePage() {
     setAssignBankNote('');
     setSendBankEmail(false);
     setLoadingBankDialog(true);
-    const { data } = await supabase
+    let q = supabase
       .from('practice_banks')
       .select('*, banks(nome,email,email_invio_banca)')
-      .eq('practice_id', practice.id)
-      .order('created_at');
+      .eq('practice_id', practice.id);
+    // Segreteria vede solo le proprie assegnazioni, super_admin vede tutte
+    if (isSegreteria && user?.id) q = q.eq('created_by', user.id);
+    const { data } = await q.order('created_at');
     setExistingPracticeBanks((data ?? []) as typeof existingPracticeBanks);
     setLoadingBankDialog(false);
   }
@@ -82,6 +85,20 @@ export default function PratichePage() {
     }
     setSendingBankId(null);
   }
+
+  async function handleRemoveBank(pbId: string, bankNome: string) {
+    if (!confirm(`Rimuovere l'assegnazione a "${bankNome}" da questa pratica?`)) return;
+    setRemovingBankId(pbId);
+    const { error } = await supabase.from('practice_banks').delete().eq('id', pbId);
+    if (error) {
+      toast.error('Errore rimozione: ' + error.message);
+    } else {
+      toast.success(`Banca "${bankNome}" rimossa dalla pratica`);
+      setExistingPracticeBanks(prev => prev.filter(pb => pb.id !== pbId));
+    }
+    setRemovingBankId(null);
+  }
+
 
   async function load() {
     let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)');
@@ -212,6 +229,7 @@ export default function PratichePage() {
       practice_id: showAssignBank.id,
       bank_id: assignBankId,
       status: 'da_inviare',
+      created_by: user?.id ?? null,
     });
     if (error) {
       setSavingBank(false);
@@ -236,11 +254,11 @@ export default function PratichePage() {
     setAssignBankNote('');
     setSendBankEmail(false);
     // Ricarica le banche nel dialog senza chiuderlo
-    const { data: refreshed } = await supabase
-      .from('practice_banks')
+    let rq = supabase.from('practice_banks')
       .select('*, banks(nome,email,email_invio_banca)')
-      .eq('practice_id', showAssignBank.id)
-      .order('created_at');
+      .eq('practice_id', showAssignBank.id);
+    if (isSegreteria && user?.id) rq = rq.eq('created_by', user.id);
+    const { data: refreshed } = await rq.order('created_at');
     setExistingPracticeBanks((refreshed ?? []) as typeof existingPracticeBanks);
     load();
   };
@@ -431,9 +449,20 @@ export default function PratichePage() {
                             : <Clock className="w-4 h-4 text-amber-500 shrink-0" />}
                           <span className="font-medium text-sm">{pb.banks?.nome}</span>
                         </div>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${pb.status === 'inviata' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {pb.status === 'inviata' ? 'Inviata' : 'Da inviare'}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${pb.status === 'inviata' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {pb.status === 'inviata' ? 'Inviata' : 'Da inviare'}
+                          </span>
+                          <button
+                            type="button"
+                            title="Rimuovi banca dalla pratica"
+                            disabled={removingBankId === pb.id}
+                            onClick={() => handleRemoveBank(pb.id, pb.banks?.nome ?? 'questa banca')}
+                            className="text-destructive/60 hover:text-destructive p-0.5 rounded disabled:opacity-40"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                       {pb.status === 'inviata' && pb.data_invio && (
                         <p className="text-xs text-muted-foreground">
