@@ -38,6 +38,7 @@ export default function PratichePage() {
   const [loadingBankDialog, setLoadingBankDialog] = useState(false);
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
+  const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
 
   async function openBankDialog(practice: Practice) {
     setShowAssignBank(practice);
@@ -61,6 +62,7 @@ export default function PratichePage() {
     setSendBankEmail(false);
     setExistingPracticeBanks([]);
     setSendNoteFor({});
+    setShowNoteFor({});
   }
 
   async function handleSendExisting(bankId: string) {
@@ -438,29 +440,41 @@ export default function PratichePage() {
                           Inviata il {new Date(pb.data_invio).toLocaleDateString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
                         </p>
                       )}
-                      {/* Textarea nota + bottone invia */}
+                      {/* Bottone invia + nota collassabile */}
                       <div className="space-y-1.5">
-                        <Textarea
-                          placeholder="Note per l'invio (opzionale)..."
-                          rows={2}
-                          className="text-xs"
-                          value={sendNoteFor[pb.bank_id] ?? ''}
-                          onChange={e => setSendNoteFor(prev => ({ ...prev, [pb.bank_id]: e.target.value }))}
-                        />
-                        <Button
-                          size="sm"
-                          variant={pb.status === 'inviata' ? 'outline' : 'default'}
-                          className="gap-1.5 w-full"
-                          disabled={sendingBankId === pb.bank_id}
-                          onClick={() => handleSendExisting(pb.bank_id)}
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          {sendingBankId === pb.bank_id
-                            ? 'Invio in corso...'
-                            : pb.status === 'inviata'
-                              ? 'Reinvia documenti'
-                              : 'Invia documenti alla banca'}
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant={pb.status === 'inviata' ? 'outline' : 'default'}
+                            className="gap-1.5 flex-1"
+                            disabled={sendingBankId === pb.bank_id}
+                            onClick={() => handleSendExisting(pb.bank_id)}
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            {sendingBankId === pb.bank_id
+                              ? 'Invio in corso...'
+                              : pb.status === 'inviata'
+                                ? 'Reinvia documenti'
+                                : 'Invia documenti alla banca'}
+                          </Button>
+                          <button
+                            type="button"
+                            className="text-xs text-muted-foreground hover:text-foreground underline shrink-0"
+                            onClick={() => setShowNoteFor(prev => ({ ...prev, [pb.bank_id]: !prev[pb.bank_id] }))}
+                          >
+                            {showNoteFor[pb.bank_id] ? 'Nascondi nota' : '+ Aggiungi nota'}
+                          </button>
+                        </div>
+                        {showNoteFor[pb.bank_id] && (
+                          <Textarea
+                            placeholder="Note per l'invio (opzionale)..."
+                            rows={2}
+                            className="text-xs"
+                            value={sendNoteFor[pb.bank_id] ?? ''}
+                            onChange={e => setSendNoteFor(prev => ({ ...prev, [pb.bank_id]: e.target.value }))}
+                            autoFocus
+                          />
+                        )}
                       </div>
                     </div>
                   ))}
