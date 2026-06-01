@@ -22,7 +22,7 @@ interface BankKpiReq {
   kpi_label: string; min_value: number | null; max_value: number | null;
 }
 interface BancaCheck {
-  bankId: string; bankName: string;
+  bankId: string; bankName: string; logoUrl: string | null;
   reqs: Array<BankKpiReq & { actual: number | null; pass: boolean | null }>;
   passCount: number; failCount: number; ndCount: number;
 }
@@ -204,6 +204,49 @@ function generatePdf(bilanci: BilancioRecord[], checks: BancaCheck[], practiceId
 }
 
 // ── componente ──────────────────────────────────────────────────────────────
+// ── BankLogo: mostra logo banca con fallback iniziali ───────────────────────
+function BankLogo({ name, logoUrl, size = 'md' }: { name: string; logoUrl: string | null; size?: 'sm' | 'md' | 'lg' }) {
+  const dim = size === 'sm' ? 'w-5 h-5 text-[9px]' : size === 'lg' ? 'w-12 h-12 text-base' : 'w-8 h-8 text-xs';
+  const initials = name.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+  if (logoUrl) {
+    return (
+      <img
+        src={logoUrl} alt={name}
+        className={`${dim} object-contain rounded shrink-0`}
+        onError={e => {
+          const el = e.currentTarget;
+          el.style.display = 'none';
+          const fb = el.nextElementSibling as HTMLElement | null;
+          if (fb) fb.style.display = 'flex';
+        }}
+      />
+    );
+  }
+  return (
+    <div className={`${dim} rounded bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0`}>
+      {initials}
+    </div>
+  );
+}
+// fallback span (reso visibile da onError)
+function BankLogoWithFallback({ name, logoUrl, size = 'md' }: { name: string; logoUrl: string | null; size?: 'sm' | 'md' | 'lg' }) {
+  const dim = size === 'sm' ? 'w-5 h-5 text-[9px]' : size === 'lg' ? 'w-12 h-12 text-base' : 'w-8 h-8 text-xs';
+  const initials = name.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+  return (
+    <div className={`relative ${dim} shrink-0`}>
+      {logoUrl && (
+        <img src={logoUrl} alt={name}
+          className="w-full h-full object-contain rounded absolute inset-0"
+          onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+      )}
+      <div className={`${dim} rounded bg-primary/10 text-primary font-bold flex items-center justify-center`}
+        style={{ visibility: logoUrl ? 'hidden' : 'visible' }}>
+        {initials}
+      </div>
+    </div>
+  );
+}
+
 export default function BancabilitaTab({ practiceId }: Props) {
   const [bilanci,    setBilanci]    = useState<BilancioRecord[]>([]);
   const [checks,     setChecks]     = useState<BancaCheck[]>([]);
@@ -226,7 +269,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
       // 2. Banche assegnate
       const { data: pbData } = await supabase
         .from('practice_banks')
-        .select('bank_id, banks(id, nome)')
+        .select('bank_id, banks(id, nome, email, logo_url)')
         .eq('practice_id', practiceId);
       if (!pbData || pbData.length === 0) { setChecks([]); return; }
 
@@ -240,8 +283,11 @@ export default function BancabilitaTab({ practiceId }: Props) {
       const reqs = (reqData ?? []) as BankKpiReq[];
 
       // 4. Costruisce i check
-      const built: BancaCheck[] = pbData.map((r: { bank_id: string; banks: { id: string; nome: string } | null }) => {
+      const built: BancaCheck[] = pbData.map((r: { bank_id: string; banks: { id: string; nome: string; email?: string; logo_url?: string } | null }) => {
         const bankReqs = reqs.filter(req => req.bank_id === r.bank_id);
+        // logo: usa logo_url se presente, altrimenti Clearbit dal dominio email
+        const logoUrl = r.banks?.logo_url
+          || (r.banks?.email ? `https://logo.clearbit.com/${r.banks.email.split('@')[1]}` : null);
         const enriched = bankReqs.map(req => {
           let actual: number | null = null;
           if (latestKpi) {
@@ -257,7 +303,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
           return { ...req, actual, pass };
         });
         return {
-          bankId: r.bank_id, bankName: r.banks?.nome ?? r.bank_id,
+          bankId: r.bank_id, bankName: r.banks?.nome ?? r.bank_id, logoUrl,
           reqs: enriched,
           passCount: enriched.filter(e => e.pass === true).length,
           failCount: enriched.filter(e => e.pass === false).length,
@@ -334,6 +380,51 @@ export default function BancabilitaTab({ practiceId }: Props) {
         </div>
       )}
 
+      {/* ── Strip: banche presentabili ── */}
+      {!noBilancio && checks.length > 0 && (() => {
+        const presentabili = checks.filter(b => b.reqs.length > 0 && b.failCount === 0 && b.ndCount === 0);
+        const parziali = checks.filter(b => b.reqs.length > 0 && b.failCount === 0 && b.ndCount > 0);
+        const nonPres  = checks.filter(b => b.reqs.length > 0 && b.failCount > 0);
+        return (
+          <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
+            <p className="text-xs font-semibold text-green-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5" /> Pratica presentabile a
+            </p>
+            {presentabili.length === 0 ? (
+              <p className="text-sm text-green-700 italic">Nessuna banca soddisfa tutti i requisiti KPI.</p>
+            ) : (
+              <div className="flex flex-wrap gap-3 items-center">
+                {presentabili.map(b => (
+                  <div key={b.bankId} className="flex items-center gap-2 bg-white rounded-lg border border-green-200 px-3 py-2 shadow-sm">
+                    <BankLogo name={b.bankName} logoUrl={b.logoUrl} size="md" />
+                    <span className="text-sm font-semibold text-green-900">{b.bankName}</span>
+                    <span className="text-xs text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full font-medium">{b.passCount}/{b.reqs.length} OK</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(parziali.length > 0 || nonPres.length > 0) && (
+              <div className="mt-3 pt-3 border-t border-green-200 flex flex-wrap gap-2">
+                {parziali.map(b => (
+                  <div key={b.bankId} className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
+                    <BankLogo name={b.bankName} logoUrl={b.logoUrl} size="sm" />
+                    <span>{b.bankName}</span>
+                    <span className="opacity-70">⚠️ {b.ndCount} N/D</span>
+                  </div>
+                ))}
+                {nonPres.map(b => (
+                  <div key={b.bankId} className="flex items-center gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded-lg">
+                    <BankLogo name={b.bankName} logoUrl={b.logoUrl} size="sm" />
+                    <span>{b.bankName}</span>
+                    <span className="opacity-70">❌ {b.failCount} KO</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ── Cards banche (visione immediata) ── */}
       {!noBilancio && checks.length > 0 && (
         <>
@@ -375,8 +466,8 @@ export default function BancabilitaTab({ practiceId }: Props) {
                   <CardContent className="p-4">
                     {/* Card header */}
                     <div className="flex items-start justify-between gap-2">
-                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
-                        <ShieldCheck className="w-4 h-4" />
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border ${iconBg}`}>
+                        <BankLogoWithFallback name={banca.bankName} logoUrl={banca.logoUrl} size="md" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-foreground text-sm truncate">{banca.bankName}</p>
