@@ -21,10 +21,14 @@ interface BankKpiReq {
   id: string; bank_id: string; kpi_key: string; kpi_area: string;
   kpi_label: string; min_value: number | null; max_value: number | null;
 }
+interface AtecoReq { id: string; bank_id: string; codice: string; tipo: 'incluso' | 'escluso'; descrizione: string | null }
 interface BancaCheck {
   bankId: string; bankName: string; logoUrl: string | null;
   reqs: Array<BankKpiReq & { actual: number | null; pass: boolean | null }>;
   passCount: number; failCount: number; ndCount: number;
+  atecoPass: boolean | null;   // null = nessun requisito ATECO configurato
+  atecoInclusi: AtecoReq[];
+  atecoEsclusi: AtecoReq[];
 }
 
 // ── helpers colore ──────────────────────────────────────────────────────────
@@ -277,15 +281,22 @@ export default function BancabilitaTab({ practiceId }: Props) {
 
       // 3. Requisiti KPI
       const { data: reqData } = await supabase
-        .from('bank_kpi_requirements')
-        .select('*')
-        .in('bank_id', bankIds);
+        .from('bank_kpi_requirements').select('*').in('bank_id', bankIds);
       const reqs = (reqData ?? []) as BankKpiReq[];
 
-      // 4. Costruisce i check
+      // 4. Requisiti ATECO
+      const { data: atecoData } = await supabase
+        .from('bank_ateco_requirements').select('*').in('bank_id', bankIds);
+      const atecoReqs = (atecoData ?? []) as AtecoReq[];
+
+      // 5. Codice ATECO della pratica
+      const { data: practiceData } = await supabase
+        .from('practices').select('codice_ateco').eq('id', practiceId).single();
+      const practiceAteco = (practiceData?.codice_ateco ?? '').toUpperCase().trim();
+
+      // 6. Costruisce i check
       const built: BancaCheck[] = pbData.map((r: { bank_id: string; banks: { id: string; nome: string; email?: string; logo_url?: string } | null }) => {
         const bankReqs = reqs.filter(req => req.bank_id === r.bank_id);
-        // logo: usa logo_url se presente, altrimenti Clearbit dal dominio email
         const logoUrl = r.banks?.logo_url
           || (r.banks?.email ? `https://logo.clearbit.com/${r.banks.email.split('@')[1]}` : null);
         const enriched = bankReqs.map(req => {
@@ -302,12 +313,30 @@ export default function BancabilitaTab({ practiceId }: Props) {
           }
           return { ...req, actual, pass };
         });
+
+        // ATECO check (prefix match)
+        const bankInclusi = atecoReqs.filter(a => a.bank_id === r.bank_id && a.tipo === 'incluso');
+        const bankEsclusi = atecoReqs.filter(a => a.bank_id === r.bank_id && a.tipo === 'escluso');
+        let atecoPass: boolean | null = null;
+        if ((bankInclusi.length > 0 || bankEsclusi.length > 0) && practiceAteco) {
+          atecoPass = true;
+          if (bankInclusi.length > 0) {
+            const ok = bankInclusi.some(a => practiceAteco.startsWith(a.codice.toUpperCase()));
+            if (!ok) atecoPass = false;
+          }
+          if (atecoPass && bankEsclusi.length > 0) {
+            const blocked = bankEsclusi.some(a => practiceAteco.startsWith(a.codice.toUpperCase()));
+            if (blocked) atecoPass = false;
+          }
+        }
+
         return {
           bankId: r.bank_id, bankName: r.banks?.nome ?? r.bank_id, logoUrl,
           reqs: enriched,
           passCount: enriched.filter(e => e.pass === true).length,
           failCount: enriched.filter(e => e.pass === false).length,
           ndCount:   enriched.filter(e => e.pass === null).length,
+          atecoPass, atecoInclusi: bankInclusi, atecoEsclusi: bankEsclusi,
         };
       });
       setChecks(built);
@@ -382,7 +411,10 @@ export default function BancabilitaTab({ practiceId }: Props) {
 
       {/* ── Strip: banche presentabili ── */}
       {!noBilancio && checks.length > 0 && (() => {
-        const presentabili = checks.filter(b => b.reqs.length > 0 && b.failCount === 0 && b.ndCount === 0);
+        const presentabili = checks.filter(b =>
+          b.reqs.length > 0 && b.failCount === 0 && b.ndCount === 0 &&
+          b.atecoPass !== false  // null = non configurato (ok), false = bloccato
+        );
         const parziali = checks.filter(b => b.reqs.length > 0 && b.failCount === 0 && b.ndCount > 0);
         const nonPres  = checks.filter(b => b.reqs.length > 0 && b.failCount > 0);
         return (
@@ -475,24 +507,29 @@ export default function BancabilitaTab({ practiceId }: Props) {
                       </div>
                     </div>
 
-                    {/* Contatori */}
+                    {/* Contatori KPI */}
                     {total > 0 && (
                       <div className="flex gap-3 mt-3 text-xs">
-                        <span className="flex items-center gap-1 text-green-700">
-                          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                          {banca.passCount} OK
+                        <span className="flex items-center gap-1 text-green-700"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />{banca.passCount} OK</span>
+                        <span className="flex items-center gap-1 text-red-700"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{banca.failCount} KO</span>
+                        {banca.ndCount > 0 && <span className="flex items-center gap-1 text-gray-500"><span className="w-2 h-2 rounded-full bg-gray-300 inline-block" />{banca.ndCount} N/D</span>}
+                        <span className="text-muted-foreground ml-auto">{total} KPI</span>
+                      </div>
+                    )}
+
+                    {/* Badge ATECO */}
+                    {(banca.atecoInclusi.length > 0 || banca.atecoEsclusi.length > 0) && (
+                      <div className={`mt-2 flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border ${
+                        banca.atecoPass === true  ? 'bg-green-50 border-green-200 text-green-800' :
+                        banca.atecoPass === false ? 'bg-red-50 border-red-200 text-red-800' :
+                        'bg-amber-50 border-amber-200 text-amber-800'
+                      }`}>
+                        <span className="font-bold">ATECO</span>
+                        <span>{banca.atecoPass === true ? '✅ compatibile' : banca.atecoPass === false ? '❌ non compatibile' : '— codice pratica mancante'}</span>
+                        <span className="ml-auto text-muted-foreground">
+                          {banca.atecoInclusi.length > 0 && `+${banca.atecoInclusi.map(a => a.codice).join(', ')}`}
+                          {banca.atecoEsclusi.length > 0 && ` −${banca.atecoEsclusi.map(a => a.codice).join(', ')}`}
                         </span>
-                        <span className="flex items-center gap-1 text-red-700">
-                          <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
-                          {banca.failCount} KO
-                        </span>
-                        {banca.ndCount > 0 && (
-                          <span className="flex items-center gap-1 text-gray-500">
-                            <span className="w-2 h-2 rounded-full bg-gray-300 inline-block" />
-                            {banca.ndCount} N/D
-                          </span>
-                        )}
-                        <span className="text-muted-foreground ml-auto">{total} requisiti</span>
                       </div>
                     )}
 

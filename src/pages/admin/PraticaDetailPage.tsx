@@ -424,6 +424,18 @@ export default function PraticaDetailPage() {
               {client?.telefono && <div><p className="text-muted-foreground text-xs">Telefono</p><p>{client.telefono}</p></div>}
               {bank && <div><p className="text-muted-foreground text-xs">Banca</p><p className="flex items-center gap-1"><Building2 className="w-3 h-3" />{bank.nome}</p></div>}
               {practice.importo_richiesto && <div><p className="text-muted-foreground text-xs">Importo</p><p className="flex items-center gap-1 font-semibold"><Euro className="w-3 h-3" />{practice.importo_richiesto.toLocaleString('it-IT')}</p></div>}
+              <div>
+                <p className="text-muted-foreground text-xs">Codice ATECO</p>
+                <input
+                  className="text-sm font-mono font-semibold bg-transparent border-b border-dashed border-muted-foreground/30 focus:border-primary focus:outline-none w-28 py-0.5"
+                  defaultValue={practice.codice_ateco ?? ''}
+                  placeholder="es. 47.11"
+                  onBlur={async e => {
+                    const val = e.target.value.trim().toUpperCase();
+                    await supabase.from('practices').update({ codice_ateco: val || null }).eq('id', practice.id);
+                  }}
+                />
+              </div>
               {practice.motivazione && <div><p className="text-muted-foreground text-xs">Motivazione Richiesta</p><p className="text-sm mt-0.5 bg-muted/50 rounded p-2 leading-relaxed">{practice.motivazione}</p></div>}
             </CardContent>
           </Card>

@@ -13,25 +13,34 @@ import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Bank, BankDocumentRequirement } from '@/lib/types';
 
-// Catalogo KPI disponibili per requisiti banca
+// Catalogo KPI — stesso ordine del report (per area)
 const KPI_CATALOG = [
-  { key: 'current_ratio', area: 'liquidita', label: 'Current Ratio' },
-  { key: 'quick_ratio', area: 'liquidita', label: 'Quick Ratio' },
-  { key: 'debt_equity', area: 'solidita', label: 'Debt/Equity' },
-  { key: 'leverage', area: 'solidita', label: 'Leverage' },
-  { key: 'pn_su_ta', area: 'solidita', label: 'PN / Totale Attivo (%)' },
-  { key: 'grado_indebitamento', area: 'solidita', label: 'Grado Indebitamento' },
-  { key: 'roe', area: 'redditivita', label: 'ROE (%)' },
-  { key: 'roi', area: 'redditivita', label: 'ROI (%)' },
-  { key: 'ros', area: 'redditivita', label: 'ROS (%)' },
-  { key: 'ebitda_margin', area: 'redditivita', label: 'EBITDA Margin (%)' },
-  { key: 'pfn_ebitda', area: 'indebitamento', label: 'PFN / EBITDA' },
-  { key: 'pfn_pn', area: 'indebitamento', label: 'PFN / PN' },
-  { key: 'dso', area: 'efficienza', label: 'DSO (gg crediti)' },
-  { key: 'interest_coverage', area: 'copertura', label: 'Interest Coverage' },
-  { key: 'dscr', area: 'copertura', label: 'DSCR' },
+  // Liquidità
+  { key: 'current_ratio',       area: 'liquidita',     label: 'Current Ratio' },
+  { key: 'quick_ratio',         area: 'liquidita',     label: 'Quick Ratio' },
+  // Solidità Patrimoniale
+  { key: 'debt_equity',         area: 'solidita',      label: 'Debt/Equity' },
+  { key: 'leverage',            area: 'solidita',      label: 'Leverage' },
+  { key: 'pn_su_ta',            area: 'solidita',      label: 'PN / Totale Attivo (%)' },
+  { key: 'grado_indebitamento', area: 'solidita',      label: 'Grado Indebitamento' },
+  // Redditività
+  { key: 'roe',                 area: 'redditivita',   label: 'ROE (%)' },
+  { key: 'roi',                 area: 'redditivita',   label: 'ROI (%)' },
+  { key: 'ros',                 area: 'redditivita',   label: 'ROS (%)' },
+  { key: 'ebitda_margin',       area: 'redditivita',   label: 'EBITDA Margin (%)' },
+  { key: 'ebitda_eur',          area: 'redditivita',   label: 'EBITDA (€)' },
+  { key: 'fatturato',           area: 'redditivita',   label: 'Fatturato (€)' },
+  // Indebitamento
+  { key: 'pfn_ebitda',          area: 'indebitamento', label: 'PFN / EBITDA' },
+  { key: 'pfn_pn',              area: 'indebitamento', label: 'PFN / PN' },
+  // Efficienza Operativa
+  { key: 'dso',                 area: 'efficienza',    label: 'DSO (gg crediti)' },
+  // Copertura
+  { key: 'interest_coverage',   area: 'copertura',     label: 'Interest Coverage' },
+  { key: 'dscr',                area: 'copertura',     label: 'DSCR' },
 ];
 interface KpiReq { id: string; kpi_key: string; kpi_area: string; kpi_label: string; min_value: number | null; max_value: number | null }
+interface AtecoReq { id: string; codice: string; tipo: 'incluso' | 'escluso'; descrizione: string | null }
 
 const emptyBank = { nome: '', codice: '', contatto: '', email: '', email_invio_banca: '', note: '', attiva: true, logo_url: '' };
 const emptyReq = { nome: '', descrizione: '', obbligatorio: true };
@@ -95,6 +104,36 @@ export default function BanchePage() {
     loadKpiRequirements(bankId);
   }
 
+  // ── ATECO ──────────────────────────────────────────────────────────────────
+  const [atecoRequirements, setAtecoRequirements] = useState<Record<string, AtecoReq[]>>({});
+  const [showAtecoForm, setShowAtecoForm] = useState<string | null>(null);
+  const [atecoFormCodice, setAtecoFormCodice] = useState('');
+  const [atecoFormTipo, setAtecoFormTipo] = useState<'incluso' | 'escluso'>('incluso');
+  const [atecoFormDesc, setAtecoFormDesc] = useState('');
+
+  async function loadAtecoRequirements(bankId: string) {
+    const { data } = await supabase.from('bank_ateco_requirements').select('*').eq('bank_id', bankId).order('tipo').order('codice');
+    setAtecoRequirements(prev => ({ ...prev, [bankId]: data ?? [] }));
+  }
+
+  async function handleSaveAtecoReq(bankId: string) {
+    const codice = atecoFormCodice.trim().toUpperCase();
+    if (!codice) { toast.error('Inserisci il codice ATECO'); return; }
+    const { error } = await supabase.from('bank_ateco_requirements').insert({
+      bank_id: bankId, codice, tipo: atecoFormTipo, descrizione: atecoFormDesc.trim() || null,
+    });
+    if (error) { toast.error('Errore salvataggio ATECO'); return; }
+    toast.success('Codice ATECO aggiunto');
+    setShowAtecoForm(null); setAtecoFormCodice(''); setAtecoFormTipo('incluso'); setAtecoFormDesc('');
+    loadAtecoRequirements(bankId);
+  }
+
+  async function handleDeleteAtecoReq(id: string, bankId: string) {
+    await supabase.from('bank_ateco_requirements').delete().eq('id', id);
+    toast.success('Codice ATECO rimosso');
+    loadAtecoRequirements(bankId);
+  }
+
   useEffect(() => { loadBanks(); }, []);
 
   const toggleExpand = (id: string) => {
@@ -102,6 +141,7 @@ export default function BanchePage() {
     setExpandedBank(id);
     loadRequirements(id);
     loadKpiRequirements(id);
+    loadAtecoRequirements(id);
   };
 
   const openCreateBank = () => { setEditingBank(null); setBankForm(emptyBank); setShowBankForm(true); };
@@ -315,6 +355,76 @@ export default function BanchePage() {
                           <div className="flex gap-2">
                             <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveKpiReq(b.id)}>Salva</Button>
                             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowKpiForm(null)}>Annulla</Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── Sezione ATECO ── */}
+                    <div className="mt-4 border-t border-border pt-3">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Codici ATECO</p>
+                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                          onClick={() => { setShowAtecoForm(b.id); setAtecoFormCodice(''); setAtecoFormTipo('incluso'); setAtecoFormDesc(''); }}>
+                          <Plus className="w-3 h-3" /> Aggiungi
+                        </Button>
+                      </div>
+
+                      {(atecoRequirements[b.id] ?? []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-2">Nessun codice ATECO configurato</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {/* Prima inclusi, poi esclusi */}
+                          {(['incluso', 'escluso'] as const).map(tipo => {
+                            const items = (atecoRequirements[b.id] ?? []).filter(a => a.tipo === tipo);
+                            if (items.length === 0) return null;
+                            return (
+                              <div key={tipo}>
+                                <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${tipo === 'incluso' ? 'text-green-600' : 'text-red-600'}`}>
+                                  {tipo === 'incluso' ? '✅ Inclusi (ammessi)' : '❌ Esclusi (non ammessi)'}
+                                </p>
+                                {items.map(a => (
+                                  <div key={a.id} className={`flex items-center gap-2 rounded-lg px-3 py-1.5 mb-1 ${tipo === 'incluso' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                                    <code className={`text-sm font-bold font-mono ${tipo === 'incluso' ? 'text-green-800' : 'text-red-800'}`}>{a.codice}</code>
+                                    {a.descrizione && <span className="text-xs text-muted-foreground flex-1 truncate">{a.descrizione}</span>}
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive ml-auto"
+                                      onClick={() => handleDeleteAtecoReq(a.id, b.id)}><Trash2 className="w-3 h-3" /></Button>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {showAtecoForm === b.id && (
+                        <div className="mt-3 p-3 bg-accent/30 rounded-lg space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Codice ATECO *</Label>
+                              <Input placeholder="es. 47.11" value={atecoFormCodice}
+                                onChange={e => setAtecoFormCodice(e.target.value)} className="h-8 text-sm font-mono" />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Tipo *</Label>
+                              <Select value={atecoFormTipo} onValueChange={v => setAtecoFormTipo(v as 'incluso' | 'escluso')}>
+                                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="incluso">✅ Incluso (ammesso)</SelectItem>
+                                  <SelectItem value="escluso">❌ Escluso (non ammesso)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Descrizione (opzionale)</Label>
+                            <Input placeholder="es. Commercio al dettaglio" value={atecoFormDesc}
+                              onChange={e => setAtecoFormDesc(e.target.value)} className="h-8 text-sm" />
+                          </div>
+                          <p className="text-xs text-muted-foreground">Usa prefissi per categorie: es. "47" copre tutti i codici 47.xx</p>
+                          <div className="flex gap-2">
+                            <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveAtecoReq(b.id)}>Salva</Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAtecoForm(null)}>Annulla</Button>
                           </div>
                         </div>
                       )}
