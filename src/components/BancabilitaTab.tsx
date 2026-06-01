@@ -410,20 +410,28 @@ export default function BancabilitaTab({ practiceId }: Props) {
       )}
 
       {/* ── Strip: banche presentabili ── */}
-      {!noBilancio && checks.length > 0 && (() => {
-        const presentabili = checks.filter(b =>
-          b.reqs.length > 0 && b.failCount === 0 && b.ndCount === 0 &&
-          b.atecoPass !== false  // null = non configurato (ok), false = bloccato
-        );
-        const parziali = checks.filter(b => b.reqs.length > 0 && b.failCount === 0 && b.ndCount > 0);
-        const nonPres  = checks.filter(b => b.reqs.length > 0 && b.failCount > 0);
+      {checks.length > 0 && (() => {
+        // presentabile = nessun KO su KPI E ateco non bloccato
+        // (banche senza requisiti = nessuna restrizione = ammesse)
+        const presentabili = noBilancio
+          ? checks.filter(b => b.atecoPass !== false)
+          : checks.filter(b => b.failCount === 0 && b.ndCount === 0 && b.atecoPass !== false);
+        const parziali = noBilancio
+          ? []
+          : checks.filter(b => b.failCount === 0 && b.ndCount > 0 && b.atecoPass !== false);
+        const nonPres = checks.filter(b => b.failCount > 0 || b.atecoPass === false);
         return (
           <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
             <p className="text-xs font-semibold text-green-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5" /> Pratica presentabile a
             </p>
+            {noBilancio && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 mb-2 flex items-center gap-1.5">
+                <span>⚠️</span> KPI non verificati — analizza prima un bilancio nel tab "Analisi Finanziaria"
+              </p>
+            )}
             {presentabili.length === 0 ? (
-              <p className="text-sm text-green-700 italic">Nessuna banca soddisfa tutti i requisiti KPI.</p>
+              <p className="text-sm text-green-700 italic">Nessuna banca soddisfa tutti i requisiti KPI configurati.</p>
             ) : (
               <div className="flex flex-wrap gap-3 items-center">
                 {presentabili.map(b => (
