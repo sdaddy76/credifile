@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
+import AnalisiFinanziariaTab from '@/components/AnalisiFinanziariaTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
@@ -499,6 +500,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="banche">Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
               <TabsTrigger value="finanziamenti">Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
               <TabsTrigger value="scheda">Scheda Rischio</TabsTrigger>
+              <TabsTrigger value="analisi">Analisi Finanziaria</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
             </TabsList>
 
@@ -943,7 +945,11 @@ export default function PraticaDetailPage() {
             </TabsContent>
 
             <TabsContent value="scheda" className="mt-3">
-              {id && <SchedaValutazioneRischio practiceId={id} />}
+              <SchedaValutazioneRischio practiceId={id!} />
+            </TabsContent>
+
+            <TabsContent value="analisi" className="mt-3">
+              {id && <AnalisiFinanziariaTab practiceId={id} />}
             </TabsContent>
 
             <TabsContent value="log" className="mt-3">
