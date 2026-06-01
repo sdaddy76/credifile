@@ -1,0 +1,468 @@
+import { useEffect, useState, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import { RefreshCw, ShieldCheck, Download, ChevronDown, ChevronUp, AlertCircle, TrendingUp } from 'lucide-react';
+import { toast } from 'sonner';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+interface Props { practiceId: string }
+
+interface KpiEntry { valore: number | null; formatted: string; semaforo: string; label: string }
+type KpiResult = Record<string, Record<string, KpiEntry>>;
+
+interface BilancioRecord {
+  id: string; anno_esercizio: number; ragione_sociale: string;
+  is_holding: boolean; kpi: KpiResult; created_at: string;
+}
+interface BankKpiReq {
+  id: string; bank_id: string; kpi_key: string; kpi_area: string;
+  kpi_label: string; min_value: number | null; max_value: number | null;
+}
+interface BancaCheck {
+  bankId: string; bankName: string;
+  reqs: Array<BankKpiReq & { actual: number | null; pass: boolean | null }>;
+  passCount: number; failCount: number; ndCount: number;
+}
+
+// ── helpers colore ──────────────────────────────────────────────────────────
+function passColorFill(p: boolean | null): [number,number,number] {
+  if (p === true)  return [220,252,231];
+  if (p === false) return [254,226,226];
+  return [243,244,246];
+}
+function passColorText(p: boolean | null): [number,number,number] {
+  if (p === true)  return [22,101,52];
+  if (p === false) return [185,28,28];
+  return [107,114,128];
+}
+function semColorFill(s: string): [number,number,number] {
+  if (s === 'verde')  return [220,252,231];
+  if (s === 'giallo') return [254,243,199];
+  if (s === 'rosso')  return [254,226,226];
+  return [243,244,246];
+}
+function semColorText(s: string): [number,number,number] {
+  if (s === 'verde')  return [22,101,52];
+  if (s === 'giallo') return [146,64,14];
+  if (s === 'rosso')  return [185,28,28];
+  return [107,114,128];
+}
+function passLabel(p: boolean | null) { return p === true ? 'OK' : p === false ? 'KO' : 'N/D'; }
+
+// ── generazione PDF ─────────────────────────────────────────────────────────
+function generatePdf(bilanci: BilancioRecord[], checks: BancaCheck[], practiceId: string) {
+  const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const W    = doc.internal.pageSize.getWidth();
+  const BLUE: [number,number,number] = [30,58,138];
+  const DGRAY: [number,number,number] = [71,85,105];
+  const now  = new Date().toLocaleDateString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric' });
+  let y = 0;
+
+  // header
+  doc.setFillColor(...BLUE);
+  doc.rect(0, 0, W, 28, 'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(16); doc.setFont('helvetica','bold');
+  doc.text('REPORT BANCABILITÀ', 14, 11);
+  doc.setFontSize(9); doc.setFont('helvetica','normal');
+  doc.text('Credifile — Sistema di Gestione Finanziaria', 14, 17);
+  doc.setFontSize(8);
+  doc.text(`Pratica: ${practiceId}   |   Generato il: ${now}`, 14, 23);
+  y = 35;
+
+  // dati societari
+  if (bilanci.length > 0) {
+    const b0 = bilanci[0];
+    doc.setFillColor(248,250,252);
+    doc.roundedRect(14, y, W-28, 18, 2, 2, 'F');
+    doc.setTextColor(30,41,59); doc.setFontSize(12); doc.setFont('helvetica','bold');
+    doc.text(b0.ragione_sociale ?? '—', 19, y+7);
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(...DGRAY);
+    doc.text(
+      `Esercizi analizzati: ${bilanci.map(b => b.anno_esercizio).join(', ')}` +
+      (b0.is_holding ? '   ★ Holding' : ''), 19, y+13,
+    );
+    y += 25;
+  }
+
+  // KPI per bilancio
+  for (const bil of bilanci) {
+    if (!bil.kpi) continue;
+    doc.setTextColor(...BLUE); doc.setFontSize(11); doc.setFont('helvetica','bold');
+    doc.text(`KPI BANCARI — Esercizio ${bil.anno_esercizio}`, 14, y);
+    y += 4;
+
+    const areaMap: Record<string,string> = {
+      liquidita:'Liquidità', solidita:'Solidità Patrimoniale',
+      redditivita:'Redditività', indebitamento:'Indebitamento',
+      efficienza:'Efficienza Operativa', copertura:'Copertura',
+    };
+    const rows: (string | {content:string;styles:object})[][] = [];
+    for (const [area, areaLabel] of Object.entries(areaMap)) {
+      const entries = bil.kpi[area]; if (!entries) continue;
+      rows.push([{ content: areaLabel.toUpperCase(), styles:{ fontStyle:'bold', fillColor:BLUE, textColor:[255,255,255] as [number,number,number], colSpan:3 } },'','']);
+      for (const entry of Object.values(entries)) {
+        const sem = entry.semaforo === 'verde' ? '● OK' : entry.semaforo === 'giallo' ? '● Attenzione' : entry.semaforo === 'rosso' ? '● Critico' : '—';
+        rows.push([entry.label, entry.formatted, { content:sem, styles:{ fillColor:semColorFill(entry.semaforo), textColor:semColorText(entry.semaforo), fontStyle:'bold' } }]);
+      }
+    }
+    autoTable(doc, {
+      startY: y,
+      head: [['Indicatore','Valore','Rating']],
+      body: rows,
+      margin: { left:14, right:14 },
+      styles: { fontSize:8, cellPadding:2.5 },
+      headStyles: { fillColor:BLUE, textColor:[255,255,255], fontStyle:'bold', fontSize:8 },
+      columnStyles: { 0:{ cellWidth:90 }, 1:{ cellWidth:40, halign:'right' }, 2:{ cellWidth:40, halign:'center' } },
+      didParseCell(data) {
+        if (data.section === 'body') {
+          const cell = data.cell.raw as { styles?: { fillColor?:[number,number,number]; textColor?:[number,number,number]; fontStyle?:string } } | string;
+          if (typeof cell === 'object' && cell.styles?.fillColor) {
+            data.cell.styles.fillColor = cell.styles.fillColor;
+            data.cell.styles.textColor = cell.styles.textColor ?? [0,0,0];
+            if (cell.styles.fontStyle) data.cell.styles.fontStyle = cell.styles.fontStyle as 'bold'|'normal'|'italic'|'bolditalic';
+          }
+        }
+      },
+    });
+    y = (doc as jsPDF & { lastAutoTable:{ finalY:number } }).lastAutoTable.finalY + 8;
+    if (y > 260) { doc.addPage(); y = 15; }
+  }
+
+  // verifica bancabilità
+  if (checks.length > 0) {
+    if (y > 200) { doc.addPage(); y = 15; }
+    doc.setTextColor(...BLUE); doc.setFontSize(11); doc.setFont('helvetica','bold');
+    doc.text('VERIFICA BANCABILITÀ', 14, y); y += 5;
+
+    for (const banca of checks) {
+      const total   = banca.reqs.length;
+      const allPass = total > 0 && banca.failCount === 0 && banca.ndCount === 0;
+      const hasFail = banca.failCount > 0;
+      const sfill: [number,number,number] = total === 0 ? [243,244,246] : allPass ? [220,252,231] : hasFail ? [254,226,226] : [254,243,199];
+      const stext: [number,number,number] = total === 0 ? [107,114,128] : allPass ? [22,101,52] : hasFail ? [185,28,28] : [146,64,14];
+      const slabel = total === 0 ? 'Nessun requisito' : allPass ? '✔ BANCABILE' : hasFail ? '✘ NON BANCABILE' : '⚠ DATI INCOMPLETI';
+
+      if (y > 265) { doc.addPage(); y = 15; }
+      doc.setFillColor(...sfill);
+      doc.roundedRect(14, y, W-28, 11, 2, 2, 'F');
+      doc.setTextColor(30,41,59); doc.setFontSize(9); doc.setFont('helvetica','bold');
+      doc.text(banca.bankName, 18, y+7);
+      doc.setTextColor(...stext); doc.setFontSize(8); doc.setFont('helvetica','bold');
+      doc.text(slabel, W-14, y+7, { align:'right' });
+      y += 14;
+
+      if (total === 0) {
+        doc.setTextColor(...DGRAY); doc.setFontSize(7.5); doc.setFont('helvetica','italic');
+        doc.text('Nessun requisito KPI configurato.', 18, y); y += 8; continue;
+      }
+      doc.setTextColor(...DGRAY); doc.setFontSize(7.5); doc.setFont('helvetica','normal');
+      doc.text(`${banca.passCount} OK  ·  ${banca.failCount} KO  ·  ${banca.ndCount} N/D  su ${total} requisiti`, 18, y);
+      y += 4;
+
+      autoTable(doc, {
+        startY: y,
+        head: [['KPI','Area','Soglia','Valore','Esito']],
+        body: banca.reqs.map(req => {
+          const th = [req.min_value !== null ? `≥ ${req.min_value}` : '', req.max_value !== null ? `≤ ${req.max_value}` : ''].filter(Boolean).join('  ');
+          const val = req.actual !== null ? new Intl.NumberFormat('it-IT',{ maximumFractionDigits:2 }).format(req.actual) : 'N/D';
+          return [req.kpi_label, `(${req.kpi_area})`, th, val,
+            { content:passLabel(req.pass), styles:{ fillColor:passColorFill(req.pass), textColor:passColorText(req.pass), fontStyle:'bold', halign:'center' } }];
+        }),
+        margin: { left:14, right:14 },
+        styles: { fontSize:7.5, cellPadding:2 },
+        headStyles: { fillColor:[51,65,85] as [number,number,number], textColor:[255,255,255] as [number,number,number], fontSize:7.5, fontStyle:'bold' },
+        columnStyles: { 0:{ cellWidth:60 }, 1:{ cellWidth:30, textColor:DGRAY }, 2:{ cellWidth:35, halign:'center' }, 3:{ cellWidth:30, halign:'right' }, 4:{ cellWidth:20, halign:'center' } },
+        didParseCell(data) {
+          if (data.section === 'body' && data.column.index === 4) {
+            const cell = data.cell.raw as { styles?:{ fillColor?:[number,number,number]; textColor?:[number,number,number]; fontStyle?:string } } | string;
+            if (typeof cell === 'object' && cell.styles?.fillColor) {
+              data.cell.styles.fillColor = cell.styles.fillColor;
+              data.cell.styles.textColor = cell.styles.textColor ?? [0,0,0];
+              if (cell.styles.fontStyle) data.cell.styles.fontStyle = cell.styles.fontStyle as 'bold'|'normal';
+            }
+          }
+        },
+      });
+      y = (doc as jsPDF & { lastAutoTable:{ finalY:number } }).lastAutoTable.finalY + 8;
+    }
+  }
+
+  // footer pagine
+  const tot = (doc as jsPDF & { internal:{ getNumberOfPages:()=>number } }).internal.getNumberOfPages();
+  for (let i = 1; i <= tot; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7); doc.setTextColor(148,163,184); doc.setFont('helvetica','normal');
+    doc.text(`Credifile — Report riservato ad uso interno  |  Pagina ${i} di ${tot}`, W/2, 290, { align:'center' });
+  }
+
+  const safeName = (bilanci[0]?.ragione_sociale ?? 'azienda').replace(/[^a-zA-Z0-9_]/g,'_').substring(0,30);
+  doc.save(`Bancabilita_${safeName}_${now.replace(/\//g,'-')}.pdf`);
+}
+
+// ── componente ──────────────────────────────────────────────────────────────
+export default function BancabilitaTab({ practiceId }: Props) {
+  const [bilanci,    setBilanci]    = useState<BilancioRecord[]>([]);
+  const [checks,     setChecks]     = useState<BancaCheck[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [expanded,   setExpanded]   = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // 1. Ultimo bilancio analizzato
+      const { data: kpiData } = await supabase
+        .from('bilanci_kpi')
+        .select('id,anno_esercizio,ragione_sociale,is_holding,kpi,created_at')
+        .eq('practice_id', practiceId)
+        .order('anno_esercizio', { ascending: false });
+      const bil = (kpiData ?? []) as BilancioRecord[];
+      setBilanci(bil);
+      const latestKpi = bil.length > 0 ? bil[0].kpi : null;
+
+      // 2. Banche assegnate
+      const { data: pbData } = await supabase
+        .from('practice_banks')
+        .select('bank_id, banks(id, nome)')
+        .eq('practice_id', practiceId);
+      if (!pbData || pbData.length === 0) { setChecks([]); return; }
+
+      const bankIds = pbData.map((r: { bank_id: string }) => r.bank_id);
+
+      // 3. Requisiti KPI
+      const { data: reqData } = await supabase
+        .from('bank_kpi_requirements')
+        .select('*')
+        .in('bank_id', bankIds);
+      const reqs = (reqData ?? []) as BankKpiReq[];
+
+      // 4. Costruisce i check
+      const built: BancaCheck[] = pbData.map((r: { bank_id: string; banks: { id: string; nome: string } | null }) => {
+        const bankReqs = reqs.filter(req => req.bank_id === r.bank_id);
+        const enriched = bankReqs.map(req => {
+          let actual: number | null = null;
+          if (latestKpi) {
+            const areaObj = latestKpi[req.kpi_area] as Record<string, KpiEntry> | undefined;
+            actual = areaObj?.[req.kpi_key]?.valore ?? null;
+          }
+          let pass: boolean | null = null;
+          if (actual !== null) {
+            pass = true;
+            if (req.min_value !== null && actual < req.min_value) pass = false;
+            if (req.max_value !== null && actual > req.max_value) pass = false;
+          }
+          return { ...req, actual, pass };
+        });
+        return {
+          bankId: r.bank_id, bankName: r.banks?.nome ?? r.bank_id,
+          reqs: enriched,
+          passCount: enriched.filter(e => e.pass === true).length,
+          failCount: enriched.filter(e => e.pass === false).length,
+          ndCount:   enriched.filter(e => e.pass === null).length,
+        };
+      });
+      setChecks(built);
+    } finally {
+      setLoading(false);
+    }
+  }, [practiceId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground text-sm">
+      <RefreshCw className="w-4 h-4 animate-spin" /> Caricamento bancabilità...
+    </div>
+  );
+
+  const latest = bilanci[0];
+  const noBilancio = bilanci.length === 0;
+  const noBanche   = checks.length === 0;
+
+  return (
+    <div className="space-y-5">
+      {/* ── Header ── */}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="font-semibold text-foreground flex items-center gap-2 text-base">
+            <ShieldCheck className="w-4 h-4 text-primary" /> Verifica Bancabilità
+          </h3>
+          {latest ? (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Basato su bilancio <strong>{latest.anno_esercizio}</strong> · {latest.ragione_sociale}
+              {latest.is_holding && <Badge variant="outline" className="ml-2 text-[10px] py-0">Holding</Badge>}
+            </p>
+          ) : (
+            <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">
+              <AlertCircle className="w-3.5 h-3.5" /> Nessun bilancio analizzato — vai al tab "Analisi Finanziaria"
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Aggiorna
+          </Button>
+          {!noBilancio && (
+            <Button size="sm" onClick={() => generatePdf(bilanci, checks, practiceId)}>
+              <Download className="w-3.5 h-3.5 mr-1.5" /> Genera Report PDF
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Stato vuoto ── */}
+      {noBilancio && (
+        <div className="py-12 text-center border rounded-xl bg-muted/30">
+          <TrendingUp className="w-10 h-10 mx-auto text-muted-foreground mb-3 opacity-40" />
+          <p className="font-medium">Analisi finanziaria non disponibile</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Carica e analizza il bilancio nel tab <strong>Analisi Finanziaria</strong> per sbloccare la verifica.
+          </p>
+        </div>
+      )}
+
+      {!noBilancio && noBanche && (
+        <div className="py-10 text-center border rounded-xl bg-muted/30">
+          <ShieldCheck className="w-10 h-10 mx-auto text-muted-foreground mb-3 opacity-40" />
+          <p className="font-medium">Nessuna banca assegnata</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Assegna almeno una banca alla pratica per vedere la verifica.
+          </p>
+        </div>
+      )}
+
+      {/* ── Cards banche (visione immediata) ── */}
+      {!noBilancio && checks.length > 0 && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {checks.map(banca => {
+              const total   = banca.reqs.length;
+              const allPass = total > 0 && banca.failCount === 0 && banca.ndCount === 0;
+              const hasFail = banca.failCount > 0;
+              const noReqs  = total === 0;
+
+              const cardCls = noReqs
+                ? 'border-gray-200 bg-gray-50'
+                : allPass  ? 'border-green-300 bg-green-50'
+                : hasFail  ? 'border-red-300 bg-red-50'
+                : 'border-amber-300 bg-amber-50';
+
+              const iconBg = noReqs
+                ? 'bg-gray-100 text-gray-400'
+                : allPass  ? 'bg-green-100 text-green-600'
+                : hasFail  ? 'bg-red-100 text-red-600'
+                : 'bg-amber-100 text-amber-600';
+
+              const statusText = noReqs
+                ? 'Nessun requisito KPI'
+                : allPass  ? 'Bancabile ✅'
+                : hasFail  ? 'Non bancabile ❌'
+                : 'Dati incompleti ⚠️';
+
+              const statusColor = noReqs
+                ? 'text-gray-500'
+                : allPass  ? 'text-green-700 font-semibold'
+                : hasFail  ? 'text-red-700 font-semibold'
+                : 'text-amber-700 font-semibold';
+
+              const isOpen = expanded === banca.bankId;
+
+              return (
+                <Card key={banca.bankId} className={`border-2 transition-shadow hover:shadow-sm ${cardCls}`}>
+                  <CardContent className="p-4">
+                    {/* Card header */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
+                        <ShieldCheck className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-foreground text-sm truncate">{banca.bankName}</p>
+                        <p className={`text-xs mt-0.5 ${statusColor}`}>{statusText}</p>
+                      </div>
+                    </div>
+
+                    {/* Contatori */}
+                    {total > 0 && (
+                      <div className="flex gap-3 mt-3 text-xs">
+                        <span className="flex items-center gap-1 text-green-700">
+                          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                          {banca.passCount} OK
+                        </span>
+                        <span className="flex items-center gap-1 text-red-700">
+                          <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                          {banca.failCount} KO
+                        </span>
+                        {banca.ndCount > 0 && (
+                          <span className="flex items-center gap-1 text-gray-500">
+                            <span className="w-2 h-2 rounded-full bg-gray-300 inline-block" />
+                            {banca.ndCount} N/D
+                          </span>
+                        )}
+                        <span className="text-muted-foreground ml-auto">{total} requisiti</span>
+                      </div>
+                    )}
+
+                    {/* Bottone dettaglio */}
+                    {total > 0 && (
+                      <button
+                        className="mt-3 w-full flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors py-1 border border-dashed border-current rounded-md"
+                        onClick={() => setExpanded(isOpen ? null : banca.bankId)}
+                      >
+                        {isOpen ? <><ChevronUp className="w-3.5 h-3.5" /> Nascondi dettaglio</> : <><ChevronDown className="w-3.5 h-3.5" /> Vedi dettaglio KPI</>}
+                      </button>
+                    )}
+                  </CardContent>
+
+                  {/* Dettaglio espanso */}
+                  {isOpen && total > 0 && (
+                    <div className="border-t border-current/20 bg-white/60 px-4 pb-3 pt-2 rounded-b-lg">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-muted-foreground border-b border-border/50">
+                            <th className="text-left py-1.5 font-medium">KPI</th>
+                            <th className="text-center py-1.5 font-medium">Soglia</th>
+                            <th className="text-right py-1.5 font-medium">Valore</th>
+                            <th className="text-center py-1.5 font-medium">Esito</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {banca.reqs.map(req => {
+                            const minS = req.min_value !== null ? `≥${req.min_value}` : '';
+                            const maxS = req.max_value !== null ? `≤${req.max_value}` : '';
+                            const thr  = [minS, maxS].filter(Boolean).join(' ');
+                            const valS = req.actual !== null
+                              ? new Intl.NumberFormat('it-IT',{ maximumFractionDigits:2 }).format(req.actual)
+                              : 'N/D';
+                            const esitoCls = req.pass === true
+                              ? 'bg-green-100 text-green-800'
+                              : req.pass === false ? 'bg-red-100 text-red-800'
+                              : 'bg-gray-100 text-gray-500';
+                            return (
+                              <tr key={req.id} className="border-b border-border/30 last:border-0">
+                                <td className="py-1.5 pr-2 font-medium text-foreground">{req.kpi_label}</td>
+                                <td className="py-1.5 text-center text-muted-foreground font-mono">{thr || '—'}</td>
+                                <td className="py-1.5 text-right font-mono tabular-nums">{valS}</td>
+                                <td className="py-1.5 text-center">
+                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${esitoCls}`}>
+                                    {passLabel(req.pass)}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
