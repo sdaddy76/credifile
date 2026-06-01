@@ -156,8 +156,20 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
 
   // Logica core: dato il testo PDF + metadati, chiama l'edge function
   const runAnalysis = async (pdfText: string, uploadedFileId: string | null) => {
+    // Carica finanziamenti in essere dalla pratica
+    const { data: finData } = await supabase
+      .from('client_financing')
+      .select('rata, debito_residuo, durata_mesi, tipologia')
+      .eq('practice_id', practiceId);
+    const financing = (finData ?? []).map(f => ({
+      rata: Number(f.rata) || 0,
+      debito_residuo: Number(f.debito_residuo) || 0,
+      durata_mesi: Number(f.durata_mesi) || 0,
+      tipologia: f.tipologia ?? '',
+    }));
+
     const { data: result, error: fnErr } = await supabase.functions.invoke('analizza-bilancio', {
-      body: { practice_id: practiceId, pdf_text: pdfText, uploaded_file_id: uploadedFileId },
+      body: { practice_id: practiceId, pdf_text: pdfText, uploaded_file_id: uploadedFileId, financing },
     });
     if (fnErr || result?.error) {
       throw new Error(fnErr?.message ?? result?.error ?? 'Errore sconosciuto');

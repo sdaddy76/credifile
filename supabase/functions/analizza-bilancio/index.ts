@@ -165,7 +165,9 @@ function fmtEur(v: number | null) {
 }
 function fmtGiorni(v: number | null) { return v !== null ? Math.round(v) + ' gg' : 'N/D'; }
 
-function calcolaKpi(d: ReturnType<typeof parseBilancio>) {
+interface FinRow { rata: number; debito_residuo: number; durata_mesi: number; tipologia: string }
+
+function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = []) {
   const pn = d.totale_patrimonio_netto;
   const ta = d.totale_attivo;
   const ac = d.totale_attivo_circolante ?? 0;
@@ -173,15 +175,31 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>) {
   const liq = d.disponibilita_liquide ?? 0;
   const td = d.totale_debiti ?? 0;
   const dbBrv = (d.debiti_banche_breve ?? 0) + (d.debiti_banche_lungo ?? 0) + (d.debiti_altri_finanziatori ?? 0);
-  const passCorr = td; // approssimazione: tutti i debiti come correnti se non c'è dettaglio
+  const passCorr = td;
   const tvp = d.totale_valore_produzione;
   const ebit = d.differenza_ab !== null
     ? d.differenza_ab + (d.proventi_partecipazioni ?? 0) - (d.interessi_passivi ?? 0)
     : d.risultato_ante_imposte;
   const ebitda = ebit !== null ? ebit + (d.ammortamenti ?? 0) : null;
-  const pfn = dbBrv - liq;
   const intPass = d.interessi_passivi;
   const isHolding = (d.ricavi_vendite === 0 || d.ricavi_vendite === null) && (d.proventi_partecipazioni ?? 0) > 0;
+
+  // ── Dati da scheda finanziamenti (se disponibili) ──────────────────────────
+  const hasFin = financing.length > 0;
+  const totRataMensile = hasFin ? financing.reduce((s, f) => s + (Number(f.rata) || 0), 0) : 0;
+  const servizioDebitoAnnuo = totRataMensile * 12;           // Debt Service = Σrate × 12
+  const debitoResidualeTot = hasFin
+    ? financing.reduce((s, f) => s + (Number(f.debito_residuo) || 0), 0)
+    : dbBrv;                                                   // fallback: debiti finanziari da SP
+
+  // PFN: usa debito residuo reale se disponibile, altrimenti stima da SP
+  const pfn = debitoResidualeTot - liq;
+
+  // DSCR: usa servizio del debito reale se disponibile, altrimenti EBITDA/interessi
+  const dscr = hasFin && servizioDebitoAnnuo > 0 && ebitda !== null
+    ? ebitda / servizioDebitoAnnuo
+    : (intPass && intPass > 0 && ebitda !== null ? ebitda / intPass : null);
+  const dscrLabel = hasFin ? 'DSCR (da finanziamenti)' : 'DSCR (approx.)';
 
   function kpi(label: string, valore: number | null, formatted: string, sem: Semaforo): KpiEntry {
     return { valore, formatted, semaforo: sem, label };
@@ -207,8 +225,7 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>) {
   const dsi = d.costi_materie && d.costi_materie > 0 && rim > 0
     ? rim / (d.costi_materie / 365) : null;
   const intCov = intPass && intPass > 0 && ebit !== null ? ebit / intPass : null;
-  // DSCR approssimato = EBITDA / interessi_passivi (senza quota capitale, non ricavabile da SP)
-  const dscr = intPass && intPass > 0 && ebitda !== null ? ebitda / intPass : null;
+  // DSCR e PFN già calcolati sopra con dati finanziamenti (o fallback SP)
 
   return {
     is_holding: isHolding,
@@ -259,7 +276,7 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>) {
       copertura: {
         interest_coverage: kpi('Interest Coverage', intCov, fmtMult(intCov),
           intCov === null ? 'nd' : intCov >= 3 ? 'verde' : intCov >= 1.5 ? 'giallo' : 'rosso'),
-        dscr: kpi('DSCR (approx.)', dscr, fmtMult(dscr),
+        dscr: kpi(dscrLabel, dscr, fmtMult(dscr),
           dscr === null ? 'nd' : dscr >= 1.25 ? 'verde' : dscr >= 1.0 ? 'giallo' : 'rosso'),
       },
     },
@@ -270,12 +287,12 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-  const { practice_id, pdf_text, uploaded_file_id } = await req.json();
+  const { practice_id, pdf_text, uploaded_file_id, financing } = await req.json();
   if (!practice_id || !pdf_text) return fail('practice_id e pdf_text sono obbligatori');
 
   // Parse bilancio
   const bilData = parseBilancio(pdf_text);
-  const { is_holding, ebit: _ebit, ebitda: _ebitda, pfn: _pfn, kpi } = calcolaKpi(bilData);
+  const { is_holding, ebit: _ebit, ebitda: _ebitda, pfn: _pfn, kpi } = calcolaKpi(bilData, financing ?? []);
 
   // Upsert su DB via REST
   const row = {
