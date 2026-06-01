@@ -5,9 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck } from 'lucide-react';
+import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface Props { practiceId: string }
 
@@ -129,6 +131,295 @@ async function extractPdfText(file: File): Promise<string> {
     fullText += '\n';
   }
   return fullText;
+}
+
+// ─── Helper colori semaforo per PDF ─────────────────────────────────────────
+function semColorFill(s: string): [number, number, number] {
+  if (s === 'verde')  return [220, 252, 231];
+  if (s === 'giallo') return [254, 243, 199];
+  if (s === 'rosso')  return [254, 226, 226];
+  return [243, 244, 246];
+}
+function semColorText(s: string): [number, number, number] {
+  if (s === 'verde')  return [22,  101,  52];
+  if (s === 'giallo') return [146,  64,  14];
+  if (s === 'rosso')  return [185,  28,  28];
+  return [107, 114, 128];
+}
+function passColorFill(pass: boolean | null): [number, number, number] {
+  if (pass === true)  return [220, 252, 231];
+  if (pass === false) return [254, 226, 226];
+  return [243, 244, 246];
+}
+function passColorText(pass: boolean | null): [number, number, number] {
+  if (pass === true)  return [22,  101,  52];
+  if (pass === false) return [185,  28,  28];
+  return [107, 114, 128];
+}
+function passLabel(pass: boolean | null) {
+  if (pass === true)  return 'OK';
+  if (pass === false) return 'KO';
+  return 'N/D';
+}
+
+// ─── Generazione report PDF ──────────────────────────────────────────────────
+function generateBancabilitaReport(
+  bilanci: BilancioRecord[],
+  bancabilita: BancaCheck[],
+  practiceId: string,
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth();
+  const BLUE: [number, number, number]  = [30, 58, 138];
+  const LGRAY: [number, number, number] = [248, 250, 252];
+  const DGRAY: [number, number, number] = [71, 85, 105];
+  const now = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  let y = 0;
+
+  // ── INTESTAZIONE ──────────────────────────────────────────────────────────
+  doc.setFillColor(...BLUE);
+  doc.rect(0, 0, W, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('REPORT BANCABILITÀ', 14, 11);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Credifile — Sistema di Gestione Finanziaria', 14, 17);
+  doc.setFontSize(8);
+  doc.text(`Pratica: ${practiceId}   |   Generato il: ${now}`, 14, 23);
+  y = 35;
+
+  // ── SOMMARIO BILANCI ────────────────────────────────────────────────────
+  if (bilanci.length > 0) {
+    doc.setTextColor(30, 58, 138);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DATI SOCIETARI', 14, y);
+    y += 6;
+
+    const b0 = bilanci[0];
+    doc.setFillColor(...LGRAY);
+    doc.roundedRect(14, y, W - 28, 18, 2, 2, 'F');
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text(b0.ragione_sociale ?? '—', 19, y + 7);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...DGRAY);
+    doc.text(
+      `Esercizi analizzati: ${bilanci.map(b => b.anno_esercizio).join(', ')}` +
+      (b0.is_holding ? '   ★ Holding' : ''),
+      19, y + 13,
+    );
+    y += 25;
+  }
+
+  // ── PER OGNI BILANCIO: TABELLA KPI ────────────────────────────────────────
+  for (const bil of bilanci) {
+    if (!bil.kpi) continue;
+
+    // Titolo sezione
+    doc.setTextColor(...BLUE);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`KPI BANCARI — Esercizio ${bil.anno_esercizio}`, 14, y);
+    y += 4;
+
+    const areaLabels: Record<string, string> = {
+      liquidita:     'Liquidità',
+      solidita:      'Solidità Patrimoniale',
+      redditivita:   'Redditività',
+      indebitamento: 'Indebitamento',
+      efficienza:    'Efficienza Operativa',
+      copertura:     'Copertura',
+    };
+
+    const rows: (string | { content: string; styles: object })[][] = [];
+
+    for (const [area, areaLabel] of Object.entries(areaLabels)) {
+      const entries = bil.kpi[area as keyof KpiResult];
+      if (!entries) continue;
+
+      // Riga di intestazione area
+      rows.push([
+        { content: areaLabel.toUpperCase(), styles: { fontStyle: 'bold', fillColor: [30, 58, 138] as [number,number,number], textColor: [255,255,255] as [number,number,number], colSpan: 3 } },
+        '', '',
+      ]);
+
+      for (const entry of Object.values(entries)) {
+        const fill = semColorFill(entry.semaforo);
+        const text = semColorText(entry.semaforo);
+        const sem  = entry.semaforo === 'verde' ? '● OK' : entry.semaforo === 'giallo' ? '● Attenzione' : entry.semaforo === 'rosso' ? '● Critico' : '—';
+        rows.push([
+          entry.label,
+          entry.formatted,
+          { content: sem, styles: { fillColor: fill, textColor: text, fontStyle: 'bold' } },
+        ]);
+      }
+    }
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Indicatore', 'Valore', 'Rating']],
+      body: rows,
+      margin: { left: 14, right: 14 },
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: BLUE, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 90 },
+        1: { cellWidth: 40, halign: 'right' },
+        2: { cellWidth: 40, halign: 'center' },
+      },
+      didParseCell(data) {
+        // le righe di intestazione area hanno colSpan impostato nell'oggetto
+        if (data.section === 'body') {
+          const cell = data.cell.raw as { styles?: { fillColor?: [number,number,number]; textColor?: [number,number,number]; fontStyle?: string } } | string;
+          if (typeof cell === 'object' && cell.styles?.fillColor) {
+            data.cell.styles.fillColor = cell.styles.fillColor;
+            data.cell.styles.textColor = cell.styles.textColor ?? [0,0,0];
+            if (cell.styles.fontStyle) data.cell.styles.fontStyle = cell.styles.fontStyle as 'bold' | 'normal' | 'italic' | 'bolditalic';
+          }
+        }
+      },
+    });
+
+    y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+
+    // Nuova pagina se necessario
+    if (y > 260 && bilanci.indexOf(bil) < bilanci.length - 1) {
+      doc.addPage();
+      y = 15;
+    }
+  }
+
+  // ── VERIFICA BANCABILITÀ ───────────────────────────────────────────────────
+  if (bancabilita.length > 0) {
+    // Vai a nuova pagina se troppo in basso
+    if (y > 200) { doc.addPage(); y = 15; }
+
+    doc.setTextColor(...BLUE);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('VERIFICA BANCABILITÀ', 14, y);
+    y += 5;
+
+    for (const banca of bancabilita) {
+      const totalReqs = banca.reqs.length;
+      const allPass   = totalReqs > 0 && banca.failCount === 0 && banca.ndCount === 0;
+      const hasFail   = banca.failCount > 0;
+      const statusStr = totalReqs === 0 ? 'Nessun requisito KPI'
+        : allPass  ? '✔ BANCABILE'
+        : hasFail  ? '✘ NON BANCABILE'
+        : '⚠ DATI INCOMPLETI';
+      const statusFill: [number,number,number] = totalReqs === 0 ? [243,244,246]
+        : allPass  ? [220,252,231]
+        : hasFail  ? [254,226,226]
+        : [254,243,199];
+      const statusText: [number,number,number] = totalReqs === 0 ? [107,114,128]
+        : allPass  ? [22,101,52]
+        : hasFail  ? [185,28,28]
+        : [146,64,14];
+
+      // Intestazione banca
+      if (y > 265) { doc.addPage(); y = 15; }
+      doc.setFillColor(...statusFill);
+      doc.roundedRect(14, y, W - 28, 11, 2, 2, 'F');
+      doc.setTextColor(30, 41, 59);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.text(banca.bankName, 18, y + 7);
+      doc.setTextColor(...statusText);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text(statusStr, W - 14, y + 7, { align: 'right' });
+      y += 14;
+
+      if (totalReqs === 0) {
+        doc.setTextColor(...DGRAY);
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'italic');
+        doc.text('Nessun requisito KPI configurato per questa banca.', 18, y);
+        y += 8;
+        continue;
+      }
+
+      // Sub-header conteggi
+      doc.setTextColor(...DGRAY);
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        `${banca.passCount} OK  ·  ${banca.failCount} KO  ·  ${banca.ndCount} N/D  su ${totalReqs} requisiti`,
+        18, y,
+      );
+      y += 4;
+
+      const kpiRows = banca.reqs.map(req => {
+        const fill = passColorFill(req.pass);
+        const text = passColorText(req.pass);
+        const minStr = req.min_value !== null ? `≥ ${req.min_value}` : '';
+        const maxStr = req.max_value !== null ? `≤ ${req.max_value}` : '';
+        const threshold = [minStr, maxStr].filter(Boolean).join('  ');
+        const actualStr = req.actual !== null
+          ? new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(req.actual)
+          : 'N/D';
+        return [
+          req.kpi_label,
+          `(${req.kpi_area})`,
+          threshold,
+          actualStr,
+          { content: passLabel(req.pass), styles: { fillColor: fill, textColor: text, fontStyle: 'bold', halign: 'center' } },
+        ];
+      });
+
+      autoTable(doc, {
+        startY: y,
+        head: [['KPI', 'Area', 'Soglia', 'Valore', 'Esito']],
+        body: kpiRows,
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 7.5, cellPadding: 2 },
+        headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontSize: 7.5, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 60 },
+          1: { cellWidth: 30, textColor: DGRAY },
+          2: { cellWidth: 35, halign: 'center' },
+          3: { cellWidth: 30, halign: 'right' },
+          4: { cellWidth: 20, halign: 'center' },
+        },
+        didParseCell(data) {
+          if (data.section === 'body' && data.column.index === 4) {
+            const cell = data.cell.raw as { styles?: { fillColor?: [number,number,number]; textColor?: [number,number,number]; fontStyle?: string; halign?: string } } | string;
+            if (typeof cell === 'object' && cell.styles?.fillColor) {
+              data.cell.styles.fillColor = cell.styles.fillColor;
+              data.cell.styles.textColor = cell.styles.textColor ?? [0,0,0];
+              if (cell.styles.fontStyle) data.cell.styles.fontStyle = cell.styles.fontStyle as 'bold' | 'normal';
+            }
+          }
+        },
+      });
+
+      y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+    }
+  }
+
+  // ── FOOTER ULTIMA PAGINA ──────────────────────────────────────────────────
+  const totalPages = (doc as jsPDF & { internal: { getNumberOfPages: () => number } }).internal.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.setFont('helvetica', 'normal');
+    doc.text(
+      `Credifile — Report riservato ad uso interno  |  Pagina ${i} di ${totalPages}`,
+      W / 2, 290, { align: 'center' },
+    );
+  }
+
+  // ── DOWNLOAD ──────────────────────────────────────────────────────────────
+  const firstName = bilanci[0]?.ragione_sociale ?? 'azienda';
+  const safeName  = firstName.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 30);
+  doc.save(`Bancabilita_${safeName}_${now.replace(/\//g, '-')}.pdf`);
 }
 
 export default function AnalisiFinanziariaTab({ practiceId }: Props) {
@@ -372,6 +663,13 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             <Button variant="outline" size="sm" onClick={loadData} disabled={analyzing}>
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Aggiorna
             </Button>
+            {bilanci.length > 0 && (
+              <Button variant="outline" size="sm"
+                onClick={() => generateBancabilitaReport(bilanci, bancabilita, practiceId)}
+                title="Genera PDF riassuntivo KPI + bancabilità">
+                <Download className="w-3.5 h-3.5 mr-1.5" /> Genera Report PDF
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={analyzing}
               title="Carica un nuovo PDF di bilancio non presente tra i documenti">
               <Upload className="w-3.5 h-3.5 mr-1.5" /> Carica nuovo PDF
