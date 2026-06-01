@@ -694,11 +694,18 @@ export default function PraticaDetailPage() {
                               <span className={`text-xs px-2 py-1 rounded-full font-medium ${pb.status === 'inviata' ? 'bg-blue-100 text-blue-700' : pb.status === 'deliberata' ? 'bg-green-100 text-green-700' : pb.status === 'rifiutata' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
                                 {pb.status === 'assegnata' ? '🕐 Assegnata' : pb.status === 'inviata' ? '📤 Inviata' : pb.status === 'deliberata' ? '✅ Deliberata' : pb.status === 'rifiutata' ? '❌ Rifiutata' : pb.status}
                               </span>
-                              {canApprove && bankEmail && (
-                                <Button size="sm" variant="outline" className="gap-1.5 text-blue-700 border-blue-300 hover:bg-blue-50"
-                                  onClick={() => { setBankNote(''); setShowSendBankDialog(pb.id); }}>
-                                  ✉️ Invia
-                                </Button>
+                              {canApprove && (
+                                bankEmail ? (
+                                  <Button size="sm" variant="outline" className="gap-1.5 text-blue-700 border-blue-300 hover:bg-blue-50"
+                                    onClick={() => { setBankNote(''); setShowSendBankDialog(pb.id); }}>
+                                    ✉️ Invia
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1 cursor-help"
+                                    title="Configura l'email di invio in Gestione Banche">
+                                    ⚠️ Email mancante
+                                  </span>
+                                )
                               )}
                               {canApprove && (
                                 <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
