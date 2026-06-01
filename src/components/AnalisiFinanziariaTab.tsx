@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText } from 'lucide-react';
+import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -34,6 +34,17 @@ interface BilancioRecord {
   utile_netto: number;
   kpi: KpiResult;
   created_at: string;
+}
+
+// Bancabilità
+interface BankKpiReq { id: string; bank_id: string; kpi_key: string; kpi_area: string; kpi_label: string; min_value: number | null; max_value: number | null }
+interface BancaCheck {
+  bankId: string;
+  bankName: string;
+  reqs: Array<BankKpiReq & { actual: number | null; pass: boolean | null }>;
+  passCount: number;
+  failCount: number;
+  ndCount: number;
 }
 
 const SEMAFORO_COLOR: Record<string, string> = {
@@ -128,6 +139,66 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [selectedBilancio, setSelectedBilancio] = useState<BilancioRecord | null>(null);
+  const [bancabilita, setBancabilita] = useState<BancaCheck[]>([]);
+  const [loadingBanca, setLoadingBanca] = useState(false);
+
+  const loadBancabilita = useCallback(async (latestKpi: KpiResult | null) => {
+    setLoadingBanca(true);
+    try {
+      // 1. Banche assegnate alla pratica
+      const { data: pbData } = await supabase
+        .from('practice_banks')
+        .select('bank_id, banks(id, nome)')
+        .eq('practice_id', practiceId);
+
+      if (!pbData || pbData.length === 0) { setBancabilita([]); return; }
+
+      const bankIds = pbData.map((r: { bank_id: string }) => r.bank_id);
+
+      // 2. Requisiti KPI per ogni banca assegnata
+      const { data: reqData } = await supabase
+        .from('bank_kpi_requirements')
+        .select('*')
+        .in('bank_id', bankIds);
+
+      const reqs = (reqData ?? []) as BankKpiReq[];
+
+      // 3. Costruisce i check per ogni banca
+      const checks: BancaCheck[] = pbData.map((r: { bank_id: string; banks: { id: string; nome: string } | null }) => {
+        const bankReqs = reqs.filter(req => req.bank_id === r.bank_id);
+        const enriched = bankReqs.map(req => {
+          let actual: number | null = null;
+          if (latestKpi) {
+            const area = latestKpi[req.kpi_area as keyof KpiResult];
+            if (area) {
+              const areaObj = latestKpi[req.kpi_area as keyof KpiResult] as Record<string, KpiEntry>;
+              actual = areaObj[req.kpi_key]?.valore ?? null;
+            }
+          }
+          let pass: boolean | null = null;
+          if (actual !== null) {
+            pass = true;
+            if (req.min_value !== null && actual < req.min_value) pass = false;
+            if (req.max_value !== null && actual > req.max_value) pass = false;
+          }
+          return { ...req, actual, pass };
+        });
+
+        return {
+          bankId: r.bank_id,
+          bankName: r.banks?.nome ?? r.bank_id,
+          reqs: enriched,
+          passCount: enriched.filter(e => e.pass === true).length,
+          failCount: enriched.filter(e => e.pass === false).length,
+          ndCount: enriched.filter(e => e.pass === null).length,
+        };
+      });
+
+      setBancabilita(checks);
+    } finally {
+      setLoadingBanca(false);
+    }
+  }, [practiceId]);
 
   const loadData = async () => {
     setLoading(true);
@@ -153,6 +224,12 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   };
 
   useEffect(() => { loadData(); }, [practiceId]);
+
+  // Ricarica bancabilità ogni volta che cambia il set di bilanci analizzati
+  useEffect(() => {
+    const latest = bilanci.length > 0 ? bilanci[0].kpi : null;
+    loadBancabilita(latest);
+  }, [bilanci, loadBancabilita]);
 
   // Logica core: dato il testo PDF + metadati, chiama l'edge function
   const runAnalysis = async (pdfText: string, uploadedFileId: string | null) => {
@@ -396,6 +473,109 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
           )}
         </div>
       )}
+
+      {/* ── Sezione Verifica Bancabilità ── */}
+      <Separator />
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-foreground flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" /> Verifica Bancabilità
+          </h3>
+          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
+            onClick={() => { const latest = bilanci.length > 0 ? bilanci[0].kpi : null; loadBancabilita(latest); }}
+            disabled={loadingBanca}>
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingBanca ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+
+        {loadingBanca ? (
+          <p className="text-sm text-muted-foreground text-center py-4">Caricamento verifica...</p>
+        ) : bancabilita.length === 0 ? (
+          <div className="py-6 text-center border rounded-lg bg-muted/30">
+            <ShieldCheck className="w-8 h-8 mx-auto text-muted-foreground mb-2 opacity-40" />
+            <p className="text-sm text-muted-foreground">
+              {bilanci.length === 0
+                ? 'Analizza prima un bilancio per verificare la bancabilità.'
+                : 'Nessuna banca assegnata alla pratica oppure nessun requisito KPI configurato.'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {bancabilita.map(banca => {
+              const totalReqs = banca.reqs.length;
+              const allPass = totalReqs > 0 && banca.failCount === 0 && banca.ndCount === 0;
+              const hasFail = banca.failCount > 0;
+              const statusColor = totalReqs === 0
+                ? 'border-gray-200 bg-gray-50'
+                : allPass ? 'border-green-200 bg-green-50'
+                : hasFail ? 'border-red-200 bg-red-50'
+                : 'border-amber-200 bg-amber-50';
+              const statusLabel = totalReqs === 0
+                ? 'Nessun requisito'
+                : allPass ? '✅ Bancabile'
+                : hasFail ? '❌ Non bancabile'
+                : '⚠️ Dati incompleti';
+              const statusBadge = totalReqs === 0
+                ? 'bg-gray-100 text-gray-600'
+                : allPass ? 'bg-green-100 text-green-800'
+                : hasFail ? 'bg-red-100 text-red-800'
+                : 'bg-amber-100 text-amber-800';
+
+              return (
+                <Card key={banca.bankId} className={`border ${statusColor}`}>
+                  <CardHeader className="pb-2 pt-3 px-4">
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <Building2 className="w-3.5 h-3.5" />
+                        {banca.bankName}
+                      </span>
+                      <Badge className={`text-xs ${statusBadge}`}>{statusLabel}</Badge>
+                    </CardTitle>
+                    {totalReqs > 0 && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {banca.passCount} OK · {banca.failCount} KO · {banca.ndCount} N/D su {totalReqs} requisiti
+                      </p>
+                    )}
+                  </CardHeader>
+                  {totalReqs > 0 && (
+                    <CardContent className="px-4 pb-3">
+                      <div className="space-y-1">
+                        {banca.reqs.map(req => {
+                          const icon = req.pass === true ? '✅' : req.pass === false ? '❌' : '—';
+                          const rowColor = req.pass === true
+                            ? 'text-green-800'
+                            : req.pass === false ? 'text-red-700'
+                            : 'text-muted-foreground';
+                          const threshold = [
+                            req.min_value !== null ? `min ${req.min_value}` : '',
+                            req.max_value !== null ? `max ${req.max_value}` : '',
+                          ].filter(Boolean).join(', ');
+                          const actualStr = req.actual !== null
+                            ? new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(req.actual)
+                            : 'N/D';
+                          return (
+                            <div key={req.id} className={`flex items-center justify-between text-xs py-1 border-b border-border/40 last:border-0 ${rowColor}`}>
+                              <span className="flex items-center gap-1.5">
+                                <span>{icon}</span>
+                                <span className="font-medium">{req.kpi_label}</span>
+                                <span className="text-muted-foreground opacity-70 capitalize">({req.kpi_area})</span>
+                              </span>
+                              <span className="font-mono tabular-nums">
+                                {actualStr}
+                                {threshold && <span className="ml-1.5 opacity-60 text-[10px]">[{threshold}]</span>}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

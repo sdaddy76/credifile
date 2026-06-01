@@ -8,9 +8,30 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText } from 'lucide-react';
+import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Bank, BankDocumentRequirement } from '@/lib/types';
+
+// Catalogo KPI disponibili per requisiti banca
+const KPI_CATALOG = [
+  { key: 'current_ratio', area: 'liquidita', label: 'Current Ratio' },
+  { key: 'quick_ratio', area: 'liquidita', label: 'Quick Ratio' },
+  { key: 'debt_equity', area: 'solidita', label: 'Debt/Equity' },
+  { key: 'leverage', area: 'solidita', label: 'Leverage' },
+  { key: 'pn_su_ta', area: 'solidita', label: 'PN / Totale Attivo (%)' },
+  { key: 'grado_indebitamento', area: 'solidita', label: 'Grado Indebitamento' },
+  { key: 'roe', area: 'redditivita', label: 'ROE (%)' },
+  { key: 'roi', area: 'redditivita', label: 'ROI (%)' },
+  { key: 'ros', area: 'redditivita', label: 'ROS (%)' },
+  { key: 'ebitda_margin', area: 'redditivita', label: 'EBITDA Margin (%)' },
+  { key: 'pfn_ebitda', area: 'indebitamento', label: 'PFN / EBITDA' },
+  { key: 'pfn_pn', area: 'indebitamento', label: 'PFN / PN' },
+  { key: 'dso', area: 'efficienza', label: 'DSO (gg crediti)' },
+  { key: 'interest_coverage', area: 'copertura', label: 'Interest Coverage' },
+  { key: 'dscr', area: 'copertura', label: 'DSCR' },
+];
+interface KpiReq { id: string; kpi_key: string; kpi_area: string; kpi_label: string; min_value: number | null; max_value: number | null }
 
 const emptyBank = { nome: '', codice: '', contatto: '', email: '', email_invio_banca: '', note: '', attiva: true };
 const emptyReq = { nome: '', descrizione: '', obbligatorio: true };
@@ -28,6 +49,13 @@ export default function BanchePage() {
   const [showReqForm, setShowReqForm] = useState<string | null>(null);
   const [reqForm, setReqForm] = useState(emptyReq);
 
+  // KPI requirements
+  const [kpiRequirements, setKpiRequirements] = useState<Record<string, KpiReq[]>>({});
+  const [showKpiForm, setShowKpiForm] = useState<string | null>(null);
+  const [kpiFormKey, setKpiFormKey] = useState('');
+  const [kpiFormMin, setKpiFormMin] = useState('');
+  const [kpiFormMax, setKpiFormMax] = useState('');
+
   async function loadBanks() {
     const { data } = await supabase.from('banks').select('*').order('nome');
     setBanks(data ?? []);
@@ -39,12 +67,41 @@ export default function BanchePage() {
     setRequirements(prev => ({ ...prev, [bankId]: data ?? [] }));
   }
 
+  async function loadKpiRequirements(bankId: string) {
+    const { data } = await supabase.from('bank_kpi_requirements').select('*').eq('bank_id', bankId).order('kpi_area');
+    setKpiRequirements(prev => ({ ...prev, [bankId]: data ?? [] }));
+  }
+
+  async function handleSaveKpiReq(bankId: string) {
+    if (!kpiFormKey) { toast.error('Seleziona un KPI'); return; }
+    const kpi = KPI_CATALOG.find(k => k.key === kpiFormKey);
+    if (!kpi) return;
+    const minVal = kpiFormMin !== '' ? parseFloat(kpiFormMin) : null;
+    const maxVal = kpiFormMax !== '' ? parseFloat(kpiFormMax) : null;
+    if (minVal === null && maxVal === null) { toast.error('Inserisci almeno un valore min o max'); return; }
+    const { error } = await supabase.from('bank_kpi_requirements').upsert({
+      bank_id: bankId, kpi_key: kpi.key, kpi_area: kpi.area, kpi_label: kpi.label,
+      min_value: minVal, max_value: maxVal,
+    }, { onConflict: 'bank_id,kpi_key' });
+    if (error) { toast.error('Errore salvataggio KPI'); return; }
+    toast.success('Requisito KPI salvato');
+    setShowKpiForm(null); setKpiFormKey(''); setKpiFormMin(''); setKpiFormMax('');
+    loadKpiRequirements(bankId);
+  }
+
+  async function handleDeleteKpiReq(id: string, bankId: string) {
+    await supabase.from('bank_kpi_requirements').delete().eq('id', id);
+    toast.success('Requisito KPI rimosso');
+    loadKpiRequirements(bankId);
+  }
+
   useEffect(() => { loadBanks(); }, []);
 
   const toggleExpand = (id: string) => {
     if (expandedBank === id) { setExpandedBank(null); return; }
     setExpandedBank(id);
     loadRequirements(id);
+    loadKpiRequirements(id);
   };
 
   const openCreateBank = () => { setEditingBank(null); setBankForm(emptyBank); setShowBankForm(true); };
@@ -190,6 +247,78 @@ export default function BanchePage() {
                         </div>
                       </div>
                     )}
+
+                    {/* ── Sezione KPI Richiesti ── */}
+                    <div className="mt-4 border-t border-border pt-3">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <BarChart3 className="w-3.5 h-3.5" /> KPI Richiesti per Bancabilità
+                        </p>
+                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                          onClick={() => { setShowKpiForm(b.id); setKpiFormKey(''); setKpiFormMin(''); setKpiFormMax(''); }}>
+                          <Plus className="w-3 h-3" /> Aggiungi
+                        </Button>
+                      </div>
+
+                      {(kpiRequirements[b.id] ?? []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-2">Nessun requisito KPI configurato</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {(kpiRequirements[b.id] ?? []).map(r => (
+                            <div key={r.id} className="flex items-center gap-3 bg-muted/50 rounded-lg px-3 py-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground">{r.kpi_label}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {r.min_value !== null && <span>Min: <strong>{r.min_value}</strong></span>}
+                                  {r.min_value !== null && r.max_value !== null && <span className="mx-1">·</span>}
+                                  {r.max_value !== null && <span>Max: <strong>{r.max_value}</strong></span>}
+                                  <span className="ml-2 opacity-60 capitalize">[{r.kpi_area}]</span>
+                                </p>
+                              </div>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive"
+                                onClick={() => handleDeleteKpiReq(r.id, b.id)}>
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {showKpiForm === b.id && (
+                        <div className="mt-3 p-3 bg-accent/30 rounded-lg space-y-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">KPI *</Label>
+                            <Select value={kpiFormKey} onValueChange={setKpiFormKey}>
+                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Seleziona KPI..." /></SelectTrigger>
+                              <SelectContent>
+                                {KPI_CATALOG.map(k => (
+                                  <SelectItem key={k.key} value={k.key}>
+                                    {k.label} <span className="text-muted-foreground ml-1 text-xs capitalize">({k.area})</span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Valore Minimo</Label>
+                              <Input type="number" step="0.01" placeholder="es. 1.0" value={kpiFormMin}
+                                onChange={e => setKpiFormMin(e.target.value)} className="h-8 text-sm" />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Valore Massimo</Label>
+                              <Input type="number" step="0.01" placeholder="es. 5.0" value={kpiFormMax}
+                                onChange={e => setKpiFormMax(e.target.value)} className="h-8 text-sm" />
+                            </div>
+                          </div>
+                          <p className="text-xs text-muted-foreground">Lascia vuoto il campo non vincolato (es. solo Min per KPI da massimizzare).</p>
+                          <div className="flex gap-2">
+                            <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveKpiReq(b.id)}>Salva</Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowKpiForm(null)}>Annulla</Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </CardContent>
