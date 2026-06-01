@@ -85,23 +85,37 @@ function KpiSection({ title, entries }: { title: string; entries: Record<string,
   );
 }
 
-// Estrae testo da un PDF usando pdfjs-dist caricato dinamicamente
+// Estrae testo da un PDF usando pdfjs-dist, ricostruendo le righe per coordinata Y
 async function extractPdfText(file: File): Promise<string> {
-  // Carica pdfjs-dist in modo lazy per evitare impatti sul bundle iniziale
   const pdfjsLib = await import('pdfjs-dist');
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
   let fullText = '';
+
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const pageText = content.items
-      .map((item: { str?: string }) => item.str ?? '')
-      .join(' ')
-      .replace(/\s{2,}/g, ' ');
-    fullText += `\n<!-- Page: ${i} -->\n` + pageText;
+
+    // Raggruppa gli item per coordinata Y (arrotondata a 2 unità = stessa riga)
+    const lineMap = new Map<number, { x: number; str: string }[]>();
+    for (const item of content.items as { str: string; transform: number[] }[]) {
+      if (!item.str?.trim()) continue;
+      const y = Math.round(item.transform[5] / 2) * 2;
+      const x = item.transform[4];
+      if (!lineMap.has(y)) lineMap.set(y, []);
+      lineMap.get(y)!.push({ x, str: item.str });
+    }
+
+    // Ordina le righe dall'alto in basso (Y decrescente nei PDF), testo da sinistra a destra
+    const sortedYs = Array.from(lineMap.keys()).sort((a, b) => b - a);
+    for (const y of sortedYs) {
+      const items = lineMap.get(y)!.sort((a, b) => a.x - b.x);
+      const lineText = items.map(i => i.str).join(' ').replace(/\s{2,}/g, ' ').trim();
+      if (lineText) fullText += lineText + '\n';
+    }
+    fullText += '\n';
   }
   return fullText;
 }

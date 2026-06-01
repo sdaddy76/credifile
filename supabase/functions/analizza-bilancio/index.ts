@@ -38,15 +38,26 @@ function extractVal(text: string, patterns: string[]): number | null {
   const lines = text.split('\n');
   for (const line of lines) {
     for (const pat of patterns) {
-      if (line.toLowerCase().includes(pat.toLowerCase())) {
-        // cerca colonne nella riga: | label | val1 | val2 |
+      if (!line.toLowerCase().includes(pat.toLowerCase())) continue;
+
+      // Formato markdown: | etichetta | valore1 | valore2 |
+      if (line.includes('|')) {
         const cols = line.split('|').map(c => c.trim()).filter(c => c && c !== '---');
         if (cols.length >= 2) {
-          // prima colonna = etichetta, seconda = anno corrente
-          const raw = cols[1];
-          const v = parseNum(raw);
+          const v = parseNum(cols[1]);
           if (v !== null) return v;
         }
+      }
+
+      // Formato testo grezzo da pdfjs: "Totale attivo 1.917.440 65.263"
+      // Cerca i numeri che compaiono DOPO il testo dell'etichetta
+      const patIdx = line.toLowerCase().indexOf(pat.toLowerCase());
+      const afterLabel = line.slice(patIdx + pat.length);
+      // Estrae tutti i token numerici (anche con punti, virgole, parentesi per negativi)
+      const nums = afterLabel.match(/\(?[\d]+(?:[.,][\d]{3})*(?:[.,]\d+)?\)?/g);
+      if (nums && nums.length > 0) {
+        const v = parseNum(nums[0]);
+        if (v !== null) return v;
       }
     }
   }
@@ -57,10 +68,11 @@ function extractVal(text: string, patterns: string[]): number | null {
 function parseBilancio(text: string) {
   const e = (pats: string[]) => extractVal(text, pats);
 
-  // Dati anagrafici
-  const rsMatch = text.match(/##\s+(.+?)\s*\n.*?Bilancio di esercizio al/s);
+  // Dati anagrafici — supporta sia markdown (##) che testo grezzo pdfjs
+  const rsMatch = text.match(/(?:##\s+)?([A-Z][A-Z0-9 &'.,-]+(?:SRL|SPA|SAS|SNC|SRLS|SSP|SCRL|COOP)?[A-Z0-9 &'.,-]*)\s*\n[\s\S]{0,200}?Bilancio di esercizio al/i)
+    ?? text.match(/##\s+(.+?)\s*\n/);
   const ragione_sociale = rsMatch ? rsMatch[1].trim() : null;
-  const annoMatch = text.match(/Bilancio di esercizio al\s+\d{1,2}-\d{2}-(\d{4})/);
+  const annoMatch = text.match(/Bilancio di esercizio al\s+\d{1,2}[-/]\d{2}[-/](\d{4})/);
   const anno_esercizio = annoMatch ? parseInt(annoMatch[1]) : null;
 
   // SP Attivo
