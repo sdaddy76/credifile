@@ -207,6 +207,8 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>) {
   const dsi = d.costi_materie && d.costi_materie > 0 && rim > 0
     ? rim / (d.costi_materie / 365) : null;
   const intCov = intPass && intPass > 0 && ebit !== null ? ebit / intPass : null;
+  // DSCR approssimato = EBITDA / interessi_passivi (senza quota capitale, non ricavabile da SP)
+  const dscr = intPass && intPass > 0 && ebitda !== null ? ebitda / intPass : null;
 
   return {
     is_holding: isHolding,
@@ -257,6 +259,8 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>) {
       copertura: {
         interest_coverage: kpi('Interest Coverage', intCov, fmtMult(intCov),
           intCov === null ? 'nd' : intCov >= 3 ? 'verde' : intCov >= 1.5 ? 'giallo' : 'rosso'),
+        dscr: kpi('DSCR (approx.)', dscr, fmtMult(dscr),
+          dscr === null ? 'nd' : dscr >= 1.25 ? 'verde' : dscr >= 1.0 ? 'giallo' : 'rosso'),
       },
     },
   };
