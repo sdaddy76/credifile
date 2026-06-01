@@ -391,18 +391,15 @@ export default function BancabilitaTab({ practiceId }: Props) {
         </div>
       </div>
 
-      {/* ── Stato vuoto ── */}
-      {noBilancio && (
-        <div className="py-12 text-center border rounded-xl bg-muted/30">
-          <TrendingUp className="w-10 h-10 mx-auto text-muted-foreground mb-3 opacity-40" />
-          <p className="font-medium">Analisi finanziaria non disponibile</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            Carica e analizza il bilancio nel tab <strong>Analisi Finanziaria</strong> per sbloccare la verifica.
-          </p>
+      {/* ── Banner bilancio mancante (non blocca le card) ── */}
+      {noBilancio && checks.length > 0 && (
+        <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <TrendingUp className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>Nessun bilancio analizzato — i KPI non sono verificabili. Puoi comunque assegnare una banca. Vai al tab <strong>Analisi Finanziaria</strong> per calcolare i KPI.</span>
         </div>
       )}
 
-      {!noBilancio && noBanche && (
+      {noBanche && (
         <div className="py-10 text-center border rounded-xl bg-muted/30">
           <ShieldCheck className="w-10 h-10 mx-auto text-muted-foreground mb-3 opacity-40" />
           <p className="font-medium">Nessuna banca configurata nel sistema</p>
@@ -467,7 +464,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
       })()}
 
       {/* ── Cards banche (visione immediata) ── */}
-      {!noBilancio && checks.length > 0 && (
+      {checks.length > 0 && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {checks.map(banca => {
