@@ -7,6 +7,7 @@ import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText } from 'lucide-react';
 import { toast } from 'sonner';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 interface Props { practiceId: string }
 
@@ -88,8 +89,7 @@ function KpiSection({ title, entries }: { title: string; entries: Record<string,
 async function extractPdfText(file: File): Promise<string> {
   // Carica pdfjs-dist in modo lazy per evitare impatti sul bundle iniziale
   const pdfjsLib = await import('pdfjs-dist');
-  // Workaround worker: usa un fake worker inline per evitare problemi con Vite
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
