@@ -10,6 +10,19 @@ export type PracticeStatus =
 export type DocumentStatus = 'richiesto' | 'caricato' | 'approvato' | 'rifiutato';
 export type DocumentType = 'standard' | 'banca' | 'integrazione';
 
+export interface Socio {
+  nome:           string;
+  codice_fiscale: string;
+  valore:         string;
+  percentuale:    string;
+}
+
+export interface Amministratore {
+  nome:            string;
+  codice_fiscale?: string;
+  carica:          string;
+}
+
 export interface Client {
   id: string;
   ragione_sociale: string;
@@ -18,6 +31,10 @@ export interface Client {
   email: string;
   telefono?: string;
   indirizzo?: string;
+  data_costituzione?: string;
+  capitale_sociale_versato?: string;
+  soci?: Socio[];
+  amministratori?: Amministratore[];
   created_at: string;
   updated_at: string;
 }

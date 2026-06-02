@@ -6,132 +6,329 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Plus, Search, Users, Pencil, Trash2, Mail, Phone, FileText, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import {
+  Plus, Search, Users, Pencil, Trash2, Mail, Phone,
+  FileText, Loader2, CheckCircle2, AlertCircle, Users2, Building2,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import type { Client } from '@/lib/types';
+import type { Client, Socio, Amministratore } from '@/lib/types';
 import * as pdfjs from 'pdfjs-dist';
 
-// Worker PDF.js — usa il file bundlato dal pacchetto via Vite URL import
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url
 ).toString();
 
-// ── Estrae testo raw da un PDF ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════
+
+/** Estrae testo grezzo da PDF usando pdfjs-dist v6 */
 async function extractPdfText(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const pdf    = await pdfjs.getDocument({ data: buffer }).promise;
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: buf }).promise;
   const pages: string[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
-    const page    = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    pages.push(content.items.map((it: { str: string }) => it.str).join(' '));
+    const pg = await pdf.getPage(i);
+    const ct = await pg.getTextContent();
+    pages.push(ct.items.map((it: { str: string }) => it.str).join(' '));
   }
   return pages.join('\n');
 }
 
-// ── Tipi campo estratto ─────────────────────────────────────────────────────
-interface VisuraData {
-  ragione_sociale?: string;
-  piva?:            string;
-  codice_fiscale?:  string;
-  indirizzo?:       string;
-  email?:           string;
-  telefono?:        string;
-  codice_ateco?:    string;
+/** Isola un segmento di testo tra due marker regex */
+function isolaSezione(text: string, start: RegExp, end: RegExp): string {
+  const si = text.search(start);
+  if (si === -1) return '';
+  const sub = text.substring(si);
+  const ei  = sub.search(end);
+  return ei !== -1 ? sub.substring(0, ei) : sub;
 }
 
-// ── Parser visura camerale italiana ────────────────────────────────────────
+/** Rimuove caratteri jolly finali tipici del layout PDF */
+function cleanup(s: string): string {
+  return s.trim().replace(/\s{2,}/g, ' ').replace(/[,|\/\\]+$/, '').trim();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TIPI VISURA
+// ═══════════════════════════════════════════════════════════
+
+interface VisuraData {
+  ragione_sociale?:       string;
+  piva?:                  string;
+  codice_fiscale?:        string;
+  indirizzo?:             string;
+  email?:                 string;
+  telefono?:              string;
+  codice_ateco?:          string;
+  data_costituzione?:     string;
+  capitale_versato?:      string;
+  soci?:                  Socio[];
+  amministratori?:        Amministratore[];
+}
+
+interface ParseResult {
+  data:     VisuraData;
+  found:    string[];
+  notFound: string[];
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PARSER VISURA CAMERALE
+// ═══════════════════════════════════════════════════════════
+
+/** Regex per codice fiscale di persona fisica (16 char) */
+const CF_PF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
+
+/** Estrae lista soci dalla sezione 4 */
+function parseSoci(raw: string): Socio[] {
+  const s4 = isolaSezione(raw,
+    /(?:sezione\s+(?:IV|4)\b|soci\s+e\s+titolari|quote\s+sociali)/i,
+    /(?:sezione\s+(?:V|5)\b|organi\s+sociali|rappresentanza|amministrat)/i,
+  ) || raw; // fallback: cerca in tutto il testo
+
+  CF_PF_RE.lastIndex = 0;
+  const results: Socio[] = [];
+  const seen   = new Set<string>();
+  let m: RegExpExecArray | null;
+
+  while ((m = CF_PF_RE.exec(s4)) !== null) {
+    const cf     = m[1];
+    if (seen.has(cf)) continue;
+    seen.add(cf);
+
+    const before = s4.substring(Math.max(0, m.index - 120), m.index);
+    const after  = s4.substring(m.index + cf.length, m.index + cf.length + 200);
+
+    // Nome: ultimo blocco MAIUSCOLO prima del CF, esclusi keyword di sezione
+    const nameRaw = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60})\s*$/)?.[1] ?? '';
+    const nome = nameRaw
+      .replace(/\b(?:SOCIO|SOCIA|QUOTA|VALORE|NOMINATIVO|COGNOME|NOME|DENOMINAZIONE|TIPO|NATURA|TITOLO|SEZIONE|IV|SOCI|E|DI|SU)\b/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (!nome || nome.length < 3) continue;
+
+    // Valore quota: formato Euro X.XXX,XX o € X.XXX,XX
+    const valMatch = after.match(/(?:€|[Ee]uro)\s*([\d.,]+)/)
+                  ?? after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/);
+    const valore = valMatch?.[1] ?? '';
+
+    // Percentuale
+    const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/)
+                   ?? before.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/);
+    const percentuale = percMatch?.[1] ? percMatch[1] + '%' : '';
+
+    results.push({ nome, codice_fiscale: cf, valore, percentuale });
+  }
+  return results;
+}
+
+/** Estrae lista amministratori dalla sezione 5 */
+function parseAmministratori(raw: string): Amministratore[] {
+  const s5 = isolaSezione(raw,
+    /(?:sezione\s+(?:V|5)\b|organi\s+sociali|persone\s+che\s+esercitano)/i,
+    /(?:sezione\s+(?:VI|6)\b|$)/i,
+  );
+  if (!s5) return [];
+
+  const CARICA_RE = /(Amministratore\s+(?:Unico|[Dd]elegato)|Presidente(?:\s+del\s+C(?:onsiglio|\.?D\.?A\.?))?|Consigliere(?:\s+[Dd]elegato)?|Liquidatore(?:\s+[Uu]nico)?|Direttore\s+[Gg]enerale)/gi;
+
+  const results: Amministratore[] = [];
+  const seenNames = new Set<string>();
+  let m: RegExpExecArray | null;
+
+  while ((m = CARICA_RE.exec(s5)) !== null) {
+    const carica = m[1].trim();
+    const after  = s5.substring(m.index + m[0].length, m.index + m[0].length + 250);
+
+    // CF opzionale subito dopo la carica
+    const cfMatch = after.match(/\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/);
+    const cf = cfMatch?.[1];
+
+    // Nome: blocco MAIUSCOLO dopo la carica, prima del CF o di altra parola chiave
+    const nameMatch = after.match(
+      /^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60}?)(?=\s+(?:[A-Z]{6}\d|Codice|nato|del\s+C|Carica|\d{1,2}\/)|$)/
+    );
+    if (!nameMatch?.[1]?.trim()) continue;
+
+    const nome = nameMatch[1]
+      .replace(/\b(?:CODICE|FISCALE|NATO|NATA|IN|DEL|DELLA|CARICA)\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (!nome || nome.length < 3 || seenNames.has(nome)) continue;
+    seenNames.add(nome);
+
+    results.push({ nome, codice_fiscale: cf, carica });
+  }
+  return results;
+}
+
+/** Parser principale — tutti i campi visura */
 function parseVisura(text: string): VisuraData {
-  const clean = text.replace(/\s+/g, ' ');
-  const get   = (patterns: RegExp[]): string | undefined => {
+  // Normalizza whitespace mantenendo newline come separatore di sezione
+  const clean  = text.replace(/[^\S\n]+/g, ' ').replace(/\n+/g, '\n');
+  const flat   = clean.replace(/\n/g, ' '); // versione flat per regex inline
+
+  const get = (patterns: RegExp[]): string | undefined => {
     for (const re of patterns) {
-      const m = clean.match(re);
-      if (m?.[1]) return m[1].trim().replace(/\s{2,}/g, ' ');
+      const m = flat.match(re);
+      if (m?.[1]?.trim()) return cleanup(m[1]);
     }
   };
 
-  // P.IVA — 11 cifre precedute da etichetta
+  // ── Boundary comuni tra campi visura ──────────────────────────────────────
+  const B = String.raw`(?=\s+(?:Data\s+(?:atto|cost)|Forma\s+giuridica|Natura\s+giuridica|` +
+            String.raw`Codice\s+[Ff]iscale|Partita\s+IVA|P\.?\s*IVA|Sede\s+legale|Indirizzo|` +
+            String.raw`Numero\s+REA|REA\s|Registro\s+imprese|Iscrizione|Stato\s+dell|` +
+            String.raw`Capitale|Pec\b|PEC\b|Attivit))`;
+
+  // ── Ragione Sociale ───────────────────────────────────────────────────────
+  const LABEL_RS = String.raw`(?:Denominazione(?:\s*[\/eo]\s*[Rr]agione\s+[Ss]ociale)?|Ragione\s+[Ss]ociale)\s*[:\-]?\s*`;
+
+  const ragione_sociale = (() => {
+    // Priorità 1: non-greedy fino al boundary (min 2 char)
+    const m1 = flat.match(new RegExp(LABEL_RS + String.raw`(.{2,})` + B, 'i'));
+    if (m1?.[1]?.trim()) return cleanup(m1[1]);
+    // Priorità 2: si ferma alla forma giuridica inclusa nel nome (ammette cifre)
+    const m2 = flat.match(new RegExp(
+      LABEL_RS + String.raw`([^\:]{2,80}?(?:S\.?\s*R\.?\s*L\.?|S\.?\s*P\.?\s*A\.?|S\.?\s*N\.?\s*C\.?|S\.?\s*A\.?\s*S\.?|SRL|SPA|SNC|SAS|S\.?\s*S\.?|Soc\.?\s*Coop\.?|ONLUS|ETS|APS|ODV|IMPRESA\s+INDIVIDUALE)\.?)`,
+      'i'
+    ));
+    if (m2?.[1]?.trim()) return cleanup(m2[1]);
+    return undefined;
+  })();
+
+  // ── P.IVA ─────────────────────────────────────────────────────────────────
   const piva = get([
     /Partita\s*IVA\s*[:\-]?\s*(\d{11})/i,
     /P\.?\s*IVA\s*[:\-]?\s*(\d{11})/i,
-    /Numero\s+REA[^0-9]*(\d{11})/i,          // fallback raro
-  ]) ?? clean.match(/\b(\d{11})\b/)?.[1];    // fallback greedy
+  ]) ?? flat.match(/\b(\d{11})\b/)?.[1];
 
-  // Codice Fiscale — 11 cifre o 16 alfanumerici
-  const codice_fiscale = get([
+  // ── Codice Fiscale ────────────────────────────────────────────────────────
+  const codice_fiscale_raw = get([
     /Codice\s+[Ff]iscale\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
     /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
   ]);
+  // Evita di duplicare il dato se CF === P.IVA (ditta individuale)
+  const codice_fiscale = codice_fiscale_raw === piva ? undefined : codice_fiscale_raw;
 
-  // Boundary comuni della visura camerale — il nome si ferma prima di questi
-  const VISURA_BOUNDARY = /(?=\s+Data\s+atto|\s+Forma\s+giuridica|\s+Codice\s+[Ff]iscale|\s+Partita\s+IVA|\s+P\.?\s*IVA|\s+Sede\s+legale|\s+Numero\s+REA|\s+REA\s|\s+Registro\s+imprese|\s+Attivit)/i;
+  // ── Sede Legale ───────────────────────────────────────────────────────────
+  const ADDR_B = String.raw`(?=\s+(?:Partita\s+IVA|P\.?\s*IVA|Codice\s+[Ff]iscale|Pec\b|PEC\b|REA\s|Registro|Telefono|Tel\b|Email|Attivit|Stato\s+dell))`;
+  const indirizzo = (() => {
+    const m = flat.match(new RegExp(String.raw`Sede\s+legale\s*[:\-]?\s*(.{5,})` + ADDR_B, 'i'));
+    if (m?.[1]?.trim()) return cleanup(m[1]);
+    return get([
+      /Sede\s+legale\s*[:\-]?\s*([^\:]{5,120})/i,
+      /Indirizzo\s*[:\-]?\s*([^\:]{5,120})/i,
+    ]);
+  })();
 
-  // Ragione sociale / Denominazione — match non-greedy, si ferma al primo boundary
-  const ragione_sociale = get([
-    new RegExp(
-      String.raw`(?:Denominazione|Ragione\s+[Ss]ociale)\s*[:\-]?\s*(.*?)` +
-      VISURA_BOUNDARY.source,
-      'i'
-    ),
-    // fallback se non trovato boundary — prende max 80 chars fino a cifra/data/newline
-    /(?:Denominazione|Ragione\s+[Ss]ociale)\s*[:\-]?\s*([A-Z][^\d\n]{2,79}?(?:S\.?R\.?L\.?|S\.?P\.?A\.?|S\.?N\.?C\.?|S\.?A\.?S\.?|SRL|SPA|SNC|SAS|SS|Soc\.\s*Coop\.)\.?)/i,
-  ]);
-
-  // Sede legale
-  const indirizzo = get([
-    /Sede\s+legale\s*[:\-]?\s*([^\n\|]{5,120})/i,
-    /Sede\s*[:\-]?\s*([^\n\|]{5,120})/i,
-    /Indirizzo\s*[:\-]?\s*([^\n\|]{5,120})/i,
-  ]);
-
-  // Codice ATECO (es. 47.11, 62.01.09)
-  const atecoMatch = clean.match(/\b(\d{2}\.\d{2}(?:\.\d{1,2})?)\b/);
+  // ── Codice ATECO ancorato all'etichetta ───────────────────────────────────
+  const atecoMatch = flat.match(
+    /(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:\-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)/i
+  ) ?? flat.match(/\bATECO\b[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)/i);
   const codice_ateco = atecoMatch?.[1];
 
-  // Email
-  const emailMatch = clean.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
-  const email = emailMatch?.[1];
+  // ── Email ─────────────────────────────────────────────────────────────────
+  const email = flat.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/)?.[1];
 
-  // Telefono (formato italiano)
-  const telMatch = clean.match(/\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s\-]?\d{5,10}|3\d{2}[\s\-]?\d{6,7}))\b/);
+  // ── Telefono ──────────────────────────────────────────────────────────────
+  const telMatch = flat.match(
+    /\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s\-]?\d{5,10}|3\d{2}[\s\-]?\d{6,7}))\b/
+  );
   const telefono = telMatch?.[1]?.replace(/\s+/g, ' ').trim();
 
-  return { ragione_sociale, piva, codice_fiscale, indirizzo, email, telefono, codice_ateco };
+  // ── Data atto di costituzione ─────────────────────────────────────────────
+  const data_costituzione = get([
+    /Data\s+atto\s+di\s+costituzione\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i,
+    /Data\s+cost(?:ituzione)?\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i,
+    /(?:Atto\s+costitutivo|Costituzione)\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i,
+  ]);
+
+  // ── Capitale sociale versato ──────────────────────────────────────────────
+  const capitale_versato = get([
+    /[Cc]apitale\s+sociale\s+in\s+[Ee]uro\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /[Cc]apitale\s+(?:sociale\s+)?(?:interamente\s+)?versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /[Cc]apitale\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+  ]);
+
+  // ── Soci e Amministratori ─────────────────────────────────────────────────
+  const soci           = parseSoci(flat);
+  const amministratori = parseAmministratori(flat);
+
+  return {
+    ragione_sociale, piva, codice_fiscale, indirizzo,
+    email, telefono, codice_ateco,
+    data_costituzione, capitale_versato,
+    soci:           soci.length           > 0 ? soci           : undefined,
+    amministratori: amministratori.length > 0 ? amministratori : undefined,
+  };
 }
 
-// ── Risultato parsing (per feedback all'utente) ─────────────────────────────
-interface ParseResult { data: VisuraData; found: string[]; notFound: string[] }
-
+/** Costruisce il feedback trovati/non trovati */
 function buildParseResult(d: VisuraData): ParseResult {
   const LABELS: Record<keyof VisuraData, string> = {
-    ragione_sociale: 'Ragione Sociale', piva: 'P.IVA', codice_fiscale: 'Codice Fiscale',
-    indirizzo: 'Sede', email: 'Email', telefono: 'Telefono', codice_ateco: 'ATECO',
+    ragione_sociale:   'Ragione Sociale',
+    piva:              'P.IVA',
+    codice_fiscale:    'Codice Fiscale',
+    indirizzo:         'Sede Legale',
+    email:             'Email',
+    telefono:          'Telefono',
+    codice_ateco:      'ATECO',
+    data_costituzione: 'Data Costituzione',
+    capitale_versato:  'Capitale Versato',
+    soci:              'Soci',
+    amministratori:    'Amministratori',
   };
   const found: string[] = [], notFound: string[] = [];
   (Object.keys(LABELS) as (keyof VisuraData)[]).forEach(k => {
-    (d[k] ? found : notFound).push(LABELS[k]);
+    const v = d[k];
+    const present = Array.isArray(v) ? v.length > 0 : Boolean(v);
+    (present ? found : notFound).push(LABELS[k]);
   });
   return { data: d, found, notFound };
 }
 
-// ────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  FORM STATE
+// ═══════════════════════════════════════════════════════════
 
-const empty = { ragione_sociale: '', piva: '', codice_fiscale: '', email: '', telefono: '', indirizzo: '' };
+interface FormState {
+  ragione_sociale:       string;
+  piva:                  string;
+  codice_fiscale:        string;
+  email:                 string;
+  telefono:              string;
+  indirizzo:             string;
+  data_costituzione:     string;
+  capitale_versato:      string;
+  soci:                  Socio[];
+  amministratori:        Amministratore[];
+}
+
+const EMPTY: FormState = {
+  ragione_sociale: '', piva: '', codice_fiscale: '', email: '',
+  telefono: '', indirizzo: '', data_costituzione: '', capitale_versato: '',
+  soci: [], amministratori: [],
+};
+
+// ═══════════════════════════════════════════════════════════
+//  COMPONENTE
+// ═══════════════════════════════════════════════════════════
 
 export default function ClientiPage() {
   const { user, loading: authLoading } = useAuth();
-  const [clients,  setClients]  = useState<Client[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [search,   setSearch]   = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [editing,  setEditing]  = useState<Client | null>(null);
-  const [form,     setForm]     = useState(empty);
-  const [saving,   setSaving]   = useState(false);
-
-  // Visura import
-  const [parsing,      setParsing]      = useState(false);
-  const [parseResult,  setParseResult]  = useState<ParseResult | null>(null);
+  const [clients,     setClients]     = useState<Client[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [search,      setSearch]      = useState('');
+  const [showForm,    setShowForm]    = useState(false);
+  const [editing,     setEditing]     = useState<Client | null>(null);
+  const [form,        setForm]        = useState<FormState>(EMPTY);
+  const [saving,      setSaving]      = useState(false);
+  const [parsing,     setParsing]     = useState(false);
+  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -141,39 +338,48 @@ export default function ClientiPage() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    if (!authLoading && user?.id) load();
-  }, [authLoading, user?.id]);
+  useEffect(() => { if (!authLoading && user?.id) load(); }, [authLoading, user?.id]);
 
-  const openCreate = () => { setEditing(null); setForm(empty); setParseResult(null); setShowForm(true); };
-  const openEdit   = (c: Client) => {
-    setEditing(c);
-    setForm({ ragione_sociale: c.ragione_sociale, piva: c.piva ?? '', codice_fiscale: c.codice_fiscale ?? '', email: c.email, telefono: c.telefono ?? '', indirizzo: c.indirizzo ?? '' });
-    setParseResult(null);
-    setShowForm(true);
-  };
+  const toForm = (c: Client): FormState => ({
+    ragione_sociale:   c.ragione_sociale,
+    piva:              c.piva             ?? '',
+    codice_fiscale:    c.codice_fiscale   ?? '',
+    email:             c.email,
+    telefono:          c.telefono         ?? '',
+    indirizzo:         c.indirizzo        ?? '',
+    data_costituzione: c.data_costituzione ?? '',
+    capitale_versato:  c.capitale_sociale_versato ?? '',
+    soci:              c.soci             ?? [],
+    amministratori:    c.amministratori   ?? [],
+  });
 
-  // ── Import visura ──────────────────────────────────────────────────────────
+  const openCreate = () => { setEditing(null); setForm(EMPTY); setParseResult(null); setShowForm(true); };
+  const openEdit   = (c: Client) => { setEditing(c); setForm(toForm(c)); setParseResult(null); setShowForm(true); };
+
+  // ── Import visura ─────────────────────────────────────────────────────────
   const handleVisuraFile = async (file: File) => {
-    if (!file || file.type !== 'application/pdf') { toast.error('Seleziona un file PDF'); return; }
-    setParsing(true);
-    setParseResult(null);
+    if (file.type !== 'application/pdf') { toast.error('Seleziona un file PDF'); return; }
+    setParsing(true); setParseResult(null);
     try {
       const text   = await extractPdfText(file);
       const parsed = parseVisura(text);
       const result = buildParseResult(parsed);
-      // Pre-compila il form con i dati trovati (non sovrascrive campi già compilati manualmente)
+      // Pre-compila solo i campi testo vuoti (non sovrascrive dati esistenti)
       setForm(prev => ({
-        ragione_sociale: prev.ragione_sociale || parsed.ragione_sociale || '',
-        piva:            prev.piva            || parsed.piva            || '',
-        codice_fiscale:  prev.codice_fiscale  || parsed.codice_fiscale  || '',
-        email:           prev.email           || parsed.email           || '',
-        telefono:        prev.telefono        || parsed.telefono        || '',
-        indirizzo:       prev.indirizzo       || parsed.indirizzo       || '',
+        ragione_sociale:   prev.ragione_sociale   || parsed.ragione_sociale   || '',
+        piva:              prev.piva              || parsed.piva              || '',
+        codice_fiscale:    prev.codice_fiscale    || parsed.codice_fiscale    || '',
+        email:             prev.email             || parsed.email             || '',
+        telefono:          prev.telefono          || parsed.telefono          || '',
+        indirizzo:         prev.indirizzo         || parsed.indirizzo         || '',
+        data_costituzione: prev.data_costituzione || parsed.data_costituzione || '',
+        capitale_versato:  prev.capitale_versato  || parsed.capitale_versato  || '',
+        // Soci e amministratori si aggiornano sempre da visura
+        soci:              parsed.soci           ?? prev.soci,
+        amministratori:    parsed.amministratori ?? prev.amministratori,
       }));
       setParseResult(result);
-      if (result.found.length > 0) toast.success(`Estratti: ${result.found.join(', ')}`);
-      else toast.warning('Nessun campo riconosciuto nel PDF');
+      toast.success(`Estratti: ${result.found.join(', ')}`);
     } catch (e) {
       toast.error('Errore lettura PDF: ' + String(e));
     } finally {
@@ -182,19 +388,34 @@ export default function ClientiPage() {
     }
   };
 
+  // ── Salva cliente ─────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!form.ragione_sociale.trim() || !form.email.trim()) { toast.error('Ragione sociale ed email obbligatori'); return; }
+    if (!form.ragione_sociale.trim() || !form.email.trim()) {
+      toast.error('Ragione sociale ed email obbligatori'); return;
+    }
     if (!user?.id) { toast.error('Sessione non valida. Ricarica la pagina.'); return; }
     setSaving(true);
-    const payload = { ...form, piva: form.piva || null, codice_fiscale: form.codice_fiscale || null, telefono: form.telefono || null, indirizzo: form.indirizzo || null };
+    const payload = {
+      ragione_sociale:         form.ragione_sociale.trim(),
+      piva:                    form.piva             || null,
+      codice_fiscale:          form.codice_fiscale   || null,
+      email:                   form.email.trim(),
+      telefono:                form.telefono         || null,
+      indirizzo:               form.indirizzo        || null,
+      data_costituzione:       form.data_costituzione || null,
+      capitale_sociale_versato: form.capitale_versato || null,
+      soci:                    form.soci.length           > 0 ? form.soci           : null,
+      amministratori:          form.amministratori.length > 0 ? form.amministratori : null,
+    };
     if (editing) {
       const { error } = await supabase.from('clients').update(payload).eq('id', editing.id);
       if (error) { toast.error('Errore aggiornamento: ' + error.message); setSaving(false); return; }
-      if (payload.email && payload.email !== editing.email) {
+      if (payload.email !== editing.email) {
         const { data: practices } = await supabase.from('practices').select('id').eq('client_id', editing.id);
-        if (practices && practices.length > 0) {
-          const ids = practices.map((p: { id: string }) => p.id);
-          await supabase.from('practice_access_codes').update({ email_cliente: payload.email.trim().toLowerCase() }).in('practice_id', ids);
+        if (practices?.length) {
+          await supabase.from('practice_access_codes')
+            .update({ email_cliente: payload.email.toLowerCase() })
+            .in('practice_id', practices.map((p: { id: string }) => p.id));
         }
       }
       toast.success('Cliente aggiornato');
@@ -209,17 +430,20 @@ export default function ClientiPage() {
   const handleDelete = async (id: string, nome: string) => {
     if (!confirm(`Eliminare il cliente "${nome}"? Saranno eliminate anche le pratiche associate.`)) return;
     await supabase.from('clients').delete().eq('id', id);
-    toast.success('Cliente eliminato');
-    load();
+    toast.success('Cliente eliminato'); load();
   };
 
   const filtered = clients.filter(c =>
     c.ragione_sociale.toLowerCase().includes(search.toLowerCase()) ||
-    (c.piva ?? '').includes(search) || (c.email ?? '').toLowerCase().includes(search.toLowerCase())
+    (c.piva ?? '').includes(search) ||
+    (c.email ?? '').toLowerCase().includes(search.toLowerCase())
   );
 
+  // ── RENDER ─────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
+
+      {/* Intestazione */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Clienti</h1>
@@ -228,13 +452,18 @@ export default function ClientiPage() {
         <Button onClick={openCreate} className="gap-2"><Plus className="w-4 h-4" /> Nuovo Cliente</Button>
       </div>
 
+      {/* Ricerca */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input placeholder="Cerca per nome, P.IVA, email..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
+        <Input placeholder="Cerca per nome, P.IVA, email…" className="pl-9"
+          value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
+      {/* Lista */}
       {loading ? (
-        <div className="flex justify-center py-16"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
       ) : filtered.length === 0 ? (
         <Card><CardContent className="py-16 text-center">
           <Users className="w-10 h-10 mx-auto mb-3 opacity-30 text-muted-foreground" />
@@ -256,11 +485,22 @@ export default function ClientiPage() {
                       {c.piva && <span className="font-mono">P.IVA: {c.piva}</span>}
                       <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{c.email}</span>
                       {c.telefono && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.telefono}</span>}
+                      {c.soci && c.soci.length > 0 && (
+                        <span className="flex items-center gap-1 text-blue-600">
+                          <Users2 className="w-3 h-3" />{c.soci.length} soc.
+                        </span>
+                      )}
+                      {c.amministratori && c.amministratori.length > 0 && (
+                        <span className="flex items-center gap-1 text-violet-600">
+                          <Building2 className="w-3 h-3" />Amm.: {c.amministratori.map(a => a.nome).join(', ')}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex gap-1 shrink-0">
                     <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(c)}><Pencil className="w-3.5 h-3.5" /></Button>
-                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10" onClick={() => handleDelete(c.id, c.ragione_sociale)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
+                      onClick={() => handleDelete(c.id, c.ragione_sociale)}><Trash2 className="w-3.5 h-3.5" /></Button>
                   </div>
                 </div>
               </CardContent>
@@ -269,25 +509,25 @@ export default function ClientiPage() {
         </div>
       )}
 
+      {/* Dialog nuovo/modifica cliente */}
       <Dialog open={showForm} onOpenChange={v => { setShowForm(v); if (!v) setParseResult(null); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? 'Modifica Cliente' : 'Nuovo Cliente'}</DialogTitle>
           </DialogHeader>
 
-          {/* ── Import visura ── */}
+          {/* ── Riquadro Import Visura ── */}
           <div className="bg-muted/40 rounded-lg px-4 py-3 border border-dashed border-border space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" /> Importa dati da Visura Camerale
+                <FileText className="w-3.5 h-3.5" /> Importa da Visura Camerale
               </p>
               <label className="cursor-pointer">
                 <Button asChild size="sm" variant="outline" className="h-7 text-xs gap-1.5 pointer-events-none">
                   <span>
                     {parsing
-                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Lettura PDF...</>
-                      : <><FileText className="w-3 h-3" /> Carica visura PDF</>
-                    }
+                      ? <><Loader2 className="w-3 h-3 animate-spin" />Lettura PDF…</>
+                      : <><FileText className="w-3 h-3" />Carica visura PDF</>}
                   </span>
                 </Button>
                 <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden"
@@ -296,7 +536,6 @@ export default function ClientiPage() {
               </label>
             </div>
 
-            {/* Feedback parsing */}
             {parseResult && (
               <div className="space-y-1">
                 {parseResult.found.length > 0 && (
@@ -308,48 +547,127 @@ export default function ClientiPage() {
                 {parseResult.notFound.length > 0 && (
                   <div className="flex items-start gap-1.5 text-xs text-amber-700">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span><strong>Non trovati:</strong> {parseResult.notFound.join(' · ')} — compilali manualmente</span>
+                    <span><strong>Non trovati:</strong> {parseResult.notFound.join(' · ')}</span>
                   </div>
                 )}
               </div>
             )}
-
             <p className="text-[10px] text-muted-foreground">
-              Funziona sulle visure camerali ufficiali del Registro Imprese (PDF digitale, non scansioni).
+              Funziona su visure camerali ufficiali del Registro Imprese (PDF digitale, non scansioni).
             </p>
           </div>
 
-          {/* ── Form campi ── */}
-          <div className="grid grid-cols-2 gap-4 pt-1">
-            <div className="col-span-2 space-y-2">
+          {/* ── Campi base ── */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2 space-y-1.5">
               <Label>Ragione Sociale *</Label>
-              <Input placeholder="Es. Mario Rossi S.r.l." value={form.ragione_sociale} onChange={e => setForm(f => ({ ...f, ragione_sociale: e.target.value }))} />
+              <Input placeholder="Es. Mario Rossi S.r.l." value={form.ragione_sociale}
+                onChange={e => setForm(f => ({ ...f, ragione_sociale: e.target.value }))} />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label>P.IVA</Label>
-              <Input placeholder="12345678901" value={form.piva} onChange={e => setForm(f => ({ ...f, piva: e.target.value }))} />
+              <Input placeholder="12345678901" value={form.piva}
+                onChange={e => setForm(f => ({ ...f, piva: e.target.value }))} />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label>Codice Fiscale</Label>
-              <Input placeholder="RSSMRA80..." value={form.codice_fiscale} onChange={e => setForm(f => ({ ...f, codice_fiscale: e.target.value }))} />
+              <Input placeholder="RSSMRA80…" value={form.codice_fiscale}
+                onChange={e => setForm(f => ({ ...f, codice_fiscale: e.target.value }))} />
             </div>
-            <div className="col-span-2 space-y-2">
+            <div className="col-span-2 space-y-1.5">
               <Label>Email *</Label>
-              <Input type="email" placeholder="info@azienda.it" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+              <Input type="email" placeholder="info@azienda.it" value={form.email}
+                onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label>Telefono</Label>
-              <Input placeholder="+39 02 1234567" value={form.telefono} onChange={e => setForm(f => ({ ...f, telefono: e.target.value }))} />
+              <Input placeholder="+39 02 1234567" value={form.telefono}
+                onChange={e => setForm(f => ({ ...f, telefono: e.target.value }))} />
             </div>
-            <div className="space-y-2">
-              <Label>Indirizzo</Label>
-              <Input placeholder="Via Roma 1, Milano" value={form.indirizzo} onChange={e => setForm(f => ({ ...f, indirizzo: e.target.value }))} />
+            <div className="space-y-1.5">
+              <Label>Indirizzo Sede</Label>
+              <Input placeholder="Via Roma 1, 20100 Milano" value={form.indirizzo}
+                onChange={e => setForm(f => ({ ...f, indirizzo: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Data Costituzione</Label>
+              <Input placeholder="gg/mm/aaaa" value={form.data_costituzione}
+                onChange={e => setForm(f => ({ ...f, data_costituzione: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Capitale Sociale Versato (€)</Label>
+              <Input placeholder="10.000,00" value={form.capitale_versato}
+                onChange={e => setForm(f => ({ ...f, capitale_versato: e.target.value }))} />
             </div>
           </div>
 
+          {/* ── Soci estratti ── */}
+          {form.soci.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <Users2 className="w-3.5 h-3.5 text-blue-500" />
+                Soci / Titolari ({form.soci.length})
+              </p>
+              <div className="rounded-md border border-border overflow-hidden text-xs">
+                <table className="w-full">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Nome</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Cod. Fiscale</th>
+                      <th className="text-right px-3 py-1.5 font-medium text-muted-foreground">Valore</th>
+                      <th className="text-right px-3 py-1.5 font-medium text-muted-foreground">%</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {form.soci.map((s, i) => (
+                      <tr key={i} className="bg-background hover:bg-muted/20">
+                        <td className="px-3 py-1.5 font-medium">{s.nome}</td>
+                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{s.codice_fiscale}</td>
+                        <td className="px-3 py-1.5 text-right">{s.valore ? `€ ${s.valore}` : '—'}</td>
+                        <td className="px-3 py-1.5 text-right text-blue-700 font-semibold">{s.percentuale || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── Amministratori estratti ── */}
+          {form.amministratori.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-violet-500" />
+                Organi Sociali / Amministratori ({form.amministratori.length})
+              </p>
+              <div className="rounded-md border border-border overflow-hidden text-xs">
+                <table className="w-full">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Nome</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Carica</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Cod. Fiscale</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {form.amministratori.map((a, i) => (
+                      <tr key={i} className="bg-background hover:bg-muted/20">
+                        <td className="px-3 py-1.5 font-medium">{a.nome}</td>
+                        <td className="px-3 py-1.5 text-violet-700">{a.carica}</td>
+                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{a.codice_fiscale ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>Annulla</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving ? 'Salvo...' : (editing ? 'Salva' : 'Crea')}</Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Salvo…' : editing ? 'Salva Modifiche' : 'Crea Cliente'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
