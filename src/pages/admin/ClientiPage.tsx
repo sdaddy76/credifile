@@ -64,11 +64,18 @@ function parseVisura(text: string): VisuraData {
     /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
   ]);
 
-  // Ragione sociale / Denominazione
+  // Boundary comuni della visura camerale — il nome si ferma prima di questi
+  const VISURA_BOUNDARY = /(?=\s+Data\s+atto|\s+Forma\s+giuridica|\s+Codice\s+[Ff]iscale|\s+Partita\s+IVA|\s+P\.?\s*IVA|\s+Sede\s+legale|\s+Numero\s+REA|\s+REA\s|\s+Registro\s+imprese|\s+Attivit)/i;
+
+  // Ragione sociale / Denominazione — match non-greedy, si ferma al primo boundary
   const ragione_sociale = get([
-    /Denominazione\s*[:\-]?\s*([A-Z][\w\s\.\,\&\'\-]{2,60}(?:S\.?R\.?L\.?|S\.?P\.?A\.?|S\.?N\.?C\.?|S\.?A\.?S\.?|S\.?S\.?|SRL|SPA|SNC|SAS|SS)?)/i,
-    /Ragione\s+[Ss]ociale\s*[:\-]?\s*([^\n]{3,80})/i,
-    /Ragione\s*[:\-]?\s*([^\n]{3,80})/i,
+    new RegExp(
+      String.raw`(?:Denominazione|Ragione\s+[Ss]ociale)\s*[:\-]?\s*(.*?)` +
+      VISURA_BOUNDARY.source,
+      'i'
+    ),
+    // fallback se non trovato boundary — prende max 80 chars fino a cifra/data/newline
+    /(?:Denominazione|Ragione\s+[Ss]ociale)\s*[:\-]?\s*([A-Z][^\d\n]{2,79}?(?:S\.?R\.?L\.?|S\.?P\.?A\.?|S\.?N\.?C\.?|S\.?A\.?S\.?|SRL|SPA|SNC|SAS|SS|Soc\.\s*Coop\.)\.?)/i,
   ]);
 
   // Sede legale
