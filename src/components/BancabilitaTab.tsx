@@ -254,67 +254,59 @@ function BankLogoWithFallback({ name, logoUrl, size = 'md' }: { name: string; lo
 }
 
 export default function BancabilitaTab({ practiceId }: Props) {
-  const [bilanci,    setBilanci]    = useState<BilancioRecord[]>([]);
-  const [checks,     setChecks]     = useState<BancaCheck[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [expanded,   setExpanded]   = useState<string | null>(null);
-  const [assigning,  setAssigning]  = useState<string | null>(null);
+  const [bilanci,   setBilanci]   = useState<BilancioRecord[]>([]);
+  const [checks,    setChecks]    = useState<BancaCheck[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [expanded,  setExpanded]  = useState<string | null>(null);
+  const [assigning, setAssigning] = useState<string | null>(null);
 
-  const assignBank = async (bankId: string) => {
-    setAssigning(bankId);
-    const { error } = await supabase.from('practice_banks').insert({ practice_id: practiceId, bank_id: bankId, status: 'assegnata' });
-    if (error) { toast.error('Errore assegnazione banca'); setAssigning(null); return; }
-    toast.success('Banca assegnata alla pratica');
-    setAssigning(null);
-    load();
-  };
-
+  // ── carica TUTTE le banche con bancabilità ──────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Ultimo bilancio analizzato
-      const { data: kpiData } = await supabase
-        .from('bilanci_kpi').select('id,anno_esercizio,ragione_sociale,is_holding,kpi,created_at')
-        .eq('practice_id', practiceId).order('anno_esercizio', { ascending: false });
-      const bil = (kpiData ?? []) as BilancioRecord[];
+      // bilancio più recente (può essere assente)
+      const { data: kpiRows } = await supabase
+        .from('bilanci_kpi')
+        .select('id,anno_esercizio,ragione_sociale,is_holding,kpi,created_at')
+        .eq('practice_id', practiceId)
+        .order('anno_esercizio', { ascending: false });
+      const bil = (kpiRows ?? []) as BilancioRecord[];
       setBilanci(bil);
-      const latestKpi = bil.length > 0 ? bil[0].kpi : null;
+      const latestKpi: KpiResult | null = bil.length > 0 ? bil[0].kpi : null;
 
-      // 2. TUTTE le banche attive
-      const { data: allBanks } = await supabase
-        .from('banks').select('id, nome, email, logo_url').eq('attiva', true).order('nome');
+      // TUTTE le banche (nessun filtro attiva — include anche quelle con attiva=NULL)
+      const { data: allBanks, error: banksErr } = await supabase
+        .from('banks').select('id, nome, email, logo_url').order('nome');
+      if (banksErr) { toast.error('Errore caricamento banche'); setChecks([]); return; }
       if (!allBanks || allBanks.length === 0) { setChecks([]); return; }
 
-      const allBankIds = allBanks.map((b: { id: string }) => b.id);
+      const allIds = allBanks.map((b: { id: string }) => b.id);
 
-      // 3. Banche già assegnate alla pratica
-      const { data: pbData } = await supabase
-        .from('practice_banks').select('id, bank_id').eq('practice_id', practiceId);
-      const assignedMap = new Map((pbData ?? []).map((r: { id: string; bank_id: string }) => [r.bank_id, r.id]));
-
-      // 4. Requisiti KPI e ATECO per tutte le banche
-      const [{ data: reqData }, { data: atecoData }] = await Promise.all([
-        supabase.from('bank_kpi_requirements').select('*').in('bank_id', allBankIds),
-        supabase.from('bank_ateco_requirements').select('*').in('bank_id', allBankIds),
+      // banche già assegnate + requisiti KPI/ATECO + ATECO pratica
+      const [
+        { data: pbRows },
+        { data: kpiReqRows },
+        { data: atecoReqRows },
+        { data: practiceRow },
+      ] = await Promise.all([
+        supabase.from('practice_banks').select('id, bank_id').eq('practice_id', practiceId),
+        supabase.from('bank_kpi_requirements').select('*').in('bank_id', allIds),
+        supabase.from('bank_ateco_requirements').select('*').in('bank_id', allIds),
+        supabase.from('practices').select('codice_ateco').eq('id', practiceId).maybeSingle(),
       ]);
-      const reqs = (reqData ?? []) as BankKpiReq[];
-      const atecoReqs = (atecoData ?? []) as AtecoReq[];
 
-      // 5. ATECO della pratica
-      const { data: practiceData } = await supabase
-        .from('practices').select('codice_ateco').eq('id', practiceId).single();
-      const practiceAteco = (practiceData?.codice_ateco ?? '').toUpperCase().trim();
+      const assignedMap = new Map((pbRows ?? []).map((r: { id: string; bank_id: string }) => [r.bank_id, r.id]));
+      const reqs      = (kpiReqRows  ?? []) as BankKpiReq[];
+      const atecoReqs = (atecoReqRows ?? []) as AtecoReq[];
+      const practiceAteco = ((practiceRow?.codice_ateco) ?? '').toUpperCase().trim();
 
-      // 6. Costruisce i check per TUTTE le banche
       const built: BancaCheck[] = (allBanks as { id: string; nome: string; email?: string; logo_url?: string }[]).map(bank => {
-        const logoUrl = bank.logo_url || (bank.email ? `https://logo.clearbit.com/${bank.email.split('@')[1]}` : null);
-        const bankReqs = reqs.filter(req => req.bank_id === bank.id);
+        const logoUrl  = bank.logo_url || (bank.email ? `https://logo.clearbit.com/${bank.email.split('@')[1]}` : null);
+        const bankReqs = reqs.filter(r => r.bank_id === bank.id);
+
         const enriched = bankReqs.map(req => {
-          let actual: number | null = null;
-          if (latestKpi) {
-            const areaObj = latestKpi[req.kpi_area] as Record<string, KpiEntry> | undefined;
-            actual = areaObj?.[req.kpi_key]?.valore ?? null;
-          }
+          const areaObj = latestKpi ? latestKpi[req.kpi_area] as Record<string, KpiEntry> | undefined : undefined;
+          const actual  = areaObj?.[req.kpi_key]?.valore ?? null;
           let pass: boolean | null = null;
           if (actual !== null) {
             pass = true;
@@ -323,30 +315,45 @@ export default function BancabilitaTab({ practiceId }: Props) {
           }
           return { ...req, actual, pass };
         });
-        const bankInclusi = atecoReqs.filter(a => a.bank_id === bank.id && a.tipo === 'incluso');
-        const bankEsclusi = atecoReqs.filter(a => a.bank_id === bank.id && a.tipo === 'escluso');
+
+        const inclusi = atecoReqs.filter(a => a.bank_id === bank.id && a.tipo === 'incluso');
+        const esclusi = atecoReqs.filter(a => a.bank_id === bank.id && a.tipo === 'escluso');
         let atecoPass: boolean | null = null;
-        if ((bankInclusi.length > 0 || bankEsclusi.length > 0) && practiceAteco) {
+        if ((inclusi.length > 0 || esclusi.length > 0) && practiceAteco) {
           atecoPass = true;
-          if (bankInclusi.length > 0 && !bankInclusi.some(a => practiceAteco.startsWith(a.codice.toUpperCase()))) atecoPass = false;
-          if (atecoPass && bankEsclusi.some(a => practiceAteco.startsWith(a.codice.toUpperCase()))) atecoPass = false;
+          if (inclusi.length > 0 && !inclusi.some(a => practiceAteco.startsWith(a.codice.toUpperCase()))) atecoPass = false;
+          if (atecoPass && esclusi.some(a => practiceAteco.startsWith(a.codice.toUpperCase()))) atecoPass = false;
         }
+
         return {
           bankId: bank.id, bankName: bank.nome, logoUrl,
           reqs: enriched,
           passCount: enriched.filter(e => e.pass === true).length,
           failCount: enriched.filter(e => e.pass === false).length,
           ndCount:   enriched.filter(e => e.pass === null).length,
-          atecoPass, atecoInclusi: bankInclusi, atecoEsclusi: bankEsclusi,
+          atecoPass, atecoInclusi: inclusi, atecoEsclusi: esclusi,
           isAssigned: assignedMap.has(bank.id),
           practiceBankId: assignedMap.get(bank.id),
         };
       });
+
       setChecks(built);
+    } catch (err) {
+      toast.error('Errore caricamento bancabilità: ' + String(err));
     } finally {
       setLoading(false);
     }
   }, [practiceId]);
+
+  const assignBank = async (bankId: string) => {
+    setAssigning(bankId);
+    const { error } = await supabase.from('practice_banks')
+      .insert({ practice_id: practiceId, bank_id: bankId, status: 'assegnata' });
+    setAssigning(null);
+    if (error) { toast.error('Errore assegnazione banca'); return; }
+    toast.success('Banca assegnata alla pratica');
+    load();
+  };
 
   useEffect(() => { load(); }, [load]);
 
