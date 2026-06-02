@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -6,21 +6,126 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Plus, Search, Users, Pencil, Trash2, Mail, Phone } from 'lucide-react';
+import { Plus, Search, Users, Pencil, Trash2, Mail, Phone, FileText, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Client } from '@/lib/types';
+import * as pdfjs from 'pdfjs-dist';
+
+// Worker PDF.js — usa il file bundlato dal pacchetto via Vite URL import
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
+
+// ── Estrae testo raw da un PDF ──────────────────────────────────────────────
+async function extractPdfText(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const pdf    = await pdfjs.getDocument({ data: buffer }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page    = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((it: { str: string }) => it.str).join(' '));
+  }
+  return pages.join('\n');
+}
+
+// ── Tipi campo estratto ─────────────────────────────────────────────────────
+interface VisuraData {
+  ragione_sociale?: string;
+  piva?:            string;
+  codice_fiscale?:  string;
+  indirizzo?:       string;
+  email?:           string;
+  telefono?:        string;
+  codice_ateco?:    string;
+}
+
+// ── Parser visura camerale italiana ────────────────────────────────────────
+function parseVisura(text: string): VisuraData {
+  const clean = text.replace(/\s+/g, ' ');
+  const get   = (patterns: RegExp[]): string | undefined => {
+    for (const re of patterns) {
+      const m = clean.match(re);
+      if (m?.[1]) return m[1].trim().replace(/\s{2,}/g, ' ');
+    }
+  };
+
+  // P.IVA — 11 cifre precedute da etichetta
+  const piva = get([
+    /Partita\s*IVA\s*[:\-]?\s*(\d{11})/i,
+    /P\.?\s*IVA\s*[:\-]?\s*(\d{11})/i,
+    /Numero\s+REA[^0-9]*(\d{11})/i,          // fallback raro
+  ]) ?? clean.match(/\b(\d{11})\b/)?.[1];    // fallback greedy
+
+  // Codice Fiscale — 11 cifre o 16 alfanumerici
+  const codice_fiscale = get([
+    /Codice\s+[Ff]iscale\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
+    /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
+  ]);
+
+  // Ragione sociale / Denominazione
+  const ragione_sociale = get([
+    /Denominazione\s*[:\-]?\s*([A-Z][\w\s\.\,\&\'\-]{2,60}(?:S\.?R\.?L\.?|S\.?P\.?A\.?|S\.?N\.?C\.?|S\.?A\.?S\.?|S\.?S\.?|SRL|SPA|SNC|SAS|SS)?)/i,
+    /Ragione\s+[Ss]ociale\s*[:\-]?\s*([^\n]{3,80})/i,
+    /Ragione\s*[:\-]?\s*([^\n]{3,80})/i,
+  ]);
+
+  // Sede legale
+  const indirizzo = get([
+    /Sede\s+legale\s*[:\-]?\s*([^\n\|]{5,120})/i,
+    /Sede\s*[:\-]?\s*([^\n\|]{5,120})/i,
+    /Indirizzo\s*[:\-]?\s*([^\n\|]{5,120})/i,
+  ]);
+
+  // Codice ATECO (es. 47.11, 62.01.09)
+  const atecoMatch = clean.match(/\b(\d{2}\.\d{2}(?:\.\d{1,2})?)\b/);
+  const codice_ateco = atecoMatch?.[1];
+
+  // Email
+  const emailMatch = clean.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
+  const email = emailMatch?.[1];
+
+  // Telefono (formato italiano)
+  const telMatch = clean.match(/\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s\-]?\d{5,10}|3\d{2}[\s\-]?\d{6,7}))\b/);
+  const telefono = telMatch?.[1]?.replace(/\s+/g, ' ').trim();
+
+  return { ragione_sociale, piva, codice_fiscale, indirizzo, email, telefono, codice_ateco };
+}
+
+// ── Risultato parsing (per feedback all'utente) ─────────────────────────────
+interface ParseResult { data: VisuraData; found: string[]; notFound: string[] }
+
+function buildParseResult(d: VisuraData): ParseResult {
+  const LABELS: Record<keyof VisuraData, string> = {
+    ragione_sociale: 'Ragione Sociale', piva: 'P.IVA', codice_fiscale: 'Codice Fiscale',
+    indirizzo: 'Sede', email: 'Email', telefono: 'Telefono', codice_ateco: 'ATECO',
+  };
+  const found: string[] = [], notFound: string[] = [];
+  (Object.keys(LABELS) as (keyof VisuraData)[]).forEach(k => {
+    (d[k] ? found : notFound).push(LABELS[k]);
+  });
+  return { data: d, found, notFound };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 
 const empty = { ragione_sociale: '', piva: '', codice_fiscale: '', email: '', telefono: '', indirizzo: '' };
 
 export default function ClientiPage() {
   const { user, loading: authLoading } = useAuth();
-  const [clients, setClients] = useState<Client[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [clients,  setClients]  = useState<Client[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [search,   setSearch]   = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<Client | null>(null);
-  const [form, setForm] = useState(empty);
-  const [saving, setSaving] = useState(false);
+  const [editing,  setEditing]  = useState<Client | null>(null);
+  const [form,     setForm]     = useState(empty);
+  const [saving,   setSaving]   = useState(false);
+
+  // Visura import
+  const [parsing,      setParsing]      = useState(false);
+  const [parseResult,  setParseResult]  = useState<ParseResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     const { data, error } = await supabase.from('clients').select('*').order('ragione_sociale');
@@ -33,11 +138,41 @@ export default function ClientiPage() {
     if (!authLoading && user?.id) load();
   }, [authLoading, user?.id]);
 
-  const openCreate = () => { setEditing(null); setForm(empty); setShowForm(true); };
-  const openEdit = (c: Client) => {
+  const openCreate = () => { setEditing(null); setForm(empty); setParseResult(null); setShowForm(true); };
+  const openEdit   = (c: Client) => {
     setEditing(c);
     setForm({ ragione_sociale: c.ragione_sociale, piva: c.piva ?? '', codice_fiscale: c.codice_fiscale ?? '', email: c.email, telefono: c.telefono ?? '', indirizzo: c.indirizzo ?? '' });
+    setParseResult(null);
     setShowForm(true);
+  };
+
+  // ── Import visura ──────────────────────────────────────────────────────────
+  const handleVisuraFile = async (file: File) => {
+    if (!file || file.type !== 'application/pdf') { toast.error('Seleziona un file PDF'); return; }
+    setParsing(true);
+    setParseResult(null);
+    try {
+      const text   = await extractPdfText(file);
+      const parsed = parseVisura(text);
+      const result = buildParseResult(parsed);
+      // Pre-compila il form con i dati trovati (non sovrascrive campi già compilati manualmente)
+      setForm(prev => ({
+        ragione_sociale: prev.ragione_sociale || parsed.ragione_sociale || '',
+        piva:            prev.piva            || parsed.piva            || '',
+        codice_fiscale:  prev.codice_fiscale  || parsed.codice_fiscale  || '',
+        email:           prev.email           || parsed.email           || '',
+        telefono:        prev.telefono        || parsed.telefono        || '',
+        indirizzo:       prev.indirizzo       || parsed.indirizzo       || '',
+      }));
+      setParseResult(result);
+      if (result.found.length > 0) toast.success(`Estratti: ${result.found.join(', ')}`);
+      else toast.warning('Nessun campo riconosciuto nel PDF');
+    } catch (e) {
+      toast.error('Errore lettura PDF: ' + String(e));
+    } finally {
+      setParsing(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const handleSave = async () => {
@@ -48,14 +183,11 @@ export default function ClientiPage() {
     if (editing) {
       const { error } = await supabase.from('clients').update(payload).eq('id', editing.id);
       if (error) { toast.error('Errore aggiornamento: ' + error.message); setSaving(false); return; }
-      // Se l'email è cambiata, aggiorna email_cliente in tutti i codici accesso delle pratiche di questo cliente
       if (payload.email && payload.email !== editing.email) {
         const { data: practices } = await supabase.from('practices').select('id').eq('client_id', editing.id);
         if (practices && practices.length > 0) {
           const ids = practices.map((p: { id: string }) => p.id);
-          await supabase.from('practice_access_codes')
-            .update({ email_cliente: payload.email.trim().toLowerCase() })
-            .in('practice_id', ids);
+          await supabase.from('practice_access_codes').update({ email_cliente: payload.email.trim().toLowerCase() }).in('practice_id', ids);
         }
       }
       toast.success('Cliente aggiornato');
@@ -130,10 +262,58 @@ export default function ClientiPage() {
         </div>
       )}
 
-      <Dialog open={showForm} onOpenChange={setShowForm}>
+      <Dialog open={showForm} onOpenChange={v => { setShowForm(v); if (!v) setParseResult(null); }}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>{editing ? 'Modifica Cliente' : 'Nuovo Cliente'}</DialogTitle></DialogHeader>
-          <div className="grid grid-cols-2 gap-4 py-2">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Modifica Cliente' : 'Nuovo Cliente'}</DialogTitle>
+          </DialogHeader>
+
+          {/* ── Import visura ── */}
+          <div className="bg-muted/40 rounded-lg px-4 py-3 border border-dashed border-border space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Importa dati da Visura Camerale
+              </p>
+              <label className="cursor-pointer">
+                <Button asChild size="sm" variant="outline" className="h-7 text-xs gap-1.5 pointer-events-none">
+                  <span>
+                    {parsing
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Lettura PDF...</>
+                      : <><FileText className="w-3 h-3" /> Carica visura PDF</>
+                    }
+                  </span>
+                </Button>
+                <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden"
+                  disabled={parsing}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleVisuraFile(f); }} />
+              </label>
+            </div>
+
+            {/* Feedback parsing */}
+            {parseResult && (
+              <div className="space-y-1">
+                {parseResult.found.length > 0 && (
+                  <div className="flex items-start gap-1.5 text-xs text-green-700">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span><strong>Trovati:</strong> {parseResult.found.join(' · ')}</span>
+                  </div>
+                )}
+                {parseResult.notFound.length > 0 && (
+                  <div className="flex items-start gap-1.5 text-xs text-amber-700">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span><strong>Non trovati:</strong> {parseResult.notFound.join(' · ')} — compilali manualmente</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <p className="text-[10px] text-muted-foreground">
+              Funziona sulle visure camerali ufficiali del Registro Imprese (PDF digitale, non scansioni).
+            </p>
+          </div>
+
+          {/* ── Form campi ── */}
+          <div className="grid grid-cols-2 gap-4 pt-1">
             <div className="col-span-2 space-y-2">
               <Label>Ragione Sociale *</Label>
               <Input placeholder="Es. Mario Rossi S.r.l." value={form.ragione_sociale} onChange={e => setForm(f => ({ ...f, ragione_sociale: e.target.value }))} />
@@ -159,6 +339,7 @@ export default function ClientiPage() {
               <Input placeholder="Via Roma 1, Milano" value={form.indirizzo} onChange={e => setForm(f => ({ ...f, indirizzo: e.target.value }))} />
             </div>
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>Annulla</Button>
             <Button onClick={handleSave} disabled={saving}>{saving ? 'Salvo...' : (editing ? 'Salva' : 'Crea')}</Button>
