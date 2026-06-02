@@ -84,51 +84,62 @@ const CF_PF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
 /** Estrae lista soci dalla sezione 4 */
 function parseSoci(raw: string): Socio[] {
   const s4 = isolaSezione(raw,
-    /(?:sezione\s+(?:IV|4)\b|soci\s+e\s+titolari|quote\s+sociali)/i,
-    /(?:sezione\s+(?:V|5)\b|organi\s+sociali|rappresentanza|amministrat)/i,
-  ) || raw; // fallback: cerca in tutto il testo
+    /(?:sezione\s+(?:IV|4)\b|\b4\s+Soci\s+e\s+titolari|soci\s+e\s+titolari|quote\s+sociali)/i,
+    /(?:sezione\s+(?:V|5)\b|\b5\s+Amministrat|organi\s+sociali|rappresentanza|\b5\s+)/i,
+  ) || raw;
 
-  CF_PF_RE.lastIndex = 0;
   const results: Socio[] = [];
-  const seen   = new Set<string>();
-  let m: RegExpExecArray | null;
+  const seen = new Set<string>();
 
+  // ── Soci persona fisica (CF 16 char alfanumerico) ─────────────────────────
+  CF_PF_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
   while ((m = CF_PF_RE.exec(s4)) !== null) {
-    const cf     = m[1];
+    const cf = m[1];
     if (seen.has(cf)) continue;
     seen.add(cf);
 
     const before = s4.substring(Math.max(0, m.index - 120), m.index);
     const after  = s4.substring(m.index + cf.length, m.index + cf.length + 200);
 
-    // Nome: ultimo blocco MAIUSCOLO prima del CF, esclusi keyword di sezione
     const nameRaw = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60})\s*$/)?.[1] ?? '';
     const nome = nameRaw
       .replace(/\b(?:SOCIO|SOCIA|QUOTA|VALORE|NOMINATIVO|COGNOME|NOME|DENOMINAZIONE|TIPO|NATURA|TITOLO|SEZIONE|IV|SOCI|E|DI|SU)\b/g, '')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
+      .replace(/\s{2,}/g, ' ').trim();
     if (!nome || nome.length < 3) continue;
 
-    // Valore quota: formato Euro X.XXX,XX o € X.XXX,XX
     const valMatch = after.match(/(?:€|[Ee]uro)\s*([\d.,]+)/)
                   ?? after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/);
     const valore = valMatch?.[1] ?? '';
-
-    // Percentuale
     const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/)
                    ?? before.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/);
     const percentuale = percMatch?.[1] ? percMatch[1] + '%' : '';
-
     results.push({ nome, codice_fiscale: cf, valore, percentuale });
   }
+
+  // ── Soci azienda (CF/PIVA 11 cifre) ───────────────────────────────────────
+  // Pattern: NOME AZIENDA <CF11> <valore> <percentuale> %
+  // Es: "30 FEBBRAIO SRL 05178400262 40.000,00 80 % proprieta'"
+  const COMP_RE = /([A-Z0-9][A-Z0-9\s\.\'\-]{2,60}?(?:SRL|S\.R\.L\.|SPA|S\.P\.A\.|SNC|SAS|S\.S\.|SCARL|SCRL|COOP)\.?)\s+(\d{11})\s+([\d.,]+)\s+([\d,]+(?:[.,]\d+)?)\s*%/gi;
+  let mc: RegExpExecArray | null;
+  while ((mc = COMP_RE.exec(s4)) !== null) {
+    const cf = mc[2];
+    if (seen.has(cf)) continue;
+    seen.add(cf);
+    const nome       = mc[1].replace(/\s{2,}/g, ' ').trim();
+    const valore     = mc[3];
+    const percentuale = mc[4] + '%';
+    if (nome.length >= 3) results.push({ nome, codice_fiscale: cf, valore, percentuale });
+  }
+
   return results;
 }
 
 /** Estrae lista amministratori dalla sezione 5 */
 function parseAmministratori(raw: string): Amministratore[] {
   const s5 = isolaSezione(raw,
-    /(?:sezione\s+(?:V|5)\b|organi\s+sociali|persone\s+che\s+esercitano)/i,
-    /(?:sezione\s+(?:VI|6)\b|$)/i,
+    /(?:sezione\s+(?:V|5)\b|\b5\s+Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i,
+    /(?:sezione\s+(?:VI|6)\b|\b6\s+Sindaci|\b6\s+|$)/i,
   );
   if (!s5) return [];
 
@@ -140,20 +151,21 @@ function parseAmministratori(raw: string): Amministratore[] {
 
   while ((m = CARICA_RE.exec(s5)) !== null) {
     const carica = m[1].trim();
-    const after  = s5.substring(m.index + m[0].length, m.index + m[0].length + 250);
+    const after  = s5.substring(m.index + m[0].length, m.index + m[0].length + 300);
 
-    // CF opzionale subito dopo la carica
+    // CF persona fisica (opzionale — può trovarsi anche dopo "Rappresentante")
     const cfMatch = after.match(/\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/);
     const cf = cfMatch?.[1];
 
-    // Nome: blocco MAIUSCOLO dopo la carica, prima del CF o di altra parola chiave
+    // Nome: blocco MAIUSCOLO subito dopo la carica
+    // Si ferma a: CF, "Rappresentante", "Nato", "Codice", numeri data
     const nameMatch = after.match(
-      /^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60}?)(?=\s+(?:[A-Z]{6}\d|Codice|nato|del\s+C|Carica|\d{1,2}\/)|$)/
+      /^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d|Rappresentante|Nato\s+a|Codice|domicilio|\d{1,2}\/\d{1,2}))/i
     );
     if (!nameMatch?.[1]?.trim()) continue;
 
     const nome = nameMatch[1]
-      .replace(/\b(?:CODICE|FISCALE|NATO|NATA|IN|DEL|DELLA|CARICA)\b/gi, '')
+      .replace(/\b(?:CODICE|FISCALE|NATO|NATA|IN|DEL|DELLA|CARICA|RAPPRESENTANTE)\b/gi, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
     if (!nome || nome.length < 3 || seenNames.has(nome)) continue;
@@ -180,15 +192,16 @@ function parseVisura(text: string): VisuraData {
   // ── Boundary comuni tra campi visura ──────────────────────────────────────
   const B = String.raw`(?=\s+(?:Data\s+(?:atto|cost)|Forma\s+giuridica|Natura\s+giuridica|` +
             String.raw`Codice\s+[Ff]iscale|Partita\s+IVA|P\.?\s*IVA|Sede\s+legale|Indirizzo|` +
-            String.raw`Numero\s+REA|REA\s|Registro\s+imprese|Iscrizione|Stato\s+dell|` +
-            String.raw`Capitale|Pec\b|PEC\b|Attivit))`;
+            String.raw`Numero\s+REA|REA\s|Registro\s+[Ii]mprese|Iscrizione|Stato\s+dell|` +
+            String.raw`Capitale|Pec\b|PEC\b|Attivit|Oggetto\s+sociale|Sistema\s+di|` +
+            String.raw`Durata\s+della|Poteri\b|Archivio\s+ufficiale))`;
 
   // ── Ragione Sociale ───────────────────────────────────────────────────────
   const LABEL_RS = String.raw`(?:Denominazione(?:\s*[\/eo]\s*[Rr]agione\s+[Ss]ociale)?|Ragione\s+[Ss]ociale)\s*[:\-]?\s*`;
 
   const ragione_sociale = (() => {
-    // Priorità 1: non-greedy fino al boundary (min 2 char)
-    const m1 = flat.match(new RegExp(LABEL_RS + String.raw`(.{2,})` + B, 'i'));
+    // Priorità 1: NON-greedy (.{2,}?) — si ferma al PRIMO boundary, non all'ultimo
+    const m1 = flat.match(new RegExp(LABEL_RS + String.raw`(.{2,}?)` + B, 'i'));
     if (m1?.[1]?.trim()) return cleanup(m1[1]);
     // Priorità 2: si ferma alla forma giuridica inclusa nel nome (ammette cifre)
     const m2 = flat.match(new RegExp(
