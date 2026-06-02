@@ -85,7 +85,7 @@ const CF_PF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
 function parseSoci(raw: string): Socio[] {
   const s4 = isolaSezione(raw,
     /(?:sezione\s+(?:IV|4)\b|\b4\s+Soci\s+e\s+titolari|soci\s+e\s+titolari|quote\s+sociali)/i,
-    /(?:sezione\s+(?:V|5)\b|\b5\s+Amministrat|organi\s+sociali|rappresentanza|\b5\s+)/i,
+    /(?:sezione\s+(?:V|5)\b|\b5\s+Amministrat|organi\s+sociali|rappresentanza)/i,
   ) || raw;
 
   const results: Socio[] = [];
@@ -139,7 +139,7 @@ function parseSoci(raw: string): Socio[] {
 function parseAmministratori(raw: string): Amministratore[] {
   const s5 = isolaSezione(raw,
     /(?:sezione\s+(?:V|5)\b|\b5\s+Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i,
-    /(?:sezione\s+(?:VI|6)\b|\b6\s+Sindaci|\b6\s+|$)/i,
+    /(?:sezione\s+(?:VI|6)\b|\b6\s+Sindaci|$)/i,
   );
   if (!s5) return [];
 
