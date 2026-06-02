@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { RefreshCw, ShieldCheck, Download, ChevronDown, ChevronUp, AlertCircle, TrendingUp, Plus } from 'lucide-react';
+import { RefreshCw, ShieldCheck, Download, ChevronDown, ChevronUp, AlertCircle, TrendingUp, Plus, FileDown, Upload, Loader2, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -22,6 +22,8 @@ interface BankKpiReq {
   kpi_label: string; min_value: number | null; max_value: number | null;
 }
 interface AtecoReq { id: string; bank_id: string; codice: string; tipo: 'incluso' | 'escluso'; descrizione: string | null }
+interface BankModulo { id: string; bank_id: string; nome: string; descrizione: string | null; file_path: string }
+interface CompilatoRecord { id: string; modulo_id: string; file_path: string; note: string | null; uploaded_at: string }
 interface BancaCheck {
   bankId: string; bankName: string; logoUrl: string | null;
   reqs: Array<BankKpiReq & { actual: number | null; pass: boolean | null }>;
@@ -259,6 +261,10 @@ export default function BancabilitaTab({ practiceId }: Props) {
   const [loading,   setLoading]   = useState(true);
   const [expanded,  setExpanded]  = useState<string | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
+  // moduli
+  const [moduli,         setModuli]         = useState<BankModulo[]>([]);
+  const [compilati,      setCompilati]      = useState<CompilatoRecord[]>([]);
+  const [uploadingComp,  setUploadingComp]  = useState<string | null>(null); // moduloId durante upload
 
   // ── carica TUTTE le banche con bancabilità ──────────────────────────────
   const load = useCallback(async () => {
@@ -288,17 +294,23 @@ export default function BancabilitaTab({ practiceId }: Props) {
         { data: kpiReqRows },
         { data: atecoReqRows },
         { data: practiceRow },
+        { data: moduliRows },
+        { data: compilatiRows },
       ] = await Promise.all([
         supabase.from('practice_banks').select('id, bank_id').eq('practice_id', practiceId),
         supabase.from('bank_kpi_requirements').select('*').in('bank_id', allIds),
         supabase.from('bank_ateco_requirements').select('*').in('bank_id', allIds),
         supabase.from('practices').select('codice_ateco').eq('id', practiceId).maybeSingle(),
+        supabase.from('bank_moduli').select('*').in('bank_id', allIds),
+        supabase.from('practice_moduli_compilati').select('*').eq('practice_id', practiceId),
       ]);
 
       const assignedMap = new Map((pbRows ?? []).map((r: { id: string; bank_id: string }) => [r.bank_id, r.id]));
       const reqs      = (kpiReqRows  ?? []) as BankKpiReq[];
       const atecoReqs = (atecoReqRows ?? []) as AtecoReq[];
       const practiceAteco = ((practiceRow?.codice_ateco) ?? '').toUpperCase().trim();
+      setModuli((moduliRows ?? []) as BankModulo[]);
+      setCompilati((compilatiRows ?? []) as CompilatoRecord[]);
 
       const built: BancaCheck[] = (allBanks as { id: string; nome: string; email?: string; logo_url?: string }[]).map(bank => {
         const logoUrl  = bank.logo_url || (bank.email ? `https://logo.clearbit.com/${bank.email.split('@')[1]}` : null);
@@ -352,6 +364,29 @@ export default function BancabilitaTab({ practiceId }: Props) {
     setAssigning(null);
     if (error) { toast.error('Errore assegnazione banca'); return; }
     toast.success('Banca assegnata alla pratica');
+    load();
+  };
+
+  const downloadModuloTemplate = async (filePath: string, nome: string) => {
+    const { data } = await supabase.storage.from('bank-moduli').createSignedUrl(filePath, 300);
+    if (!data?.signedUrl) { toast.error('Impossibile scaricare il template'); return; }
+    const a = document.createElement('a'); a.href = data.signedUrl; a.download = nome; a.click();
+  };
+
+  const uploadCompilato = async (moduloId: string, file: File) => {
+    setUploadingComp(moduloId);
+    const ext  = file.name.split('.').pop() ?? 'pdf';
+    const path = `${practiceId}/${moduloId}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('practice-files').upload(path, file, { upsert: false });
+    if (upErr) { toast.error('Errore upload: ' + upErr.message); setUploadingComp(null); return; }
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from('practice_moduli_compilati').insert({
+      practice_id: practiceId, modulo_id: moduloId,
+      file_path: path, uploaded_by: user?.id ?? null,
+    });
+    toast.success('Modulo compilato caricato');
+    setUploadingComp(null);
     load();
   };
 
@@ -545,6 +580,57 @@ export default function BancabilitaTab({ practiceId }: Props) {
                         </span>
                       </div>
                     )}
+
+                    {/* Moduli da compilare per questa banca */}
+                    {(() => {
+                      const bancaModuli = moduli.filter(m => m.bank_id === banca.bankId);
+                      if (bancaModuli.length === 0) return null;
+                      return (
+                        <div className="mt-3 border border-dashed border-primary/30 rounded-lg p-3 bg-primary/5 space-y-2">
+                          <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-wider flex items-center gap-1">
+                            <FileText className="w-3 h-3" /> Moduli richiesti dalla banca
+                          </p>
+                          {bancaModuli.map(m => {
+                            const mCompilati = compilati.filter(c => c.modulo_id === m.id);
+                            return (
+                              <div key={m.id} className="bg-white rounded-md p-2 border border-border/50 space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                  <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-medium truncate">{m.nome}</p>
+                                    {m.descrizione && <p className="text-[10px] text-muted-foreground truncate">{m.descrizione}</p>}
+                                  </div>
+                                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] gap-1 text-primary shrink-0"
+                                    onClick={() => downloadModuloTemplate(m.file_path, m.nome)}>
+                                    <FileDown className="w-3 h-3" /> Template
+                                  </Button>
+                                </div>
+                                {mCompilati.length > 0 && (
+                                  <div className="pl-5 space-y-1">
+                                    {mCompilati.map(c => (
+                                      <p key={c.id} className="text-[10px] text-green-700 flex items-center gap-1">
+                                        ✅ Caricato il {new Date(c.uploaded_at).toLocaleDateString('it-IT')}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="pl-5">
+                                  <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-primary hover:underline">
+                                    {uploadingComp === m.id
+                                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Caricamento...</>
+                                      : <><Upload className="w-3 h-3" /> {mCompilati.length > 0 ? 'Carica nuova versione' : 'Carica compilato'}</>
+                                    }
+                                    <input type="file" accept=".pdf,.doc,.docx,.odt" className="hidden"
+                                      disabled={uploadingComp === m.id}
+                                      onChange={e => { const f = e.target.files?.[0]; if (f) uploadCompilato(m.id, f); e.target.value = ''; }} />
+                                  </label>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
 
                     {/* Bottone dettaglio / Assegna */}
                     <div className="mt-3 flex gap-2">

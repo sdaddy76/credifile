@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import {
   FileText, Upload, CheckCircle2, Clock, XCircle, AlertCircle,
-  LogOut, Download, Eye, ChevronDown, ChevronUp, PlusCircle, Trash2, Save
+  LogOut, Download, Eye, ChevronDown, ChevronUp, PlusCircle, Trash2, Save, FileDown, Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -34,6 +34,13 @@ export default function ClientPortalPage() {
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // ── Moduli banca ─────────────────────────────────────────────────────────
+  interface BankModulo { id: string; bank_id: string; nome: string; descrizione: string | null; file_path: string }
+  interface CompilatoRecord { id: string; modulo_id: string; file_path: string; uploaded_at: string }
+  const [bankModuli,   setBankModuli]   = useState<BankModulo[]>([]);
+  const [compilati,    setCompilati]    = useState<CompilatoRecord[]>([]);
+  const [uploadingMod, setUploadingMod] = useState<string | null>(null);
 
   // ── Finanziamenti in essere ──
   interface Financing {
@@ -139,14 +146,46 @@ export default function ClientPortalPage() {
 
   const load = async () => {
     if (!practiceId) return;
-    const [p, docs] = await Promise.all([
+    const [p, docs, pbRes] = await Promise.all([
       supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)').eq('id', practiceId).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', practiceId).order('tipo').order('created_at'),
+      supabase.from('practice_banks').select('bank_id').eq('practice_id', practiceId),
     ]);
     setPractice(p.data as Practice);
     setDocuments((docs.data ?? []) as PracticeDocument[]);
+    const bankIds = (pbRes.data ?? []).map((r: { bank_id: string }) => r.bank_id);
+    if (bankIds.length > 0) {
+      const [modRes, compRes] = await Promise.all([
+        supabase.from('bank_moduli').select('*').in('bank_id', bankIds),
+        supabase.from('practice_moduli_compilati').select('*').eq('practice_id', practiceId),
+      ]);
+      setBankModuli((modRes.data ?? []) as BankModulo[]);
+      setCompilati((compRes.data ?? []) as CompilatoRecord[]);
+    }
     setLoading(false);
     loadFinancing();
+  };
+
+  const downloadModuloTemplate = async (filePath: string, nome: string) => {
+    const { data } = await supabase.storage.from('bank-moduli').createSignedUrl(filePath, 300);
+    if (!data?.signedUrl) { toast.error('Impossibile scaricare il template'); return; }
+    const a = document.createElement('a'); a.href = data.signedUrl; a.download = nome; a.click();
+  };
+
+  const uploadCompilatoClient = async (moduloId: string, file: File) => {
+    if (!practiceId) return;
+    setUploadingMod(moduloId);
+    const ext  = file.name.split('.').pop() ?? 'pdf';
+    const path = `${practiceId}/${moduloId}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('practice-files').upload(path, file, { upsert: false });
+    if (upErr) { toast.error('Errore upload: ' + upErr.message); setUploadingMod(null); return; }
+    await supabase.from('practice_moduli_compilati').insert({
+      practice_id: practiceId, modulo_id: moduloId, file_path: path, uploaded_by: null,
+    });
+    toast.success('Modulo caricato con successo!');
+    setUploadingMod(null);
+    load();
   };
 
   useEffect(() => { if (session) load(); }, [session]);
@@ -438,6 +477,62 @@ export default function ClientPortalPage() {
             </CardContent></Card>
           )}
         </div>
+
+        {/* Moduli banca da compilare */}
+        {bankModuli.length > 0 && (
+          <Card className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />
+                Moduli da Compilare per la Banca
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Scarica ogni modulo, compilalo e caricalo firmato.
+              </p>
+            </CardHeader>
+            <CardContent className="pb-4 space-y-3">
+              {bankModuli.map(m => {
+                const mComp = compilati.filter(c => c.modulo_id === m.id);
+                return (
+                  <div key={m.id} className="border border-border rounded-lg p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <FileText className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{m.nome}</p>
+                        {m.descrizione && <p className="text-xs text-muted-foreground">{m.descrizione}</p>}
+                      </div>
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1 shrink-0"
+                        onClick={() => downloadModuloTemplate(m.file_path, m.nome)}>
+                        <FileDown className="w-3 h-3" /> Scarica template
+                      </Button>
+                    </div>
+                    {mComp.length > 0 && (
+                      <div className="pl-6 space-y-1">
+                        {mComp.map(c => (
+                          <p key={c.id} className="text-xs text-green-700 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Caricato il {new Date(c.uploaded_at).toLocaleDateString('it-IT')}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    <div className="pl-6">
+                      <label className="flex items-center gap-1.5 cursor-pointer text-xs text-primary hover:underline w-fit">
+                        {uploadingMod === m.id
+                          ? <><Loader2 className="w-3 h-3 animate-spin" /> Caricamento in corso...</>
+                          : <><Upload className="w-3 h-3" /> {mComp.length > 0 ? 'Carica nuova versione' : 'Carica modulo compilato'}</>
+                        }
+                        <input type="file" accept=".pdf,.doc,.docx,.odt" className="hidden"
+                          disabled={uploadingMod === m.id}
+                          onChange={e => { const f = e.target.files?.[0]; if (f) uploadCompilatoClient(m.id, f); e.target.value = ''; }} />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Finanziamenti in essere */}
         <Card className="border-border">

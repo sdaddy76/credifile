@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarChart3 } from 'lucide-react';
+import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarChart3, Upload, FileDown, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Bank, BankDocumentRequirement } from '@/lib/types';
@@ -41,6 +41,7 @@ const KPI_CATALOG = [
 ];
 interface KpiReq { id: string; kpi_key: string; kpi_area: string; kpi_label: string; min_value: number | null; max_value: number | null }
 interface AtecoReq { id: string; codice: string; tipo: 'incluso' | 'escluso'; descrizione: string | null }
+interface BankModulo { id: string; nome: string; descrizione: string | null; file_path: string; created_at: string }
 
 const emptyBank = { nome: '', codice: '', contatto: '', email: '', email_invio_banca: '', note: '', attiva: true, logo_url: '' };
 const emptyReq = { nome: '', descrizione: '', obbligatorio: true };
@@ -134,7 +135,51 @@ export default function BanchePage() {
     loadAtecoRequirements(bankId);
   }
 
-  useEffect(() => { loadBanks(); }, []);
+  // ── MODULI DA COMPILARE ────────────────────────────────────────────────────
+  const [bankModuli,      setBankModuli]      = useState<Record<string, BankModulo[]>>({});
+  const [showModuloForm,  setShowModuloForm]  = useState<string | null>(null);
+  const [moduloFormNome,  setModuloFormNome]  = useState('');
+  const [moduloFormDesc,  setModuloFormDesc]  = useState('');
+  const [moduloFormFile,  setModuloFormFile]  = useState<File | null>(null);
+  const [uploadingModulo, setUploadingModulo] = useState<string | null>(null);
+
+  async function loadModuli(bankId: string) {
+    const { data } = await supabase.from('bank_moduli').select('*').eq('bank_id', bankId).order('created_at');
+    setBankModuli(prev => ({ ...prev, [bankId]: data ?? [] }));
+  }
+
+  async function handleUploadModulo(bankId: string) {
+    if (!moduloFormFile || !moduloFormNome.trim()) { toast.error('Nome e file obbligatori'); return; }
+    setUploadingModulo(bankId);
+    const ext  = moduloFormFile.name.split('.').pop() ?? 'pdf';
+    const path = `${bankId}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('bank-moduli').upload(path, moduloFormFile, { upsert: false });
+    if (upErr) { toast.error('Errore upload: ' + upErr.message); setUploadingModulo(null); return; }
+    const { error: dbErr } = await supabase.from('bank_moduli').insert({
+      bank_id: bankId, nome: moduloFormNome.trim(),
+      descrizione: moduloFormDesc.trim() || null, file_path: path,
+    });
+    if (dbErr) { toast.error('Errore salvataggio'); setUploadingModulo(null); return; }
+    toast.success('Modulo caricato');
+    setUploadingModulo(null);
+    setShowModuloForm(null); setModuloFormNome(''); setModuloFormDesc(''); setModuloFormFile(null);
+    loadModuli(bankId);
+  }
+
+  async function handleDeleteModulo(id: string, bankId: string, filePath: string) {
+    if (!confirm('Eliminare questo modulo?')) return;
+    await supabase.storage.from('bank-moduli').remove([filePath]);
+    await supabase.from('bank_moduli').delete().eq('id', id);
+    toast.success('Modulo eliminato');
+    loadModuli(bankId);
+  }
+
+  async function downloadModulo(filePath: string, nome: string) {
+    const { data } = await supabase.storage.from('bank-moduli').createSignedUrl(filePath, 300);
+    if (!data?.signedUrl) { toast.error('Impossibile scaricare il file'); return; }
+    const a = document.createElement('a'); a.href = data.signedUrl; a.download = nome; a.click();
+  }
 
   const toggleExpand = (id: string) => {
     if (expandedBank === id) { setExpandedBank(null); return; }
@@ -142,6 +187,7 @@ export default function BanchePage() {
     loadRequirements(id);
     loadKpiRequirements(id);
     loadAtecoRequirements(id);
+    loadModuli(id);
   };
 
   const openCreateBank = () => { setEditingBank(null); setBankForm(emptyBank); setShowBankForm(true); };
@@ -429,6 +475,76 @@ export default function BanchePage() {
                         </div>
                       )}
                     </div>
+
+                    {/* ── Sezione Moduli da Compilare ── */}
+                    <div className="mt-4 border-t border-border pt-3">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5" /> Moduli da Compilare
+                        </p>
+                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                          onClick={() => { setShowModuloForm(b.id); setModuloFormNome(''); setModuloFormDesc(''); setModuloFormFile(null); }}>
+                          <Plus className="w-3 h-3" /> Carica modulo
+                        </Button>
+                      </div>
+
+                      {(bankModuli[b.id] ?? []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-2">Nessun modulo caricato</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {(bankModuli[b.id] ?? []).map(m => (
+                            <div key={m.id} className="flex items-center gap-3 bg-muted/50 rounded-lg px-3 py-2">
+                              <FileText className="w-4 h-4 text-primary shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">{m.nome}</p>
+                                {m.descrizione && <p className="text-xs text-muted-foreground truncate">{m.descrizione}</p>}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1 text-primary"
+                                  onClick={() => downloadModulo(m.file_path, m.nome)}>
+                                  <FileDown className="w-3 h-3" /> Scarica
+                                </Button>
+                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive"
+                                  onClick={() => handleDeleteModulo(m.id, b.id, m.file_path)}>
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {showModuloForm === b.id && (
+                        <div className="mt-3 p-3 bg-accent/30 rounded-lg space-y-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Nome modulo *</Label>
+                            <Input placeholder="es. Modulo antiriciclaggio" value={moduloFormNome}
+                              onChange={e => setModuloFormNome(e.target.value)} className="h-8 text-sm" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Istruzioni per il cliente</Label>
+                            <Input placeholder="es. Compilare in ogni sua parte e firmare" value={moduloFormDesc}
+                              onChange={e => setModuloFormDesc(e.target.value)} className="h-8 text-sm" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">File (PDF, Word, ODT) *</Label>
+                            <input type="file" accept=".pdf,.doc,.docx,.odt"
+                              className="text-sm text-muted-foreground file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-primary file:text-primary-foreground cursor-pointer"
+                              onChange={e => setModuloFormFile(e.target.files?.[0] ?? null)} />
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" className="h-7 text-xs gap-1" disabled={uploadingModulo === b.id}
+                              onClick={() => handleUploadModulo(b.id)}>
+                              {uploadingModulo === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                              {uploadingModulo === b.id ? 'Caricamento...' : 'Carica'}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs"
+                              onClick={() => setShowModuloForm(null)}>Annulla</Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 )}
               </CardContent>
