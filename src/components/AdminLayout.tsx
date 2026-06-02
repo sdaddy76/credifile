@@ -70,8 +70,9 @@ export default function AdminLayout() {
 
   const handleSignOut = async () => {
     await signOut();
-    toast.success('Disconnesso');
-    navigate('/login');
+    // Hard reload: azzera tutto lo stato React ed evita la race condition
+    // in cui LoginPage vede ancora user!=null e re-redirige al dashboard
+    window.location.replace('/#/login');
   };
 
   const displayName = profileNome || user?.email || '';
