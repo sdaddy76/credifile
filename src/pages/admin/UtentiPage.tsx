@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Activity, Monitor, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 
@@ -18,6 +18,15 @@ interface AdminProfile {
   email: string;
   nome?: string;
   ruolo: string;
+  created_at: string;
+}
+
+interface AccessLog {
+  id: string;
+  user_id: string;
+  ip_address: string;
+  user_agent: string;
+  is_new_ip: boolean;
   created_at: string;
 }
 
@@ -55,6 +64,12 @@ export default function UtentiPage() {
   const [assignments, setAssignments] = useState<Record<string, Set<string>>>({});
   const [savingAssign, setSavingAssign] = useState(false);
 
+  // Log accessi (solo super_admin)
+  const [accessLogs,    setAccessLogs]    = useState<AccessLog[]>([]);
+  const [logsLoading,   setLogsLoading]   = useState(false);
+  const [filterUserId,  setFilterUserId]  = useState('tutti');
+  const [logsExpanded,  setLogsExpanded]  = useState(false);
+
   // ── Tutti gli hook PRIMA di qualsiasi return condizionale ──
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -77,11 +92,22 @@ export default function UtentiPage() {
     setAssignments(map);
   }, []);
 
+  const loadLogs = useCallback(async () => {
+    setLogsLoading(true);
+    const { data } = await supabase
+      .from('user_access_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    setAccessLogs((data ?? []) as AccessLog[]);
+    setLogsLoading(false);
+  }, []);
+
   useEffect(() => {
     if (authLoading) return;
     load();
-    if (isSuperAdmin) loadAssignments();
-  }, [authLoading, isSuperAdmin, load, loadAssignments]);
+    if (isSuperAdmin) { loadAssignments(); loadLogs(); }
+  }, [authLoading, isSuperAdmin, load, loadAssignments, loadLogs]);
 
   // Return condizionali DOPO tutti gli hook
   if (authLoading) return (
@@ -357,6 +383,119 @@ export default function UtentiPage() {
               </Button>
             </div>
           </CardContent>
+        </Card>
+      )}
+
+      {/* ── Log Accessi (solo super_admin) ── */}
+      {isSuperAdmin && (
+        <Card className="border-border">
+          <CardHeader className="pb-2 cursor-pointer" onClick={() => setLogsExpanded(v => !v)}>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Activity className="w-4 h-4 text-primary" />
+                Log Accessi
+                {accessLogs.filter(l => l.is_new_ip).length > 0 && (
+                  <span className="ml-1 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold">
+                    {accessLogs.filter(l => l.is_new_ip).length} IP nuovi
+                  </span>
+                )}
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={e => { e.stopPropagation(); loadLogs(); }}>
+                  <RefreshCw className={`w-3.5 h-3.5 ${logsLoading ? 'animate-spin' : ''}`} />
+                </Button>
+                {logsExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Ultimi 200 accessi — badge rosso = IP mai visto prima per quell'utente</p>
+          </CardHeader>
+
+          {logsExpanded && (
+            <CardContent className="pt-0 pb-4">
+              {/* Filtro per utente */}
+              <div className="flex items-center gap-2 mb-3">
+                <Select value={filterUserId} onValueChange={setFilterUserId}>
+                  <SelectTrigger className="h-8 text-sm w-48">
+                    <SelectValue placeholder="Tutti gli utenti" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="tutti">Tutti gli utenti</SelectItem>
+                    {profiles.map(p => (
+                      <SelectItem key={p.id} value={p.id}>{p.nome || p.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground">
+                  {(() => {
+                    const filtered = filterUserId === 'tutti' ? accessLogs : accessLogs.filter(l => l.user_id === filterUserId);
+                    return `${filtered.length} record`;
+                  })()}
+                </span>
+              </div>
+
+              {logsLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : accessLogs.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">Nessun log disponibile</p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/60">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-semibold text-muted-foreground">Utente</th>
+                        <th className="text-left px-3 py-2 font-semibold text-muted-foreground">IP</th>
+                        <th className="text-left px-3 py-2 font-semibold text-muted-foreground">Dispositivo</th>
+                        <th className="text-left px-3 py-2 font-semibold text-muted-foreground">Data e ora</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(filterUserId === 'tutti' ? accessLogs : accessLogs.filter(l => l.user_id === filterUserId))
+                        .map((log, idx) => {
+                          const profile = profiles.find(p => p.id === log.user_id);
+                          const label = profile ? (profile.nome || profile.email) : log.user_id.slice(0, 8) + '…';
+                          const initial = label.charAt(0).toUpperCase();
+                          const ua = log.user_agent || '';
+                          // Semplifica user-agent
+                          const device = ua.includes('Mobile') ? '📱 Mobile' : ua.includes('Windows') ? '🖥 Windows' : ua.includes('Mac') ? '🍎 Mac' : ua.includes('Linux') ? '🐧 Linux' : '💻 Desktop';
+                          const browser = ua.includes('Chrome') ? 'Chrome' : ua.includes('Firefox') ? 'Firefox' : ua.includes('Safari') ? 'Safari' : ua.includes('Edge') ? 'Edge' : '';
+                          const ts = new Date(log.created_at);
+                          const dateStr = ts.toLocaleDateString('it-IT') + ' ' + ts.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                          return (
+                            <tr key={log.id} className={`border-t border-border/50 transition-colors ${log.is_new_ip ? 'bg-red-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-muted/20'}`}>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-[10px] font-bold text-primary">
+                                    {initial}
+                                  </div>
+                                  <span className="truncate max-w-[140px]" title={profile?.email}>{label}</span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-1.5">
+                                  <code className="font-mono text-xs">{log.ip_address}</code>
+                                  {log.is_new_ip && (
+                                    <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold shrink-0">🔴 Nuovo</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-1 text-muted-foreground">
+                                  <Monitor className="w-3 h-3 shrink-0" />
+                                  <span>{device}{browser ? ` · ${browser}` : ''}</span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 text-muted-foreground tabular-nums">{dateStr}</td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          )}
         </Card>
       )}
 
