@@ -70,9 +70,9 @@ export default function AdminLayout() {
 
   const handleSignOut = async () => {
     await signOut();
-    // Hard reload: azzera tutto lo stato React ed evita la race condition
-    // in cui LoginPage vede ancora user!=null e re-redirige al dashboard
-    window.location.replace('/#/login');
+    // reload() forza ricaricamento completo dell'app (azzera tutto lo stato React).
+    // replace('/#/login') cambiava solo la hash senza vero reload → user restava in memoria.
+    window.location.reload();
   };
 
   const displayName = profileNome || user?.email || '';
