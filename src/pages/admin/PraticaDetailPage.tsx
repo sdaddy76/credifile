@@ -30,7 +30,7 @@ import {
 export default function PraticaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isAgente, canEdit, canApprove, user } = useAuth();
+  const { isAgente, canEdit, canApprove, user, isSegnalatore, isSuperAdmin, isSegreteria } = useAuth();
   const adminFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [uploadingAdminDoc, setUploadingAdminDoc] = useState<string | null>(null);
 
@@ -121,7 +121,7 @@ export default function PraticaDetailPage() {
   const load = useCallback(async () => {
     if (!id) return;
     const [p, docs, l, ac] = await Promise.all([
-      supabase.from('practices').select('*, clients(*), banks(*), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)').eq('id', id).single(),
+      supabase.from('practices').select('*, clients(*), banks(*), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)').eq('id', id).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', id).order('created_at'),
       supabase.from('practice_status_log').select('*').eq('practice_id', id).order('created_at', { ascending: false }),
       supabase.from('practice_access_codes').select('*').eq('practice_id', id).maybeSingle(),
@@ -439,6 +439,21 @@ export default function PraticaDetailPage() {
               {practice.motivazione && <div><p className="text-muted-foreground text-xs">Motivazione Richiesta</p><p className="text-sm mt-0.5 bg-muted/50 rounded p-2 leading-relaxed">{practice.motivazione}</p></div>}
             </CardContent>
           </Card>
+
+          {/* Segnalatore — visibile a super_admin, segreteria e agente */}
+          {(() => {
+            const seg = (practice as Practice & { segnalatore?: { id: string; nome?: string; email: string } }).segnalatore;
+            if (!seg || isSegnalatore) return null;
+            return (
+              <Card className="border-orange-200 bg-orange-50/40">
+                <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2 text-orange-700">👤 Segnalatore</CardTitle></CardHeader>
+                <CardContent className="space-y-1 text-sm">
+                  <p className="font-medium">{seg.nome || '—'}</p>
+                  <p className="text-muted-foreground text-xs">{seg.email}</p>
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Avanzamento documenti */}
           <Card className="border-border">

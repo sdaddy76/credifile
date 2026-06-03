@@ -25,9 +25,10 @@ export default function PratichePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: ''
+    client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: '', segnalatore_id: ''
   });
   const [agents, setAgents] = useState<{ id: string; nome?: string; email: string }[]>([]);
+  const [segnalatori, setSegnalatori] = useState<{ id: string; nome?: string; email: string }[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [showAssignBank, setShowAssignBank] = useState<Practice | null>(null);
   const [assignBankId, setAssignBankId] = useState('');
@@ -114,7 +115,7 @@ export default function PratichePage() {
 
 
   async function load() {
-    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)');
+    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), created_by_agent:admin_profiles!practices_created_by_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)');
 
     if (isAgente && user?.id) {
       // Agente: vede le proprie E quelle assegnate a lui
@@ -152,6 +153,16 @@ export default function PratichePage() {
       .then(r => setAgents(r.data ?? []));
     supabase.from('banks').select('*').order('nome')
       .then(r => setBanks(r.data ?? []));
+    // Carica segnalatori: agente vede i propri, admin/segreteria vede tutti
+    if (user?.id && isAgente) {
+      supabase.from('agent_segnalatori')
+        .select('segnalatore:segnalatore_id(id,nome,email)')
+        .eq('agent_id', user.id)
+        .then(r => setSegnalatori((r.data ?? []).map((x: { segnalatore: { id: string; nome?: string; email: string } }) => x.segnalatore)));
+    } else if (isSuperAdmin || isSegreteria) {
+      supabase.from('admin_profiles').select('id,nome,email').eq('ruolo','segnalatore').order('nome')
+        .then(r => setSegnalatori(r.data ?? []));
+    }
   }, [authLoading, isAgente, isSegreteria, isSuperAdmin, isSegnalatore, user?.id]);
 
   const filtered = practices.filter(p => {
@@ -191,6 +202,7 @@ export default function PratichePage() {
       status: 'bozza',
       created_by: user?.id ?? null,
       assigned_to: form.assigned_to || null,
+      segnalatore_id: form.segnalatore_id || null,
     }).select().single();
 
     if (error) { toast.error('Errore nella creazione'); setSaving(false); return; }
@@ -220,7 +232,7 @@ export default function PratichePage() {
     toast.success(`Pratica ${numero_pratica} creata con successo`);
     setSaving(false);
     setShowCreate(false);
-    setForm({ client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: '' });
+    setForm({ client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: '', segnalatore_id: '' });
     load();
     navigate(`/admin/pratiche/${practice.id}`);
   };
@@ -332,6 +344,8 @@ export default function PratichePage() {
           {filtered.map(p => {
             const client = (p as Practice & { clients?: { ragione_sociale: string; email: string } }).clients;
             const assignedAgent = (p as Practice & { assigned_agent?: { id: string; nome?: string; email: string } }).assigned_agent;
+            const createdByAgent = (p as Practice & { created_by_agent?: { id: string; nome?: string; email: string } }).created_by_agent;
+            const segnalatorePratica = (p as Practice & { segnalatore?: { id: string; nome?: string; email: string } }).segnalatore;
             return (
               <Card key={p.id} className="border-border hover:border-primary/30 transition-colors cursor-pointer" onClick={() => navigate(`/admin/pratiche/${p.id}`)}>
                 <CardContent className="py-3 px-4">
@@ -343,6 +357,17 @@ export default function PratichePage() {
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
                         {assignedAgent && !isAgente && <span>👤 {assignedAgent.nome || assignedAgent.email}</span>}
+                        {/* Provenienza: visibile solo a super_admin e segreteria */}
+                        {(isSuperAdmin || isSegreteria) && createdByAgent && (
+                          <span className="flex items-center gap-1 text-blue-600">
+                            <span className="font-medium">Agente:</span> {createdByAgent.nome || createdByAgent.email}
+                          </span>
+                        )}
+                        {(isSuperAdmin || isSegreteria) && segnalatorePratica && (
+                          <span className="flex items-center gap-1 text-orange-600">
+                            <span className="font-medium">Segnalatore:</span> {segnalatorePratica.nome || segnalatorePratica.email}
+                          </span>
+                        )}
                         {p.importo_richiesto && <span className="flex items-center gap-1"><Euro className="w-3 h-3" />{p.importo_richiesto.toLocaleString('it-IT')}</span>}
                         <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(p.created_at).toLocaleDateString('it-IT')}</span>
                       </div>
@@ -418,6 +443,21 @@ export default function PratichePage() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">L'agente potrà vedere e gestire questa pratica.</p>
+              </div>
+            )}
+            {!isSegnalatore && segnalatori.length > 0 && (
+              <div className="space-y-2">
+                <Label>Segnalatore</Label>
+                <Select value={form.segnalatore_id} onValueChange={v => setForm(f => ({ ...f, segnalatore_id: v === 'nessuno' ? '' : v }))}>
+                  <SelectTrigger><SelectValue placeholder="Seleziona segnalatore (opzionale)..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="nessuno">— Nessun segnalatore —</SelectItem>
+                    {segnalatori.map(s => (
+                      <SelectItem key={s.id} value={s.id}>{s.nome || s.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">Il segnalatore riceverà copia delle comunicazioni.</p>
               </div>
             )}
           </div>
