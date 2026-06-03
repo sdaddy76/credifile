@@ -20,6 +20,7 @@ import ImpostazioniPage from "@/pages/admin/ImpostazioniPage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
+import RegistrazioneSegnalPage from "@/pages/RegistrazioneSegnalPage";
 
 const queryClient = new QueryClient();
 
@@ -51,6 +52,7 @@ const App = () => (
           <Route path="/login" element={<LoginPage />} />
           <Route path="/set-password" element={<SetPasswordPage />} />
           <Route path="/reset-password" element={<SetPasswordPage />} />
+          <Route path="/invito-segnalatore" element={<RegistrazioneSegnalPage />} />
 
           {/* Admin protetto */}
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
