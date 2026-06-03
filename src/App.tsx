@@ -14,6 +14,7 @@ import DocumentiTemplatePage from "@/pages/admin/DocumentiTemplatePage";
 import UtentiPage from "@/pages/admin/UtentiPage";
 import ProfiloPage from "@/pages/admin/ProfiloPage";
 import MieiAgentiPage from "@/pages/admin/MieiAgentiPage";
+import MieiSegnalPage from "@/pages/admin/MieiSegnalPage";
 import StatistichePage from "@/pages/admin/StatistichePage";
 import ImpostazioniPage from "@/pages/admin/ImpostazioniPage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
@@ -64,7 +65,8 @@ const App = () => (
             <Route path="profilo" element={<ProfiloPage />} />
             <Route path="statistiche" element={<StatistichePage />} />
             <Route path="impostazioni" element={<ImpostazioniPage />} />
-            <Route path="miei-agenti" element={<MieiAgentiPage />} />
+            <Route path="miei-agenti"       element={<MieiAgentiPage />} />
+            <Route path="miei-segnalatori"  element={<MieiSegnalPage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />

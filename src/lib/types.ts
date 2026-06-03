@@ -73,6 +73,7 @@ export interface Practice {
   id: string;
   client_id: string;
   bank_id?: string;
+  segnalatore_id?: string;
   numero_pratica: string;
   importo_richiesto?: number;
   motivazione?: string;
@@ -82,6 +83,24 @@ export interface Practice {
   updated_at: string;
   clients?: Client;
   banks?: Bank;
+  segnalatore?: AdminProfile;
+}
+
+export interface AdminProfile {
+  id: string;
+  email: string;
+  ruolo: string;
+  nome?: string;
+  created_at?: string;
+}
+
+export interface AgentSegnalatore {
+  id: string;
+  agent_id: string;
+  segnalatore_id: string;
+  created_at: string;
+  segnalatore?: AdminProfile;
+  agent?: AdminProfile;
 }
 
 export interface PracticeAccessCode {

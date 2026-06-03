@@ -16,7 +16,7 @@ import { useAuth } from '@/hooks/useAuth';
 
 export default function PratichePage() {
   const navigate = useNavigate();
-  const { isAgente, isSuperAdmin, isSegreteria, canEdit, user, loading: authLoading } = useAuth();
+  const { isAgente, isSuperAdmin, isSegreteria, isSegnalatore, canEdit, user, loading: authLoading } = useAuth();
   const [practices, setPractices] = useState<Practice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,11 +129,13 @@ export default function PratichePage() {
         const agentIds = assignments.map((a: { agent_user_id: string }) => a.agent_user_id);
         query = query.in('created_by', agentIds);
       } else {
-        // Nessun agente assegnato: mostra lista vuota
         setPractices([]);
         setLoading(false);
         return;
       }
+    } else if (isSegnalatore && user?.id) {
+      // Segnalatore: vede solo le pratiche dove è assegnato come segnalatore
+      query = query.eq('segnalatore_id', user.id);
     }
     // super_admin: nessun filtro, vede tutte
 
@@ -150,7 +152,7 @@ export default function PratichePage() {
       .then(r => setAgents(r.data ?? []));
     supabase.from('banks').select('*').order('nome')
       .then(r => setBanks(r.data ?? []));
-  }, [authLoading, isAgente, isSegreteria, isSuperAdmin, user?.id]);
+  }, [authLoading, isAgente, isSegreteria, isSuperAdmin, isSegnalatore, user?.id]);
 
   const filtered = practices.filter(p => {
     const rs = (p as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? '';

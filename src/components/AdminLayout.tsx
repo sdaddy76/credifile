@@ -38,21 +38,29 @@ const NAV_SEGRETERIA = [
 
 
 const NAV_AGENTE = [
-  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/pratiche',  icon: FolderOpen,      label: 'Pratiche' },
-  { to: '/admin/clienti',   icon: Users,           label: 'Clienti' },
-  { to: '/admin/profilo',   icon: UserCircle,      label: 'Profilo' },
+  { to: '/admin/dashboard',          icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/admin/pratiche',           icon: FolderOpen,      label: 'Pratiche' },
+  { to: '/admin/clienti',            icon: Users,           label: 'Clienti' },
+  { to: '/admin/miei-segnalatori',   icon: UsersRound,      label: 'Miei Segnalatori' },
+  { to: '/admin/profilo',            icon: UserCircle,      label: 'Profilo' },
+];
+
+const NAV_SEGNALATORE = [
+  { to: '/admin/pratiche',  icon: FolderOpen,  label: 'Mie Pratiche' },
+  { to: '/admin/profilo',   icon: UserCircle,  label: 'Profilo' },
 ];
 
 const ROLE_LABEL: Record<string, string> = {
   super_admin:            'Super Admin',
   agente:                 'Agente',
   supervisore_segreteria: 'Segreteria',
+  segnalatore:            'Segnalatore',
 };
 const ROLE_COLOR: Record<string, string> = {
   super_admin:            'bg-red-100 text-red-800',
   agente:                 'bg-blue-100 text-blue-800',
   supervisore_segreteria: 'bg-teal-100 text-teal-800',
+  segnalatore:            'bg-orange-100 text-orange-800',
 };
 
 export default function AdminLayout() {
@@ -66,6 +74,7 @@ export default function AdminLayout() {
   const navItems =
     role === 'super_admin'            ? NAV_SUPER :
     role === 'supervisore_segreteria' ? NAV_SEGRETERIA :
+    role === 'segnalatore'            ? NAV_SEGNALATORE :
                                         NAV_AGENTE;
 
   const handleSignOut = async () => {

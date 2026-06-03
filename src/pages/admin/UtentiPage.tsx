@@ -33,6 +33,7 @@ interface AccessLog {
 const RUOLI = [
   { value: 'agente', label: 'Agente', desc: 'Gestisce propri clienti, carica documenti, invia codice accesso al cliente', icon: ShieldCheck, color: 'bg-blue-100 text-blue-800' },
   { value: 'supervisore_segreteria', label: 'Segreteria', desc: 'Pratiche agenti assegnati, gestisce banche, cambia stato pratiche, richiede integrazioni', icon: UserCog, color: 'bg-teal-100 text-teal-800' },
+  { value: 'segnalatore', label: 'Segnalatore', desc: 'Commercialista o segnalatore: carica documenti iniziali (visura, bilancio, richiesta), riceve CC email banca', icon: ShieldCheck, color: 'bg-orange-100 text-orange-800' },
 ];
 
 export default function UtentiPage() {
