@@ -46,8 +46,8 @@ const NAV_AGENTE = [
 ];
 
 const NAV_SEGNALATORE = [
-  { to: '/admin/pratiche',  icon: FolderOpen,  label: 'Mie Pratiche' },
-  { to: '/admin/profilo',   icon: UserCircle,  label: 'Profilo' },
+  { to: '/admin/clienti',  icon: Users,       label: 'Clienti' },
+  { to: '/admin/profilo',  icon: UserCircle,  label: 'Profilo' },
 ];
 
 const ROLE_LABEL: Record<string, string> = {

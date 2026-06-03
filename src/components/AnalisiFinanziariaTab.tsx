@@ -68,6 +68,31 @@ const AREA_LABELS: Record<keyof KpiResult, string> = {
   copertura: '🛡️ Copertura',
 };
 
+const KPI_DESC: Record<string, string> = {
+  'Current Ratio':        'Att. Corrente / Pass. Corrente — liquidità nel breve (ottimale ≥ 1,5)',
+  'Quick Ratio':          '(Att. Corrente − Rimanenze) / Pass. Corrente — liquidità senza magazzino (≥ 1,0)',
+  'Acid Test':            'Liquidità immediata / Pass. Corrente — cassa + crediti vs debiti a breve (≥ 0,5)',
+  'Debt/Equity':          'Debiti Totali / Patrimonio Netto — dipendenza dal debito (ottimale ≤ 1,5)',
+  'Leverage':             'Totale Attivo / Patrimonio Netto — moltiplicatore finanziario (≤ 2,5)',
+  'PN / Totale Attivo':   'Patrimonio Netto / Totale Attivo — autonomia finanziaria (≥ 25%)',
+  'Grado Indebitamento':  'Debiti bancari a breve / Patrimonio Netto — esposizione bancaria (≤ 1,0)',
+  'ROE':                  'Utile Netto / Patrimonio Netto — redditività del capitale proprio (≥ 5%)',
+  'ROI':                  'EBIT / Totale Attivo — rendimento degli investimenti (≥ 3%)',
+  'ROS':                  'EBIT / Ricavi di Vendita — margine operativo sulle vendite (≥ 3%)',
+  'EBITDA Margin':        'EBITDA / Ricavi — capacità di generare cassa operativa (≥ 10%)',
+  'EBITDA (€)':           'Margine Operativo Lordo — utile prima di ammortamenti e interessi',
+  'Fatturato (€)':        'Ricavi totali da vendite e prestazioni di servizi',
+  'PFN (€)':              'Posizione Finanziaria Netta = Debiti Fin. − Liquidità (negativo = cassa netta)',
+  'PFN / EBITDA':         'Anni di EBITDA per ripagare il debito finanziario netto (ottimale ≤ 3×)',
+  'PFN / PN':             'Debito finanziario netto su Patrimonio Netto (≤ 1,0)',
+  'DSO (giorni crediti)': 'Days Sales Outstanding — media giorni di incasso dei crediti (≤ 60 gg)',
+  'DPO (giorni debiti)':  'Days Payable Outstanding — media giorni di pagamento fornitori',
+  'DSI (giorni magazzino)':'Days Sales Inventory — rotazione del magazzino in giorni',
+  'Interest Coverage':    'EBIT / Interessi Passivi — quante volte l\'azienda copre gli interessi (≥ 3×)',
+  'DSCR (da finanziamenti)': 'EBITDA / Rata annua finanziamenti — copertura del servizio del debito (≥ 1,25)',
+  'DSCR (approx.)':       'EBITDA / Interessi passivi — proxy DSCR in assenza di dati finanziamenti (≥ 1,25)',
+};
+
 function fmt(n: number | null, isEur = false) {
   if (n === null) return 'N/D';
   if (isEur) return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
@@ -76,13 +101,17 @@ function fmt(n: number | null, isEur = false) {
 
 function KpiCard({ entry }: { entry: KpiEntry }) {
   const sem = entry.semaforo ?? 'nd';
+  const desc = KPI_DESC[entry.label];
   return (
-    <div className={`flex items-center justify-between p-2.5 rounded-lg border text-sm ${SEMAFORO_COLOR[sem]}`}>
-      <div className="flex items-center gap-2">
-        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${SEMAFORO_DOT[sem]}`} />
-        <span className="font-medium">{entry.label}</span>
+    <div className={`flex items-start justify-between p-2.5 rounded-lg border text-sm ${SEMAFORO_COLOR[sem]}`}>
+      <div className="flex items-start gap-2 flex-1 min-w-0">
+        <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${SEMAFORO_DOT[sem]}`} />
+        <div className="min-w-0">
+          <span className="font-medium">{entry.label}</span>
+          {desc && <p className="text-xs opacity-70 mt-0.5 leading-tight">{desc}</p>}
+        </div>
       </div>
-      <span className="font-bold tabular-nums">{entry.formatted}</span>
+      <span className="font-bold tabular-nums ml-3 shrink-0">{entry.formatted}</span>
     </div>
   );
 }

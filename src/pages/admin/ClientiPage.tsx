@@ -332,7 +332,7 @@ const EMPTY: FormState = {
 // ═══════════════════════════════════════════════════════════
 
 export default function ClientiPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, isSegnalatore } = useAuth();
   const [clients,     setClients]     = useState<Client[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [search,      setSearch]      = useState('');
@@ -344,14 +344,55 @@ export default function ClientiPage() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Sezione documenti per segnalatore
+  const [segOpenClientId, setSegOpenClientId] = useState<string | null>(null);
+  const [segPracticeId, setSegPracticeId]     = useState<string | null>(null);
+  const [segDocs, setSegDocs]                 = useState<{id:string;nome:string;status:string}[]>([]);
+  const [segUploading, setSegUploading]       = useState<string | null>(null);
+  const fileSegRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
   async function load() {
-    const { data, error } = await supabase.from('clients').select('*').order('ragione_sociale');
-    if (error) toast.error('Errore caricamento clienti: ' + error.message);
-    setClients(data ?? []);
+    if (!user?.id) return;
+    if (isSegnalatore) {
+      const { data: pratt } = await supabase.from('practices').select('client_id').eq('segnalatore_id', user.id);
+      const ids = [...new Set((pratt ?? []).map((p: {client_id:string}) => p.client_id).filter(Boolean))];
+      if (ids.length === 0) { setClients([]); setLoading(false); return; }
+      const { data } = await supabase.from('clients').select('*').in('id', ids).order('ragione_sociale');
+      setClients(data ?? []);
+    } else {
+      const { data, error } = await supabase.from('clients').select('*').order('ragione_sociale');
+      if (error) toast.error('Errore caricamento clienti: ' + error.message);
+      setClients(data ?? []);
+    }
     setLoading(false);
   }
 
-  useEffect(() => { if (!authLoading && user?.id) load(); }, [authLoading, user?.id]);
+  async function openSegDocs(clientId: string) {
+    if (!user?.id) return;
+    setSegOpenClientId(clientId);
+    setSegDocs([]); setSegPracticeId(null);
+    const { data } = await supabase.from('practices').select('id').eq('client_id', clientId).eq('segnalatore_id', user.id).limit(1).maybeSingle();
+    if (!data?.id) { toast.error('Nessuna pratica trovata'); return; }
+    setSegPracticeId(data.id);
+    const { data: docs } = await supabase.from('practice_documents').select('id,nome,status').eq('practice_id', data.id).order('created_at');
+    setSegDocs((docs ?? []) as {id:string;nome:string;status:string}[]);
+  }
+
+  async function handleSegUpload(docId: string, file: File) {
+    if (!segPracticeId || !user?.id) return;
+    setSegUploading(docId);
+    const ext = file.name.split('.').pop();
+    const path = `${segPracticeId}/${docId}/${Date.now()}.${ext}`;
+    try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch (_) { /* ok */ }
+    await supabase.from('uploaded_files').insert({ practice_id: segPracticeId, doc_id: docId, nome_file: file.name, storage_path: path, uploaded_by: user.id });
+    await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
+    setSegUploading(null);
+    toast.success('Documento caricato!');
+    const { data: docs } = await supabase.from('practice_documents').select('id,nome,status').eq('practice_id', segPracticeId!).order('created_at');
+    setSegDocs((docs ?? []) as {id:string;nome:string;status:string}[]);
+  }
+
+  useEffect(() => { if (!authLoading && user?.id) load(); }, [authLoading, user?.id, isSegnalatore]);
 
   const toForm = (c: Client): FormState => ({
     ragione_sociale:   c.ragione_sociale,
@@ -460,9 +501,11 @@ export default function ClientiPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Clienti</h1>
-          <p className="text-muted-foreground text-sm mt-1">{clients.length} clienti registrati</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            {isSegnalatore ? 'Clienti delle tue pratiche' : `${clients.length} clienti registrati`}
+          </p>
         </div>
-        <Button onClick={openCreate} className="gap-2"><Plus className="w-4 h-4" /> Nuovo Cliente</Button>
+        {!isSegnalatore && <Button onClick={openCreate} className="gap-2"><Plus className="w-4 h-4" /> Nuovo Cliente</Button>}
       </div>
 
       {/* Ricerca */}
@@ -511,9 +554,18 @@ export default function ClientiPage() {
                     </div>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(c)}><Pencil className="w-3.5 h-3.5" /></Button>
-                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
-                      onClick={() => handleDelete(c.id, c.ragione_sociale)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                    {isSegnalatore ? (
+                      <Button variant="outline" size="sm" className="text-xs gap-1 h-8 px-2 text-orange-700 border-orange-300 hover:bg-orange-50"
+                        onClick={() => openSegDocs(c.id)}>
+                        <FileText className="w-3.5 h-3.5" /> Documenti
+                      </Button>
+                    ) : (
+                      <>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(c)}><Pencil className="w-3.5 h-3.5" /></Button>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
+                          onClick={() => handleDelete(c.id, c.ragione_sociale)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                      </>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -681,6 +733,49 @@ export default function ClientiPage() {
             <Button onClick={handleSave} disabled={saving}>
               {saving ? 'Salvo…' : editing ? 'Salva Modifiche' : 'Crea Cliente'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog documenti segnalatore */}
+      <Dialog open={!!segOpenClientId} onOpenChange={v => { if (!v) { setSegOpenClientId(null); setSegDocs([]); setSegPracticeId(null); } }}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>📄 Documenti Pratica</DialogTitle></DialogHeader>
+          {segDocs.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">
+              {segPracticeId === null ? 'Caricamento...' : 'Nessun documento richiesto per questa pratica.'}
+            </p>
+          ) : (
+            <div className="space-y-2 py-2">
+              {segDocs.map(doc => {
+                const done = doc.status === 'caricato' || doc.status === 'approvato';
+                return (
+                  <div key={doc.id} className={`flex items-center justify-between p-2.5 rounded-lg border text-sm ${done ? 'bg-green-50 border-green-200' : 'bg-muted/40 border-border'}`}>
+                    <div className="flex items-center gap-2">
+                      {done
+                        ? <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                        : <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />}
+                      <span className={done ? 'text-green-800 font-medium' : 'font-medium'}>{doc.nome}</span>
+                    </div>
+                    {!done && (
+                      <>
+                        <input type="file" className="hidden" ref={el => { fileSegRefs.current[doc.id] = el; }}
+                          onChange={e => { const f = e.target.files?.[0]; if (f) handleSegUpload(doc.id, f); e.target.value = ''; }} />
+                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                          disabled={segUploading === doc.id}
+                          onClick={() => fileSegRefs.current[doc.id]?.click()}>
+                          {segUploading === doc.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                          {segUploading === doc.id ? 'Upload...' : 'Carica'}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setSegOpenClientId(null); setSegDocs([]); setSegPracticeId(null); }}>Chiudi</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

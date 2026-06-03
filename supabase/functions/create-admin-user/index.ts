@@ -10,7 +10,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const { email, password, nome, ruolo } = await req.json()
+    const { email, password, nome, ruolo, agent_id } = await req.json()
 
     if (!email || !password || !ruolo) {
       return new Response(JSON.stringify({ error: 'email, password e ruolo obbligatori' }), {
@@ -44,6 +44,14 @@ serve(async (req) => {
       nome: nome || null,
       ruolo,
     })
+
+    // Se segnalatore e agent_id fornito, crea il collegamento automatico
+    if (ruolo === 'segnalatore' && agent_id) {
+      await supabase.from('agent_segnalatori').insert({
+        agent_id,
+        segnalatore_id: userData.user.id,
+      })
+    }
 
     return new Response(JSON.stringify({ success: true, id: userData.user.id }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }

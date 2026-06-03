@@ -49,6 +49,8 @@ export default function UtentiPage() {
   const [newPassword, setNewPassword] = useState('');
   const [newNome, setNewNome] = useState('');
   const [newRuolo, setNewRuolo] = useState('agente');
+  const [newAgentId, setNewAgentId] = useState(''); // per segnalatore: agente a cui collegarlo
+  const [agents, setAgents] = useState<AdminProfile[]>([]); // lista agenti per associazione segnalatore
 
   // Form modifica
   const [editRuolo, setEditRuolo] = useState('');
@@ -108,6 +110,9 @@ export default function UtentiPage() {
     if (authLoading) return;
     load();
     if (isSuperAdmin) { loadAssignments(); loadLogs(); }
+    // Carica lista agenti per associare segnalatori
+    supabase.from('admin_profiles').select('id,email,nome,ruolo,created_at').eq('ruolo','agente').order('nome')
+      .then(r => setAgents((r.data ?? []) as AdminProfile[]));
   }, [authLoading, isSuperAdmin, load, loadAssignments, loadLogs]);
 
   // Return condizionali DOPO tutti gli hook
@@ -176,6 +181,7 @@ export default function UtentiPage() {
         password: newPassword,
         nome: newNome || null,
         ruolo: newRuolo,
+        agent_id: newRuolo === 'segnalatore' && newAgentId ? newAgentId : undefined,
       },
     });
 
@@ -188,7 +194,7 @@ export default function UtentiPage() {
     toast.success(`Utente ${newEmail} creato con ruolo "${newRuolo}"`);
     setSaving(false);
     setShowCreate(false);
-    setNewEmail(''); setNewPassword(''); setNewNome(''); setNewRuolo('agente');
+    setNewEmail(''); setNewPassword(''); setNewNome(''); setNewRuolo('agente'); setNewAgentId('');
     load();
   };
 
@@ -534,6 +540,21 @@ export default function UtentiPage() {
                 </SelectContent>
               </Select>
             </div>
+            {newRuolo === 'segnalatore' && (
+              <div className="space-y-2">
+                <Label>Associa ad Agente</Label>
+                <Select value={newAgentId} onValueChange={setNewAgentId}>
+                  <SelectTrigger><SelectValue placeholder="Seleziona agente (opzionale)..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">— Nessun agente —</SelectItem>
+                    {agents.map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">Il segnalatore verrà collegato all'agente selezionato.</p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>Annulla</Button>

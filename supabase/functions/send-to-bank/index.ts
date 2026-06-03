@@ -46,17 +46,6 @@ serve(async (req) => {
       );
     }
 
-    // 1b. Recupera email segnalatore (se presente)
-    let segnalatoEmail: string | null = null;
-    if (pratica.segnalatore_id) {
-      const segRes = await fetch(
-        `${SUPA_URL}/rest/v1/admin_profiles?id=eq.${encodeURIComponent(pratica.segnalatore_id)}&select=email&limit=1`,
-        { headers: restHeaders },
-      );
-      const segArr = await segRes.json();
-      segnalatoEmail = segArr?.[0]?.email ?? null;
-    }
-
     // 2. Carica assegnazione banca
     const pbRes = await fetch(
       `${SUPA_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca)&limit=1`,
@@ -159,18 +148,15 @@ ${notaHtml}
 </body></html>`;
 
     // 6. Invia email via Resend
-    const emailPayload: Record<string, unknown> = {
-      from: FROM,
-      to: [bankEmail],
-      subject: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
-      html: htmlBody,
-    };
-    if (segnalatoEmail) emailPayload.cc = [segnalatoEmail];
-
     const emailRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(emailPayload),
+      body: JSON.stringify({
+        from: FROM,
+        to: [bankEmail],
+        subject: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
+        html: htmlBody,
+      }),
     });
     const emailBody = await emailRes.json();
     if (!emailRes.ok) {
@@ -195,7 +181,7 @@ ${notaHtml}
     );
 
     return new Response(
-      JSON.stringify({ success: true, sent_to: bankEmail, cc: segnalatoEmail, docs_sent: docLinks.length }),
+      JSON.stringify({ success: true, sent_to: bankEmail, docs_sent: docLinks.length }),
       { headers: CORS },
     );
   } catch (e) {

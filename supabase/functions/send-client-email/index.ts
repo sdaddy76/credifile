@@ -11,7 +11,7 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
   try {
-    const { to, consultant_name, documents, link, code, practice_number, company_name } = await req.json();
+    const { to, consultant_name, documents, link, code, practice_number, company_name, cc } = await req.json();
 
     if (!to || !consultant_name || !link || !code) {
       return new Response(JSON.stringify({ success: false, error: "Parametri mancanti" }), {
@@ -66,10 +66,13 @@ Deno.serve(async (req: Request) => {
 
     const textBody = `Richiesta Documenti${company_name ? ` — ${company_name}` : ""}\n\nGentile cliente,\n\nIl consulente ${consultant_name} ha richiesto dei documenti${company_name ? ` per l'azienda ${company_name}` : ""}.\n\nDocumenti richiesti:\n${docListText}\n\nLink: ${link}\nCodice: ${code}\n\nDistinti Saluti\n${consultant_name}`;
 
+    const emailPayload: Record<string, unknown> = { from: FROM_EMAIL, to: [to], subject, html: htmlBody, text: textBody };
+    if (cc) emailPayload.cc = Array.isArray(cc) ? cc : [cc];
+
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, html: htmlBody, text: textBody }),
+      body: JSON.stringify(emailPayload),
     });
 
     const resData = await res.json();
