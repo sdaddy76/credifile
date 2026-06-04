@@ -46,3 +46,14 @@
 [2026-06-02 16:10] COMPLETATO: visura estesa — DB migrazione (data_costituzione, capitale_sociale_versato, soci JSONB, amministratori JSONB), types.ts aggiornato, ClientiPage.tsx riscritto con parser robusto. Commit f98cfdd pushato.
 [2026-06-03 11:55] Avvio ruolo segnalatore: DB (agent_segnalatori + practices.segnalatore_id), types, auth, nav, UtentiPage, pratiche, portal
 [2026-06-03 11:56] DB migrazione segnalatore completata: agent_segnalatori + practices.segnalatore_id. Avvio types/auth/layout/UtentiPage/portale
+[2026-06-03 12:08] Completamento segnalatore: PratichePage (campo segnalatore + colonne provenance), PraticaDetailPage (sezione segnalatore + doc), send-to-bank CC
+[2026-06-03 12:14] segnalatore feature completata — PratichePage (useEffect segnalatori, Select dialog, card provenance agente+segnalatore, form reset), PraticaDetailPage (query join, card segnalatore sidebar), send-to-bank (CC segnalatore). Commit dfd04d1.
+[2026-06-03 12:21] Inizio modifiche segnalatore: fix CC email, nav Clienti, auto-link, KPI labels
+[2026-06-03 12:23] Inizio implementazione: fix CC email segnalatore, nav Clienti, auto-link, KPI descriptions
+[2026-06-03 12:33] Commit f3c7b28 — segnalatore v2 completo: nav Clienti, auto-link, filtro clienti, KPI descriptions, CC email corretta
+[2026-06-03 12:33] Commit f3c7b28 completato — segnalatore v2: nav Clienti, auto-link agente, filtro clienti, KPI descriptions, CC email fix, MieiSegnalPage con form creazione
+[2026-06-03 13:39] Inizio flusso invito segnalatore: DB table, edge functions, pagina registrazione
+[2026-06-03 13:40] DB segnalatore_invites creata, inizio edge functions invite-segnalatore e register-segnalatore
+[2026-06-03 13:44] Commit 1748900 — flusso invito segnalatore completo: DB segnalatore_invites, edge fn invite+register, pagina pubblica registrazione, MieiSegnalPage semplificato
+[2026-06-04 00:08] stefano ripristinato super_admin, creato superadmin@credifile.test, inizio fix create-admin-user e gestione segnalatori
+[2026-06-04 00:12] Aggiunto UNIQUE constraint email su admin_profiles; fix create-admin-user con check email esistente; letto UtentiPage completo

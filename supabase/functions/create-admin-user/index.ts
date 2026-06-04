@@ -23,6 +23,18 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    // Blocca se l'email esiste già — impedisce sovrascrittura ruolo
+    const { data: existing } = await supabase
+      .from('admin_profiles')
+      .select('id, ruolo')
+      .eq('email', email.trim().toLowerCase())
+      .maybeSingle()
+    if (existing) {
+      return new Response(JSON.stringify({ error: `Un account con email ${email} esiste già (ruolo: ${existing.ruolo})` }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
     // Crea utente via Admin API (non disconnette l'admin corrente)
     const { data: userData, error: userError } = await supabase.auth.admin.createUser({
       email: email.trim().toLowerCase(),

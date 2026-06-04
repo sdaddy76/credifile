@@ -58,6 +58,12 @@ export default function UtentiPage() {
   const [editPassword, setEditPassword] = useState('');
   const [showEditPwd, setShowEditPwd] = useState(false);
   const [changingPwd, setChangingPwd] = useState(false);
+  const [editAssignId, setEditAssignId] = useState(''); // per cambio ruolo → segnalatore
+
+  // Gestione segnalatori (super_admin + segreteria)
+  const [segnAssignMap, setSegnAssignMap] = useState<Record<string, string>>({}); // segnalatore_id → agent_id
+  const [segnAssignEdit, setSegnAssignEdit] = useState<Record<string, string>>({}); // pending edits
+  const [savingSegnAssign, setSavingSegnAssign] = useState(false);
 
   // Elimina utente
   const [showDelete, setShowDelete] = useState<AdminProfile | null>(null);
@@ -106,14 +112,25 @@ export default function UtentiPage() {
     setLogsLoading(false);
   }, []);
 
+  const loadSegnAssignments = useCallback(async () => {
+    const { data } = await supabase.from('agent_segnalatori').select('agent_id, segnalatore_id');
+    const map: Record<string, string> = {};
+    (data ?? []).forEach((r: { agent_id: string; segnalatore_id: string }) => {
+      map[r.segnalatore_id] = r.agent_id;
+    });
+    setSegnAssignMap(map);
+    setSegnAssignEdit(map);
+  }, []);
+
   useEffect(() => {
     if (authLoading) return;
     load();
+    loadSegnAssignments();
     if (isSuperAdmin) { loadAssignments(); loadLogs(); }
     // Carica lista agenti per associare segnalatori
     supabase.from('admin_profiles').select('id,email,nome,ruolo,created_at').eq('ruolo','agente').order('nome')
       .then(r => setAgents((r.data ?? []) as AdminProfile[]));
-  }, [authLoading, isSuperAdmin, load, loadAssignments, loadLogs]);
+  }, [authLoading, isSuperAdmin, load, loadAssignments, loadLogs, loadSegnAssignments]);
 
   // Return condizionali DOPO tutti gli hook
   if (authLoading) return (
@@ -129,6 +146,7 @@ export default function UtentiPage() {
     setEditNome(p.nome ?? '');
     setEditPassword('');
     setShowEditPwd(false);
+    setEditAssignId('');
   };
 
   const handleDelete = async () => {
@@ -200,14 +218,81 @@ export default function UtentiPage() {
 
   const handleUpdateRole = async () => {
     if (!showEdit) return;
+
+    // Protezione: non permettere modifica ruolo a un super_admin tramite questa UI
+    if (showEdit.ruolo === 'super_admin' && editRuolo !== 'super_admin') {
+      toast.error('Non è possibile modificare il ruolo di un Super Admin da questa interfaccia.');
+      return;
+    }
+
     setSaving(true);
-    await supabase.from('admin_profiles')
-      .update({ ruolo: editRuolo, nome: editNome || null })
-      .eq('id', showEdit.id);
-    toast.success('Ruolo aggiornato');
+
+    // Caso speciale: agente → segnalatore
+    if (showEdit.ruolo === 'agente' && editRuolo === 'segnalatore') {
+      // Aggiorna il ruolo
+      await supabase.from('admin_profiles')
+        .update({ ruolo: 'segnalatore', nome: editNome || null })
+        .eq('id', showEdit.id);
+      // Rimuovi dalle assegnazioni segreteria (non è più agente)
+      await supabase.from('segreteria_agent_assignments')
+        .delete()
+        .eq('agent_user_id', showEdit.id);
+      // Se è stato scelto un agente, crea il collegamento segnalatore→agente
+      if (editAssignId) {
+        await supabase.from('agent_segnalatori').upsert(
+          { agent_id: editAssignId, segnalatore_id: showEdit.id },
+          { onConflict: 'agent_id,segnalatore_id' }
+        );
+      }
+      toast.success(`Ruolo aggiornato: ora Segnalatore${editAssignId ? ' — assegnato all\'agente selezionato' : ' (non ancora assegnato ad un agente)'}`);
+    } else {
+      await supabase.from('admin_profiles')
+        .update({ ruolo: editRuolo, nome: editNome || null })
+        .eq('id', showEdit.id);
+      // Se ora è segnalatore e è stato scelto un agente
+      if (editRuolo === 'segnalatore' && editAssignId) {
+        await supabase.from('agent_segnalatori').upsert(
+          { agent_id: editAssignId, segnalatore_id: showEdit.id },
+          { onConflict: 'agent_id,segnalatore_id' }
+        );
+      }
+      toast.success('Modifiche salvate');
+    }
+
     setSaving(false);
     setShowEdit(null);
+    setEditAssignId('');
     load();
+    loadSegnAssignments();
+  };
+
+  // Salva le riassegnazioni segnalatori in blocco
+  const saveSegnAssignments = async () => {
+    setSavingSegnAssign(true);
+    // Per ogni segnalatore con assegnazione cambiata
+    const segnalatori = profiles.filter(p => p.ruolo === 'segnalatore');
+    for (const s of segnalatori) {
+      const oldAgentId = segnAssignMap[s.id];
+      const newAgentId = segnAssignEdit[s.id] ?? '';
+      if (oldAgentId === newAgentId) continue;
+      // Rimuovi vecchia assegnazione
+      if (oldAgentId) {
+        await supabase.from('agent_segnalatori')
+          .delete()
+          .eq('segnalatore_id', s.id)
+          .eq('agent_id', oldAgentId);
+      }
+      // Inserisci nuova assegnazione
+      if (newAgentId) {
+        await supabase.from('agent_segnalatori').upsert(
+          { agent_id: newAgentId, segnalatore_id: s.id },
+          { onConflict: 'agent_id,segnalatore_id' }
+        );
+      }
+    }
+    toast.success('Assegnazioni segnalatori salvate');
+    setSavingSegnAssign(false);
+    loadSegnAssignments();
   };
 
   // Toggle assegnazione agente per una segreteria
@@ -345,6 +430,64 @@ export default function UtentiPage() {
           )}
         </div>
       )}
+
+      {/* ── Sezione Gestione Segnalatori (super_admin + segreteria) ── */}
+      {(() => {
+        const segnalatori = profiles.filter(p => p.ruolo === 'segnalatore');
+        if (segnalatori.length === 0) return null;
+        return (
+          <Card className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Link2 className="w-4 h-4 text-primary" />
+                Gestione Segnalatori
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Assegna ogni segnalatore a un agente oppure lascialo non assegnato.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {segnalatori.map(s => {
+                const currentAgentId = segnAssignEdit[s.id] ?? '';
+                return (
+                  <div key={s.id} className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                    <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                      <span className="text-xs font-bold text-orange-700">
+                        {(s.nome || s.email).charAt(0).toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{s.nome || s.email}</p>
+                      <p className="text-xs text-muted-foreground">{s.email}</p>
+                    </div>
+                    <div className="w-52 shrink-0">
+                      <Select
+                        value={currentAgentId}
+                        onValueChange={v => setSegnAssignEdit(prev => ({ ...prev, [s.id]: v }))}
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue placeholder="— Non assegnato —" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">— Non assegnato —</SelectItem>
+                          {agents.map(a => (
+                            <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex justify-end pt-1">
+                <Button onClick={saveSegnAssignments} disabled={savingSegnAssign} size="sm">
+                  {savingSegnAssign ? 'Salvataggio...' : 'Salva Assegnazioni Segnalatori'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* ── Sezione assegnazioni (solo super_admin) ── */}
       {isSuperAdmin && segreteriaUsers.length > 0 && agentiUsers.length > 0 && (
@@ -580,7 +723,9 @@ export default function UtentiPage() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {RUOLI.map(r => (
-                    <SelectItem key={r.value} value={r.value}>
+                    <SelectItem key={r.value} value={r.value}
+                      disabled={showEdit?.ruolo === 'super_admin' && r.value !== 'super_admin'}
+                    >
                       <div>
                         <p className="font-medium">{r.label}</p>
                         <p className="text-xs text-muted-foreground">{r.desc}</p>
@@ -589,7 +734,30 @@ export default function UtentiPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {showEdit?.ruolo === 'super_admin' && (
+                <p className="text-xs text-destructive flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Ruolo Super Admin non modificabile da questa UI.
+                </p>
+              )}
             </div>
+            {/* Selector agente quando si assegna ruolo segnalatore */}
+            {editRuolo === 'segnalatore' && showEdit?.ruolo !== 'segnalatore' && (
+              <div className="space-y-2">
+                <Label>Associa ad Agente</Label>
+                <Select value={editAssignId} onValueChange={setEditAssignId}>
+                  <SelectTrigger><SelectValue placeholder="— Non assegnato (gestirà la segreteria) —" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">— Non assegnato —</SelectItem>
+                    {agents.map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Scegli a quale agente collegare questo segnalatore, oppure lascia non assegnato e la segreteria potrà associarlo in seguito.
+                </p>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
               Il cambio ruolo avrà effetto al prossimo accesso dell'utente.
             </p>
