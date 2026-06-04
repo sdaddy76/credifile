@@ -61,3 +61,4 @@
 [2026-06-04 00:14] Sessione completata: tutti i pending tasks risolti e pushati (commit 54ab2e9)
 [2026-06-04 00:24] Inizio diagnosi bug pratiche vuote per agente + ricerca KPI benchmark settoriali
 [2026-06-04 00:27] CAUSA bug pratiche vuote: practices_created_by_fkey non in schema cache PostgREST → query PGRST200. Fix: rimuovere join FK rotto, usare created_by UUID + lookup da agents state
+[2026-06-04 00:28] Bug pratiche vuote RISOLTO: rimosso join practices_created_by_fkey non in schema cache PostgREST. Build+deploy ok. Ora: ricerca KPI benchmark settoriali ATECO Italia

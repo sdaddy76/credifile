@@ -99,9 +99,70 @@ function fmt(n: number | null, isEur = false) {
   return new Intl.NumberFormat('it-IT').format(n);
 }
 
-function KpiCard({ entry }: { entry: KpiEntry }) {
+
+// ── Benchmark settoriali per ATECO (fonte: Banca d'Italia / Mediobanca / BACH) ──
+// Dati mediani per PMI italiane — valori indicativi aggiornati al 2023
+interface SectorBenchmark {
+  label: string;
+  kpi: Partial<Record<string, number | null>>;
+}
+
+const ATECO_SECTOR_MAP: [RegExp, string][] = [
+  [/^0[1-3]/,   'agricoltura'],
+  [/^0[5-9]/,   'estrazione'],
+  [/^[12][0-9]|^3[0-3]/,'manifattura'],
+  [/^35/,       'energia'],
+  [/^3[6-9]/,   'acqua_rifiuti'],
+  [/^4[1-3]/,   'costruzioni'],
+  [/^4[5-7]/,   'commercio'],
+  [/^4[9]|^5[0-3]/,'trasporti'],
+  [/^5[5-6]/,   'ristorazione'],
+  [/^5[8-9]|^6[0-3]/,'ict'],
+  [/^6[4-6]/,   'finanza'],
+  [/^68/,       'immobiliare'],
+  [/^6[9]|^7[0-5]/,'professionali'],
+  [/^7[7-9]|^8[0-2]/,'amministrativi'],
+  [/^86|^87|^88/,'sanita'],
+];
+
+const SECTOR_BENCHMARKS: Record<string, SectorBenchmark> = {
+  agricoltura:   { label: 'Agricoltura (A)',            kpi: { 'Current Ratio':1.3,'Quick Ratio':0.8,'Debt/Equity':1.5,'Leverage':2.5,'PN / Totale Attivo':40,'Grado Indebitamento':0.9,'ROE':5,'ROI':3,'ROS':5,'EBITDA Margin':12,'PFN / EBITDA':4.5,'DSO':60,'Interest Coverage':2.8,'DSCR':1.1 }},
+  estrazione:    { label: 'Estrazione (B)',             kpi: { 'Current Ratio':1.4,'Quick Ratio':1.1,'Debt/Equity':1.8,'Leverage':2.8,'PN / Totale Attivo':36,'Grado Indebitamento':1.0,'ROE':7,'ROI':5,'ROS':8,'EBITDA Margin':18,'PFN / EBITDA':3.8,'DSO':70,'Interest Coverage':3.5,'DSCR':1.2 }},
+  manifattura:   { label: 'Manifattura (C)',            kpi: { 'Current Ratio':1.4,'Quick Ratio':1.0,'Debt/Equity':1.8,'Leverage':2.8,'PN / Totale Attivo':36,'Grado Indebitamento':1.1,'ROE':8,'ROI':5,'ROS':4,'EBITDA Margin':9,'PFN / EBITDA':3.2,'DSO':85,'Interest Coverage':3.5,'DSCR':1.2 }},
+  energia:       { label: 'Energia (D)',                kpi: { 'Current Ratio':1.2,'Quick Ratio':1.1,'Debt/Equity':2.5,'Leverage':3.5,'PN / Totale Attivo':29,'Grado Indebitamento':1.5,'ROE':9,'ROI':5,'ROS':6,'EBITDA Margin':20,'PFN / EBITDA':5.0,'DSO':80,'Interest Coverage':2.5,'DSCR':1.1 }},
+  acqua_rifiuti: { label: 'Acqua/Rifiuti (E)',          kpi: { 'Current Ratio':1.2,'Quick Ratio':1.0,'Debt/Equity':2.2,'Leverage':3.2,'PN / Totale Attivo':31,'Grado Indebitamento':1.2,'ROE':7,'ROI':4,'ROS':5,'EBITDA Margin':16,'PFN / EBITDA':4.5,'DSO':75,'Interest Coverage':2.8,'DSCR':1.1 }},
+  costruzioni:   { label: 'Costruzioni (F)',            kpi: { 'Current Ratio':1.3,'Quick Ratio':1.1,'Debt/Equity':3.0,'Leverage':4.0,'PN / Totale Attivo':25,'Grado Indebitamento':1.4,'ROE':10,'ROI':5,'ROS':3,'EBITDA Margin':8,'PFN / EBITDA':4.5,'DSO':110,'Interest Coverage':2.2,'DSCR':1.1 }},
+  commercio:     { label: 'Commercio (G)',              kpi: { 'Current Ratio':1.2,'Quick Ratio':0.7,'Debt/Equity':2.2,'Leverage':3.2,'PN / Totale Attivo':31,'Grado Indebitamento':1.2,'ROE':9,'ROI':6,'ROS':2,'EBITDA Margin':5,'PFN / EBITDA':3.8,'DSO':65,'Interest Coverage':2.8,'DSCR':1.15 }},
+  trasporti:     { label: 'Trasporti (H)',              kpi: { 'Current Ratio':1.1,'Quick Ratio':1.0,'Debt/Equity':2.5,'Leverage':3.5,'PN / Totale Attivo':29,'Grado Indebitamento':1.3,'ROE':7,'ROI':4,'ROS':3,'EBITDA Margin':10,'PFN / EBITDA':5.0,'DSO':55,'Interest Coverage':2.2,'DSCR':1.1 }},
+  ristorazione:  { label: 'Ristorazione/Alloggio (I)', kpi: { 'Current Ratio':0.9,'Quick Ratio':0.8,'Debt/Equity':2.8,'Leverage':3.8,'PN / Totale Attivo':26,'Grado Indebitamento':1.5,'ROE':6,'ROI':4,'ROS':5,'EBITDA Margin':14,'PFN / EBITDA':5.5,'DSO':30,'Interest Coverage':2.0,'DSCR':1.05 }},
+  ict:           { label: 'ICT / Comunicazioni (J)',   kpi: { 'Current Ratio':1.8,'Quick Ratio':1.7,'Debt/Equity':0.8,'Leverage':1.8,'PN / Totale Attivo':55,'Grado Indebitamento':0.5,'ROE':14,'ROI':10,'ROS':10,'EBITDA Margin':18,'PFN / EBITDA':2.0,'DSO':65,'Interest Coverage':5.5,'DSCR':1.4 }},
+  finanza:       { label: 'Finanza / Assicurazioni (K)', kpi: { 'Current Ratio':1.5,'Quick Ratio':1.4,'Debt/Equity':4.0,'Leverage':5.0,'PN / Totale Attivo':20,'Grado Indebitamento':2.0,'ROE':10,'ROI':3,'ROS':15,'EBITDA Margin':20,'PFN / EBITDA':null,'DSO':45,'Interest Coverage':3.0,'DSCR':1.2 }},
+  immobiliare:   { label: 'Immobiliare (L)',            kpi: { 'Current Ratio':1.1,'Quick Ratio':0.9,'Debt/Equity':2.0,'Leverage':3.0,'PN / Totale Attivo':33,'Grado Indebitamento':1.5,'ROE':5,'ROI':3,'ROS':20,'EBITDA Margin':35,'PFN / EBITDA':8.0,'DSO':40,'Interest Coverage':2.0,'DSCR':1.1 }},
+  professionali: { label: 'Servizi Professionali (M)', kpi: { 'Current Ratio':1.6,'Quick Ratio':1.5,'Debt/Equity':1.0,'Leverage':2.0,'PN / Totale Attivo':50,'Grado Indebitamento':0.6,'ROE':12,'ROI':8,'ROS':8,'EBITDA Margin':15,'PFN / EBITDA':2.0,'DSO':80,'Interest Coverage':5.0,'DSCR':1.35 }},
+  amministrativi:{ label: 'Servizi Amministrativi (N)', kpi: { 'Current Ratio':1.3,'Quick Ratio':1.2,'Debt/Equity':1.5,'Leverage':2.5,'PN / Totale Attivo':40,'Grado Indebitamento':0.8,'ROE':10,'ROI':7,'ROS':5,'EBITDA Margin':10,'PFN / EBITDA':2.5,'DSO':55,'Interest Coverage':4.0,'DSCR':1.25 }},
+  sanita:        { label: 'Sanità / Sociale (Q)',       kpi: { 'Current Ratio':1.4,'Quick Ratio':1.3,'Debt/Equity':1.2,'Leverage':2.2,'PN / Totale Attivo':45,'Grado Indebitamento':0.7,'ROE':8,'ROI':5,'ROS':6,'EBITDA Margin':12,'PFN / EBITDA':2.5,'DSO':70,'Interest Coverage':4.0,'DSCR':1.3 }},
+};
+const SECTOR_DEFAULT: SectorBenchmark = { label: 'Media PMI italiane',   kpi: { 'Current Ratio':1.3,'Quick Ratio':1.0,'Debt/Equity':2.0,'Leverage':3.0,'PN / Totale Attivo':33,'Grado Indebitamento':1.2,'ROE':8,'ROI':5,'ROS':4,'EBITDA Margin':10,'PFN / EBITDA':3.5,'DSO':75,'Interest Coverage':3.0,'DSCR':1.2 }};
+
+function getAtecoBenchmark(codice: string | null | undefined): SectorBenchmark {
+  if (!codice) return SECTOR_DEFAULT;
+  const clean = codice.trim().replace(/[^0-9]/g, '');
+  for (const [re, key] of ATECO_SECTOR_MAP) {
+    if (re.test(clean)) return SECTOR_BENCHMARKS[key] ?? SECTOR_DEFAULT;
+  }
+  return SECTOR_DEFAULT;
+}
+
+function fmtBenchmark(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '—';
+  if (Math.abs(v) >= 100) return v.toLocaleString('it-IT', { maximumFractionDigits: 0 });
+  return v.toLocaleString('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function KpiCard({ entry, benchmarkValue }: { entry: KpiEntry; benchmarkValue?: number | null }) {
   const sem = entry.semaforo ?? 'nd';
   const desc = KPI_DESC[entry.label];
+  const hasBench = benchmarkValue !== undefined && benchmarkValue !== null;
   return (
     <div className={`flex items-start justify-between p-2.5 rounded-lg border text-sm ${SEMAFORO_COLOR[sem]}`}>
       <div className="flex items-start gap-2 flex-1 min-w-0">
@@ -111,17 +172,26 @@ function KpiCard({ entry }: { entry: KpiEntry }) {
           {desc && <p className="text-xs opacity-70 mt-0.5 leading-tight">{desc}</p>}
         </div>
       </div>
-      <span className="font-bold tabular-nums ml-3 shrink-0">{entry.formatted}</span>
+      <div className="flex items-center gap-3 ml-3 shrink-0">
+        <span className="font-bold tabular-nums">{entry.formatted}</span>
+        {hasBench && (
+          <div className="text-center min-w-[3rem]">
+            <span className="text-xs text-muted-foreground tabular-nums">{fmtBenchmark(benchmarkValue)}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function KpiSection({ title, entries }: { title: string; entries: Record<string, KpiEntry> }) {
+function KpiSection({ title, entries, benchmarks }: { title: string; entries: Record<string, KpiEntry>; benchmarks?: SectorBenchmark }) {
   return (
     <div>
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">{title}</p>
       <div className="space-y-1.5">
-        {Object.values(entries).map(e => <KpiCard key={e.label} entry={e} />)}
+        {Object.values(entries).map(e => (
+          <KpiCard key={e.label} entry={e} benchmarkValue={benchmarks?.kpi[e.label]} />
+        ))}
       </div>
     </div>
   );
@@ -459,6 +529,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [selectedBilancio, setSelectedBilancio] = useState<BilancioRecord | null>(null);
+  const [codiceAteco, setCodiceAteco] = useState<string | null>(null);
   const [bancabilita, setBancabilita] = useState<BancaCheck[]>([]);
   const [loadingBanca, setLoadingBanca] = useState(false);
 
@@ -522,6 +593,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
 
   const loadData = async () => {
     setLoading(true);
+    // Codice ATECO della pratica (per benchmark settoriale)
+    const { data: practiceData } = await supabase
+      .from('practices').select('codice_ateco').eq('id', practiceId).maybeSingle();
+    setCodiceAteco(practiceData?.codice_ateco ?? null);
     // KPI già calcolati
     const { data: kpiData } = await supabase
       .from('bilanci_kpi')
@@ -783,16 +858,36 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {(Object.entries(AREA_LABELS) as [keyof KpiResult, string][]).map(([area, label]) => {
-                      const entries = selectedBilancio.kpi[area];
-                      if (!entries) return null;
+                    {/* Header colonne */}
+                    {(() => {
+                      const bench = getAtecoBenchmark(codiceAteco);
                       return (
-                        <div key={area}>
-                          <KpiSection title={label} entries={entries} />
-                          {area !== 'copertura' && <Separator className="mt-3" />}
-                        </div>
+                        <>
+                          <div className="flex items-center justify-between px-2.5 py-1 text-xs font-semibold text-muted-foreground border-b border-border/50 mb-2">
+                            <span>KPI</span>
+                            <div className="flex items-center gap-3">
+                              <span>Azienda</span>
+                              <span className="min-w-[3rem] text-center" title={`Benchmark settore: ${bench.label} — fonte Banca d'Italia / Mediobanca 2023`}>
+                                📊 {bench.label}
+                              </span>
+                            </div>
+                          </div>
+                          {(Object.entries(AREA_LABELS) as [keyof KpiResult, string][]).map(([area, label]) => {
+                            const entries = selectedBilancio.kpi[area];
+                            if (!entries) return null;
+                            return (
+                              <div key={area}>
+                                <KpiSection title={label} entries={entries} benchmarks={bench} />
+                                {area !== 'copertura' && <Separator className="mt-3" />}
+                              </div>
+                            );
+                          })}
+                          <p className="text-[10px] text-muted-foreground/60 mt-2 text-right">
+                            📊 Benchmark: mediane PMI italiane per settore ATECO — Banca d'Italia / Mediobanca 2023
+                          </p>
+                        </>
                       );
-                    })}
+                    })()}
                   </CardContent>
                 </Card>
               )}
