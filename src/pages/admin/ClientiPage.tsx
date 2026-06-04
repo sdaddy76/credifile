@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
   Plus, Search, Users, Pencil, Trash2, Mail, Phone,
-  FileText, Loader2, CheckCircle2, AlertCircle, Users2, Building2,
+  FileText, Loader2, CheckCircle2, AlertCircle, Users2, Building2, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Client, Socio, Amministratore } from '@/lib/types';
@@ -666,67 +666,134 @@ export default function ClientiPage() {
             </div>
           </div>
 
-          {/* ── Soci estratti ── */}
-          {form.soci.length > 0 && (
-            <div className="space-y-2">
+          {/* ── Soci / Titolari — sempre visibile, editabile ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Users2 className="w-3.5 h-3.5 text-blue-500" />
-                Soci / Titolari ({form.soci.length})
+                Soci / Titolari {form.soci.length > 0 && `(${form.soci.length})`}
               </p>
-              <div className="rounded-md border border-border overflow-hidden text-xs">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Nome</th>
-                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Cod. Fiscale</th>
-                      <th className="text-right px-3 py-1.5 font-medium text-muted-foreground">Valore</th>
-                      <th className="text-right px-3 py-1.5 font-medium text-muted-foreground">%</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {form.soci.map((s, i) => (
-                      <tr key={i} className="bg-background hover:bg-muted/20">
-                        <td className="px-3 py-1.5 font-medium">{s.nome}</td>
-                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{s.codice_fiscale}</td>
-                        <td className="px-3 py-1.5 text-right">{s.valore ? `€ ${s.valore}` : '—'}</td>
-                        <td className="px-3 py-1.5 text-right text-blue-700 font-semibold">{s.percentuale || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <Button
+                type="button" variant="outline" size="sm" className="h-7 text-xs gap-1"
+                onClick={() => setForm(f => ({ ...f, soci: [...f.soci, { nome: '', codice_fiscale: '', valore: '', percentuale: '' }] }))}
+              >
+                <Plus className="w-3 h-3" /> Aggiungi
+              </Button>
             </div>
-          )}
+            {form.soci.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-3 border border-dashed rounded-md border-border">
+                Nessun socio. Carica la visura o aggiungi manualmente.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {form.soci.length > 0 && (
+                  <div className="flex gap-1.5 px-0.5">
+                    <span className="text-[10px] text-muted-foreground flex-[2] px-1">Nome / Denominazione</span>
+                    <span className="text-[10px] text-muted-foreground flex-[1.5] px-1">Cod. Fiscale</span>
+                    <span className="text-[10px] text-muted-foreground flex-1 px-1">Valore €</span>
+                    <span className="text-[10px] text-muted-foreground w-16 shrink-0 px-1">%</span>
+                    <span className="w-7 shrink-0" />
+                  </div>
+                )}
+                {form.soci.map((s, i) => (
+                  <div key={i} className="flex gap-1.5 items-center">
+                    <Input
+                      placeholder="Nome / Denominazione"
+                      value={s.nome}
+                      className="h-7 text-xs flex-[2]"
+                      onChange={e => setForm(f => ({ ...f, soci: f.soci.map((x, j) => j === i ? { ...x, nome: e.target.value } : x) }))}
+                    />
+                    <Input
+                      placeholder="Cod. Fiscale"
+                      value={s.codice_fiscale}
+                      className="h-7 text-xs flex-[1.5] font-mono"
+                      onChange={e => setForm(f => ({ ...f, soci: f.soci.map((x, j) => j === i ? { ...x, codice_fiscale: e.target.value } : x) }))}
+                    />
+                    <Input
+                      placeholder="Valore"
+                      value={s.valore}
+                      className="h-7 text-xs flex-1"
+                      onChange={e => setForm(f => ({ ...f, soci: f.soci.map((x, j) => j === i ? { ...x, valore: e.target.value } : x) }))}
+                    />
+                    <Input
+                      placeholder="%"
+                      value={s.percentuale}
+                      className="h-7 text-xs w-16 shrink-0"
+                      onChange={e => setForm(f => ({ ...f, soci: f.soci.map((x, j) => j === i ? { ...x, percentuale: e.target.value } : x) }))}
+                    />
+                    <Button
+                      type="button" variant="ghost" size="sm"
+                      className="h-7 w-7 p-0 shrink-0 text-destructive hover:bg-destructive/10"
+                      onClick={() => setForm(f => ({ ...f, soci: f.soci.filter((_, j) => j !== i) }))}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-          {/* ── Amministratori estratti ── */}
-          {form.amministratori.length > 0 && (
-            <div className="space-y-2">
+          {/* ── Organi Sociali / Amministratori — sempre visibile, editabile ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5 text-violet-500" />
-                Organi Sociali / Amministratori ({form.amministratori.length})
+                Organi Sociali / Amministratori {form.amministratori.length > 0 && `(${form.amministratori.length})`}
               </p>
-              <div className="rounded-md border border-border overflow-hidden text-xs">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Nome</th>
-                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Carica</th>
-                      <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Cod. Fiscale</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {form.amministratori.map((a, i) => (
-                      <tr key={i} className="bg-background hover:bg-muted/20">
-                        <td className="px-3 py-1.5 font-medium">{a.nome}</td>
-                        <td className="px-3 py-1.5 text-violet-700">{a.carica}</td>
-                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{a.codice_fiscale ?? '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <Button
+                type="button" variant="outline" size="sm" className="h-7 text-xs gap-1"
+                onClick={() => setForm(f => ({ ...f, amministratori: [...f.amministratori, { nome: '', carica: '', codice_fiscale: '' }] }))}
+              >
+                <Plus className="w-3 h-3" /> Aggiungi
+              </Button>
             </div>
-          )}
+            {form.amministratori.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-3 border border-dashed rounded-md border-border">
+                Nessun amministratore. Carica la visura o aggiungi manualmente.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {form.amministratori.length > 0 && (
+                  <div className="flex gap-1.5 px-0.5">
+                    <span className="text-[10px] text-muted-foreground flex-[2] px-1">Nome</span>
+                    <span className="text-[10px] text-muted-foreground flex-[1.5] px-1">Carica</span>
+                    <span className="text-[10px] text-muted-foreground flex-[1.5] px-1">Cod. Fiscale</span>
+                    <span className="w-7 shrink-0" />
+                  </div>
+                )}
+                {form.amministratori.map((a, i) => (
+                  <div key={i} className="flex gap-1.5 items-center">
+                    <Input
+                      placeholder="Nome"
+                      value={a.nome}
+                      className="h-7 text-xs flex-[2]"
+                      onChange={e => setForm(f => ({ ...f, amministratori: f.amministratori.map((x, j) => j === i ? { ...x, nome: e.target.value } : x) }))}
+                    />
+                    <Input
+                      placeholder="Carica (es. Amm. Unico)"
+                      value={a.carica}
+                      className="h-7 text-xs flex-[1.5]"
+                      onChange={e => setForm(f => ({ ...f, amministratori: f.amministratori.map((x, j) => j === i ? { ...x, carica: e.target.value } : x) }))}
+                    />
+                    <Input
+                      placeholder="Cod. Fiscale"
+                      value={a.codice_fiscale ?? ''}
+                      className="h-7 text-xs flex-[1.5] font-mono"
+                      onChange={e => setForm(f => ({ ...f, amministratori: f.amministratori.map((x, j) => j === i ? { ...x, codice_fiscale: e.target.value } : x) }))}
+                    />
+                    <Button
+                      type="button" variant="ghost" size="sm"
+                      className="h-7 w-7 p-0 shrink-0 text-destructive hover:bg-destructive/10"
+                      onClick={() => setForm(f => ({ ...f, amministratori: f.amministratori.filter((_, j) => j !== i) }))}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>Annulla</Button>

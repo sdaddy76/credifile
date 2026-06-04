@@ -65,3 +65,6 @@
 [2026-06-04 00:35] COMPLETATO: bug pratiche vuote (rimozione practices_created_by_fkey da query), KPI benchmark ATECO (15 settori + default, Mediobanca/ISTAT 2023), codiceAteco loaded in AnalisiFinanziariaTab, KpiCard con colonna benchmark. Deploy ok.
 [2026-06-04 01:04] Inizio implementazione analisi reputazionale: DB + edge function + tab React
 [2026-06-04 01:04] DB tabella reputational_analyses creata. Implementazione edge function + ReputazioneTab in corso.
+[2026-06-04 01:07] COMPLETATO analisi reputazionale: DB reputational_analyses, edge function analisi-reputazione (ACTIVE), ReputazioneTab.tsx, tab PraticaDetailPage. Build+deploy ok, push GitHub ok.
+[2026-06-04 01:20] Fix BOOT_ERROR edge function analisi-reputazione: causa root = Deno.serve() nativo richiesto (non serve() da deno.land); funzione funzionante, push GitHub fd6a71a
+[2026-06-04 01:21] Soci e amministratori: sezioni read-only sostituite con UI editabile sempre visibile in ClientiPage.tsx (aggiungi/modifica/elimina riga)
