@@ -79,6 +79,8 @@ export interface Practice {
   motivazione?: string;
   status: PracticeStatus;
   note_admin?: string;
+  assigned_to?: string;
+  codice_ateco?: string;
   created_at: string;
   updated_at: string;
   clients?: Client;

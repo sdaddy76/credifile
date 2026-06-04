@@ -57,3 +57,5 @@
 [2026-06-03 13:44] Commit 1748900 — flusso invito segnalatore completo: DB segnalatore_invites, edge fn invite+register, pagina pubblica registrazione, MieiSegnalPage semplificato
 [2026-06-04 00:08] stefano ripristinato super_admin, creato superadmin@credifile.test, inizio fix create-admin-user e gestione segnalatori
 [2026-06-04 00:12] Aggiunto UNIQUE constraint email su admin_profiles; fix create-admin-user con check email esistente; letto UtentiPage completo
+[2026-06-04 00:14] COMPLETATO: UtentiPage handleUpdateRole (protezione super_admin, agente->segnalatore auto-assign, editAssignId selector), sezione Gestione Segnalatori, saveSegnAssignments, loadSegnAssignments; create-admin-user PATCH deploy (v5 ACTIVE); commit 54ab2e9 pushato
+[2026-06-04 00:14] Sessione completata: tutti i pending tasks risolti e pushati (commit 54ab2e9)

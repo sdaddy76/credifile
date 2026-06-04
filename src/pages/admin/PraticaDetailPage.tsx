@@ -381,7 +381,7 @@ export default function PraticaDetailPage() {
           </p>
         </div>
         {canApprove && practice.bank_id && (
-          <Button variant="outline" size="sm" className="gap-1.5 bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100" onClick={() => { setSendNote(''); setShowSendToBank(true); }}>
+          <Button variant="outline" size="sm" className="gap-1.5 bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100" onClick={() => { setBankNote(''); setShowSendBankDialog(practice.bank_id ?? null); }}>
             ✉️ Invia alla Banca
           </Button>
         )}

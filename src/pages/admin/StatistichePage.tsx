@@ -71,7 +71,7 @@ export default function StatistichePage() {
     if (isSegreteria && aids.length > 0) q = q.in('created_by', aids);
     else if (!isSuperAdmin) q = q.eq('created_by', user!.id);
     const { data: pData } = await q.order('created_at', { ascending: false });
-    const pList = (pData ?? []) as Practice[];
+    const pList = (pData ?? []) as unknown as Practice[];
     setPractices(pList);
 
     if (pList.length === 0) { setLoading(false); return; }

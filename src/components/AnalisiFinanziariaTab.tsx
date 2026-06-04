@@ -398,7 +398,7 @@ function generateBancabilitaReport(
           `(${req.kpi_area})`,
           threshold,
           actualStr,
-          { content: passLabel(req.pass), styles: { fillColor: fill, textColor: text, fontStyle: 'bold', halign: 'center' } },
+          { content: passLabel(req.pass), styles: { fillColor: fill, textColor: text, fontStyle: 'bold' as const, halign: 'center' as const } },
         ];
       });
 
@@ -484,7 +484,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       const reqs = (reqData ?? []) as BankKpiReq[];
 
       // 3. Costruisce i check per ogni banca
-      const checks: BancaCheck[] = pbData.map((r: { bank_id: string; banks: { id: string; nome: string } | null }) => {
+      const checks: BancaCheck[] = pbData.map((r: { bank_id: string; banks: { id: string; nome: string }[] | null }) => {
         const bankReqs = reqs.filter(req => req.bank_id === r.bank_id);
         const enriched = bankReqs.map(req => {
           let actual: number | null = null;
@@ -506,7 +506,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
 
         return {
           bankId: r.bank_id,
-          bankName: r.banks?.nome ?? r.bank_id,
+          bankName: r.banks?.[0]?.nome ?? r.bank_id,
           reqs: enriched,
           passCount: enriched.filter(e => e.pass === true).length,
           failCount: enriched.filter(e => e.pass === false).length,

@@ -158,7 +158,7 @@ export default function PratichePage() {
       supabase.from('agent_segnalatori')
         .select('segnalatore:segnalatore_id(id,nome,email)')
         .eq('agent_id', user.id)
-        .then(r => setSegnalatori((r.data ?? []).map((x: { segnalatore: { id: string; nome?: string; email: string } }) => x.segnalatore)));
+        .then(r => setSegnalatori((r.data ?? []).map((x: { segnalatore: { id: string; nome?: string; email: string }[] }) => x.segnalatore[0]).filter(Boolean)));
     } else if (isSuperAdmin || isSegreteria) {
       supabase.from('admin_profiles').select('id,nome,email').eq('ruolo','segnalatore').order('nome')
         .then(r => setSegnalatori(r.data ?? []));

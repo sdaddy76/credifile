@@ -181,6 +181,11 @@ export default function BanchePage() {
     const a = document.createElement('a'); a.href = data.signedUrl; a.download = nome; a.click();
   }
 
+  // ── Carica le banche al mount ──
+  useEffect(() => {
+    loadBanks();
+  }, []);
+
   const toggleExpand = (id: string) => {
     if (expandedBank === id) { setExpandedBank(null); return; }
     setExpandedBank(id);
