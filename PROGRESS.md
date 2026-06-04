@@ -69,3 +69,4 @@
 [2026-06-04 01:20] Fix BOOT_ERROR edge function analisi-reputazione: causa root = Deno.serve() nativo richiesto (non serve() da deno.land); funzione funzionante, push GitHub fd6a71a
 [2026-06-04 01:21] Soci e amministratori: sezioni read-only sostituite con UI editabile sempre visibile in ClientiPage.tsx (aggiungi/modifica/elimina riga)
 [2026-06-04 01:45] Analisi Centrale Rischi BDI: struttura compresa (Intermediario/Data/Crediti per cassa). Avvio migration DB + parser + UI
+[2026-06-04 01:53] Import Centrale Rischi: parser parseCentraleRischi.ts, DB migration client_financing (+8 colonne CR), UI preview+import in PraticaDetailPage. Build OK, push github

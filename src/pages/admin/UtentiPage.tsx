@@ -462,14 +462,14 @@ export default function UtentiPage() {
                     </div>
                     <div className="w-52 shrink-0">
                       <Select
-                        value={currentAgentId}
-                        onValueChange={v => setSegnAssignEdit(prev => ({ ...prev, [s.id]: v }))}
+                        value={currentAgentId || '__none__'}
+                        onValueChange={v => setSegnAssignEdit(prev => ({ ...prev, [s.id]: v === '__none__' ? '' : v }))}
                       >
                         <SelectTrigger className="h-8 text-sm">
                           <SelectValue placeholder="— Non assegnato —" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">— Non assegnato —</SelectItem>
+                          <SelectItem value="__none__">— Non assegnato —</SelectItem>
                           {agents.map(a => (
                             <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
                           ))}
@@ -686,10 +686,10 @@ export default function UtentiPage() {
             {newRuolo === 'segnalatore' && (
               <div className="space-y-2">
                 <Label>Associa ad Agente</Label>
-                <Select value={newAgentId} onValueChange={setNewAgentId}>
+                <Select value={newAgentId || '__none__'} onValueChange={v => setNewAgentId(v === '__none__' ? '' : v)}>
                   <SelectTrigger><SelectValue placeholder="Seleziona agente (opzionale)..." /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— Nessun agente —</SelectItem>
+                    <SelectItem value="__none__">— Nessun agente —</SelectItem>
                     {agents.map(a => (
                       <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
                     ))}
@@ -744,10 +744,10 @@ export default function UtentiPage() {
             {editRuolo === 'segnalatore' && showEdit?.ruolo !== 'segnalatore' && (
               <div className="space-y-2">
                 <Label>Associa ad Agente</Label>
-                <Select value={editAssignId} onValueChange={setEditAssignId}>
+                <Select value={editAssignId || '__none__'} onValueChange={v => setEditAssignId(v === '__none__' ? '' : v)}>
                   <SelectTrigger><SelectValue placeholder="— Non assegnato (gestirà la segreteria) —" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— Non assegnato —</SelectItem>
+                    <SelectItem value="__none__">— Non assegnato —</SelectItem>
                     {agents.map(a => (
                       <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
                     ))}
