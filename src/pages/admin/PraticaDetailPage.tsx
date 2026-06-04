@@ -293,6 +293,7 @@ export default function PraticaDetailPage() {
         code: codice,
         practice_number: practice.numero_pratica,
         company_name: (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? undefined,
+        cc: (practice as Practice & { segnalatore?: { email: string } }).segnalatore?.email ?? undefined,
       },
     });
     if (emailError2 || emailData2?.success === false) {
