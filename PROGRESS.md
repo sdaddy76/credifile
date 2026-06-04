@@ -76,3 +76,7 @@
 [2026-06-04 07:45] Parser CR v4 deployato: regex 6-numeri diretti, accoppiamento per ordine, strip guida.
 [2026-06-04 09:24] Fix monitoraggio accessi deployato (commit 48c26a0): log-access ora chiamato anche per sessione già attiva (LoginPage.tsx) e da SetPasswordPage.tsx. PPT Credifile 14 slide completata.
 [2026-06-04 23:00] Fix segnalatore: CC solo su richiesta documenti al cliente (non su email banche). Avvio fix slide 3 + indagine codice.
+[2026-06-04 23:06] Fix CC segnalatore: aggiunto cc in generateAccessCode() di PraticaDetailPage.tsx. Deploy su Vercel via build_and_deploy. PPT slide 3 aggiornata: bullet 'Riceve CC nelle richieste documenti al cliente'.
+[2026-06-04 23:31] Avvio implementazione Indice di Bancabilità: tabella bancabilita_pesi + componente + config pesi per banca
+[2026-06-04 23:33] Inizio build frontend Indice Bancabilità: IndiceBancabilita.tsx + integrazione BancabilitaTab + config BanchePage
+[2026-06-04 23:36] Creato IndiceBancabilita.tsx, integrato in BancabilitaTab.tsx (globale + per-banca). Build in corso.

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { RefreshCw, ShieldCheck, Download, ChevronDown, ChevronUp, AlertCircle, TrendingUp, Plus, FileDown, Upload, Loader2, FileText } from 'lucide-react';
+import IndiceBancabilita from '@/components/IndiceBancabilita';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -441,6 +442,9 @@ export default function BancabilitaTab({ practiceId }: Props) {
         </div>
       )}
 
+      {/* ── Indice di Bancabilità globale ── */}
+      <IndiceBancabilita latestKpi={latest?.kpi ?? null} practiceId={practiceId} />
+
       {noBanche && (
         <div className="py-10 text-center border rounded-xl bg-muted/30">
           <ShieldCheck className="w-10 h-10 mx-auto text-muted-foreground mb-3 opacity-40" />
@@ -659,6 +663,14 @@ export default function BancabilitaTab({ practiceId }: Props) {
                   {/* Dettaglio espanso */}
                   {isOpen && total > 0 && (
                     <div className="border-t border-current/20 bg-white/60 px-4 pb-3 pt-2 rounded-b-lg">
+                      {/* Indice per questa banca */}
+                      <div className="mb-3">
+                        <IndiceBancabilita
+                          latestKpi={latest?.kpi ?? null}
+                          practiceId={practiceId}
+                          bancaId={banca.bankId}
+                        />
+                      </div>
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-muted-foreground border-b border-border/50">
