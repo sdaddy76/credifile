@@ -73,3 +73,4 @@
 [2026-06-04 01:58] Fix UtentiPage blank: SelectItem value='' → '__none__' (3 occorrenze). Radix UI vieta stringa vuota come value
 [2026-06-04 02:26] Parser CR v2 deployato (9df2de8). Identificati 3 bug: 1) guida alla lettura estratta come dati reali (BANCA UNO/QUATTRO), 2) selezione mese sbagliata, 3) termini CR vs bancari. Fix in corso.
 [2026-06-04 02:29] Parser CR v3 deployato (9d19f09): strip guida alla lettura, selezione primo mese per posizione, nomi bancari standard in categoriaToTipologia + TIPOLOGIE_FIN aggiornato.
+[2026-06-04 07:45] Parser CR v4 deployato: regex 6-numeri diretti, accoppiamento per ordine, strip guida.

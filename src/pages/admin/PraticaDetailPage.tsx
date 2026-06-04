@@ -99,6 +99,7 @@ export default function PraticaDetailPage() {
   const [crDate, setCrDate]             = useState('');
   const [crImporting, setCrImporting]   = useState(false);
   const crFileRef = useRef<HTMLInputElement>(null);
+  const [crDebugText, setCrDebugText]   = useState<string | null>(null);
 
   // Dialogs
   const [showStatusChange, setShowStatusChange] = useState(false);
@@ -206,7 +207,20 @@ export default function PraticaDetailPage() {
     try {
       const text = await extractPdfText(file);
       const { data_riferimento, righe } = parseCentraleRischi(text);
-      if (!righe.length) { toast.error('Nessun finanziamento trovato nella Centrale Rischi'); return; }
+      if (!righe.length) {
+        // DEBUG: mostra i primi 800 caratteri del testo estratto da pdfjs
+        setCrDebugText(
+          `TESTO ESTRATTO DA PDFJS (primi 800 char su ${text.length} totali):\n` +
+          `────────────────────────────────────────\n` +
+          text.substring(0, 800) +
+          `\n────────────────────────────────────────\n` +
+          `CERCA "Intermediario": ${text.includes('Intermediario') ? 'TROVATO' : 'NON TROVATO'}\n` +
+          `CERCA "Crediti per cassa": ${text.includes('Crediti per cassa') ? 'TROVATO' : 'NON TROVATO'}\n` +
+          `CERCA "RISCHI A SCADENZA": ${text.includes('RISCHI A SCADENZA') ? 'TROVATO' : 'NON TROVATO'}\n` +
+          `CERCA "DATA DI RIFERIMENTO": ${text.includes('DATA DI RIFERIMENTO') ? 'TROVATO' : 'NON TROVATO'}`
+        );
+        return;
+      }
       setCrDate(data_riferimento);
       setCrPreview(righe);
     } catch (e) {
@@ -1405,6 +1419,23 @@ export default function PraticaDetailPage() {
               {crImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               Importa {crPreview?.length ?? 0} finanziamenti
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DEBUG: testo grezzo pdfjs quando parsing CR fallisce */}
+      <Dialog open={!!crDebugText} onOpenChange={v => { if (!v) setCrDebugText(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>🔍 Debug estrazione PDF</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">Copia questo testo e invialo allo sviluppatore per diagnosticare il problema.</p>
+          <textarea
+            readOnly
+            className="w-full h-72 text-xs font-mono border rounded p-2 bg-gray-50 resize-none"
+            value={crDebugText ?? ''}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { navigator.clipboard.writeText(crDebugText ?? ''); }}>Copia</Button>
+            <Button onClick={() => setCrDebugText(null)}>Chiudi</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
