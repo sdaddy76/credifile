@@ -24,9 +24,10 @@ export default function LoginPage() {
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [sendingRecovery, setSendingRecovery] = useState(false);
 
-  // Se già loggato (es. refresh con sessione attiva) → redirect diretto
+  // Se già loggato (es. refresh con sessione attiva) → redirect diretto + log
   useEffect(() => {
     if (!authLoading && user) {
+      supabase.functions.invoke('log-access').catch(() => {/* silent */});
       navigate('/admin/dashboard', { replace: true });
     }
   }, [authLoading, user]);

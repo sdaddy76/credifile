@@ -76,7 +76,10 @@ export default function SetPasswordPage() {
 
     setDone(true);
     toast.success('Password impostata con successo!');
-    setTimeout(() => navigate('/admin/dashboard'), 2000);
+    setTimeout(() => {
+      supabase.functions.invoke('log-access').catch(() => {/* silent */});
+      navigate('/admin/dashboard');
+    }, 2000);
   };
 
   // ── Schermata caricamento ──
