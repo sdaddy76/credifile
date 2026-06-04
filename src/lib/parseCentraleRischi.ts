@@ -1,17 +1,23 @@
 // ═══════════════════════════════════════════════════════════
-//  PARSER CENTRALE RISCHI - BANCA D'ITALIA  (v5 - definitivo)
+//  PARSER CENTRALE RISCHI - BANCA D'ITALIA  (v6)
 //
-//  Struttura testo pdfjs per ogni riga dati BDI:
+//  BUG ROOT CAUSE (v1-v5):
+//  In pdfjs la stringa pdfjs per ogni sezione banca ha il formato:
+//    "... CR DI FERMO SPA Intermediario:  Crediti per cassa ..."
+//  Il nome banca appare PRIMA di "Intermediario:", non dopo.
+//  I parser v1-v5 cercavano il nome DOPO → zero match → zero righe.
+//
+//  STRUTTURA RIGA DATI pdfjs BDI:
 //    "[CATEGORIA]   [0]   [ImpGar]  [testo descrittivo...]
 //     [Utilizzato]   [Accordato]   [AccOp]   [SaldoMedio]"
-//
 //  I numeri appaiono in DUE GRUPPI separati da blocchi di testo:
-//   Gruppo 1 (2 num, dopo categoria): Ruolo Affidato, Importo Garantito
-//   Gruppo 2 (4 num, dopo testo descrittivo): Util, Acc, AccOp, Saldo
+//   Gruppo 1 (2 num, dopo categoria): RuoloAff, ImportoGarantito
+//   Gruppo 2 (4 num, dopo testo):     Util, Acc, AccOp, Saldo
 //
-//  Strategia: cercare il Gruppo 2 = 4 numeri consecutivi dove
-//  almeno 1 ha il formato italiano (punto-migliaia: "43.389").
-//  Accoppiare per ORDINE con le categorie trovate.
+//  STRATEGIA v6:
+//  1. Trova "Intermediario:" → guarda i 150 char PRIMA per il nome banca
+//  2. Cerca 4 numeri consecutivi (≥1 italiano-migliaia) come Gruppo 2
+//  3. Accoppia per ORDINE categorie ↔ Gruppo 2
 // ═══════════════════════════════════════════════════════════
 
 export interface CRRiga {
@@ -54,7 +60,6 @@ function parseDateSort(label: string): number {
   return 0;
 }
 
-/** Numero italiano → float; null se anno (4 cifre 1900-2099) */
 function parseNum(s: string): number | null {
   if (!s || s === '-') return null;
   const val = parseFloat(s.replace(/\./g, '').replace(',', '.'));
@@ -63,7 +68,7 @@ function parseNum(s: string): number | null {
   return val;
 }
 
-/** True se il token è un numero in formato italiano-migliaia (es. "43.389") */
+/** True se il token è in formato italiano-migliaia (es. "43.389") */
 function isItalianThousands(s: string): boolean {
   return /^\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?$/.test(s);
 }
@@ -84,23 +89,23 @@ const CC_END_RE      = /Garanzie\s+ricevute|Crediti\s+di\s+firma|INFORMAZIONI\s+
 
 const MESE_STR = 'gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre';
 
-// ── Pattern numero generico (italiano o intero) ───────────
+// Pattern numero generico (italiano-migliaia o intero)
 const NUM_TOK = String.raw`\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?`;
 
-// Regex: 4 numeri consecutivi separati da \s+
-// Nota: con flag 'g' trova un gruppo alla volta senza sovrapposizioni
+// 4 numeri consecutivi separati da \s+
+// Usato per trovare Gruppo 2 (Util, Acc, AccOp, Saldo)
 const FOUR_NUM_RE = new RegExp(
   `(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})`,
   'g'
 );
 
-// Regex: 2 numeri consecutivi (Gruppo 1 = Ruolo Aff + Importo Garantito)
+// 2 numeri consecutivi separati da \s+
+// Usato per trovare Gruppo 1 (RuoloAff, ImportoGarantito)
 const TWO_NUM_RE = new RegExp(
   `(${NUM_TOK})\\s+(${NUM_TOK})`,
   'g'
 );
 
-// ── Helper garanzia / stato ───────────────────────────────
 function extractGaranzia(ctx: string): string {
   if (/IPOTECA\s+INTERNA/i.test(ctx))   return 'IPOTECA INTERNA';
   if (/IPOTECA\s+ESTERNA/i.test(ctx))   return 'IPOTECA ESTERNA';
@@ -119,7 +124,6 @@ function extractStato(ctx: string): string {
   return '';
 }
 
-// ── Categorie ─────────────────────────────────────────────
 const CATEGORIE = ['RISCHI A SCADENZA','RISCHI A REVOCA','RISCHI AUTOLIQUIDANTI','SOFFERENZE'];
 
 // ═══════════════════════════════════════════════════════════
@@ -136,24 +140,21 @@ export function parseCentraleRischi(fullText: string): CRResult {
   const intestatario =
     cleanText.match(/Intestatario:\s+([^\n\r]{3,120})/i)?.[1]?.trim() ?? '';
 
-  // ── 3. Data di riferimento (3 pattern) ────────────────
+  // ── 3. Data di riferimento ────────────────────────────
   type DateOcc = { label: string; sort: number; idx: number };
   const dateOccs: DateOcc[] = [];
   let dm: RegExpExecArray | null;
 
-  // A: "DATA DI RIFERIMENTO: [mese] [anno]"
   const patA = new RegExp(`DATA\\s+DI\\s+RIFERIMENTO:\\s*((?:${MESE_STR})\\s+\\d{4})`, 'gi');
   while ((dm = patA.exec(cleanText)) !== null)
     dateOccs.push({ label: dm[1], sort: parseDateSort(dm[1]), idx: dm.index });
 
-  // B: "[mese] [anno]" nei 300 char dopo RILEVAZIONE MENSILE
   if (!dateOccs.length) {
     const patB = new RegExp(`RILEVAZIONE\\s+MENSILE[\\s\\S]{0,300}?((?:${MESE_STR})\\s+\\d{4})`, 'gi');
     while ((dm = patB.exec(cleanText)) !== null)
       dateOccs.push({ label: dm[1], sort: parseDateSort(dm[1]), idx: dm.index });
   }
 
-  // C: formato abbreviato (dic-25, mar-26)
   if (!dateOccs.length) {
     const patC = /\b((?:gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic)-\d{2})\b/gi;
     const seen = new Set<string>();
@@ -166,7 +167,7 @@ export function parseCentraleRischi(fullText: string): CRResult {
     }
   }
 
-  // ── 4. Seleziona PRIMO per posizione = mese più recente ─
+  // ── 4. Seleziona primo per posizione (= mese più recente) ─
   let dataRiferimento = '';
   let workText = cleanText;
 
@@ -181,23 +182,34 @@ export function parseCentraleRischi(fullText: string): CRResult {
   }
 
   // ── 5. Trova blocchi Intermediario ────────────────────
-  const BANK_RE = /Intermediario:\s+([A-Z][A-Z0-9 ''\u2019.,\-&/()]+?)(?=\s{3,}|\n|Crediti\s+per\s+cassa|Garanzie\s+ricevute|DATA\s+DI)/g;
+  //  FIX v6: il nome banca compare PRIMA di "Intermediario:" nel testo pdfjs
+  //  Es.: "CR DI FERMO SPA Intermediario:  Crediti per cassa"
+  //  → leggo i 150 char prima di "Intermediario:" e estraggo il nome MAIUSCOLO finale
   const bankBlocks: { name: string; idx: number }[] = [];
-  let bm: RegExpExecArray | null;
+  const INTERM_RE = /Intermediario:/g;
+  let im: RegExpExecArray | null;
 
-  while ((bm = BANK_RE.exec(workText)) !== null) {
-    const name = bm[1].replace(/\s+/g, ' ').trim();
-    if (name.length >= 3 && name.length <= 130)
-      bankBlocks.push({ name, idx: bm.index });
+  const findBankName = (src: string, intermIdx: number): string => {
+    const before = src.substring(Math.max(0, intermIdx - 150), intermIdx).trimEnd();
+    // Estrai l'ultima sequenza di sole MAIUSCOLE (nome banca) alla fine del prima-testo
+    // Es.: "...01/04/2026  CR DI FERMO SPA" → "CR DI FERMO SPA"
+    const m = before.match(/([A-Z][A-Z '.,\-&()]{2,79})\s*$/);
+    return m ? m[1].trim() : '';
+  };
+
+  while ((im = INTERM_RE.exec(workText)) !== null) {
+    const name = findBankName(workText, im.index);
+    if (name.length >= 3)
+      bankBlocks.push({ name, idx: im.index });
   }
 
-  // Fallback: cerca in tutto cleanText
+  // Fallback: cerca in cleanText se workText non ha trovato nulla
   if (!bankBlocks.length) {
-    BANK_RE.lastIndex = 0;
-    while ((bm = BANK_RE.exec(cleanText)) !== null) {
-      const name = bm[1].replace(/\s+/g, ' ').trim();
-      if (name.length >= 3 && name.length <= 130)
-        bankBlocks.push({ name, idx: bm.index });
+    INTERM_RE.lastIndex = 0;
+    while ((im = INTERM_RE.exec(cleanText)) !== null) {
+      const name = findBankName(cleanText, im.index);
+      if (name.length >= 3)
+        bankBlocks.push({ name, idx: im.index });
     }
     if (bankBlocks.length) workText = cleanText;
   }
@@ -222,7 +234,6 @@ export function parseCentraleRischi(fullText: string): CRResult {
     // ── 6a. Trova categorie (ordine documento) ────────────
     const foundCats: { cat: string; idx: number }[] = [];
     for (const cat of CATEGORIE) {
-      // Flessibile: permette \s{0,5} tra le parole (gestisce \n o spazi extra)
       const words = cat.split(' ');
       const reStr = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
                          .join('[\\s\\S]{0,5}');
@@ -239,52 +250,46 @@ export function parseCentraleRischi(fullText: string): CRResult {
     }
     if (!uniqueCats.length) continue;
 
-    // ── 6b. Trova Gruppi 2 (4 numeri, almeno 1 italiano-migliaia) ─
-    // In pdfjs BDI: Gruppo2 = [Utilizzato, Accordato, AccOp, SaldoMedio]
-    // appare DOPO il blocco di testo descrittivo di ogni riga
+    // ── 6b. Gruppo 2: 4 numeri consecutivi con ≥1 italiano-migliaia ──
+    // pdfjs BDI column order: [Utilizzato, Accordato, AccordatoOp, SaldoMedio]
     type Fin4 = { idx: number; nums: [number, number, number, number] };
     const fin4s: Fin4[] = [];
     FOUR_NUM_RE.lastIndex = 0;
     let fm: RegExpExecArray | null;
     while ((fm = FOUR_NUM_RE.exec(ccText)) !== null) {
       const toks = [fm[1], fm[2], fm[3], fm[4]];
-      // Almeno 1 token deve essere in formato italiano-migliaia
       if (!toks.some(isItalianThousands)) continue;
       const nums = toks.map(t => parseNum(t) ?? 0) as [number, number, number, number];
       fin4s.push({ idx: fm.index, nums });
-      // Avanza oltre questo match per evitare sovrapposizioni
       FOUR_NUM_RE.lastIndex = fm.index + fm[0].length;
     }
 
-    // ── 6c. Trova Gruppi 1 (2 numeri per Importo Garantito) ──
-    // Appare subito dopo la categoria: [RuoloAffidato=0, ImportoGarantito]
+    // ── 6c. Gruppo 1: 2 numeri dopo categoria → ImportoGarantito ──
     TWO_NUM_RE.lastIndex = 0;
     const twoNums: { idx: number; second: number }[] = [];
     let tm: RegExpExecArray | null;
     while ((tm = TWO_NUM_RE.exec(ccText)) !== null) {
-      // Solo se NON seguito da un terzo numero (altrimenti è parte di un gruppo 4)
+      // Skip se seguito da terzo numero (fa parte di un Gruppo 4)
       const afterEnd = ccText.substring(tm.index + tm[0].length).match(/^\s+\d/);
       if (!afterEnd) {
-        const secondVal = parseNum(tm[2]) ?? 0;
-        twoNums.push({ idx: tm.index, second: secondVal });
+        twoNums.push({ idx: tm.index, second: parseNum(tm[2]) ?? 0 });
         TWO_NUM_RE.lastIndex = tm.index + tm[0].length;
       }
     }
 
-    // ── 6d. Accoppia categorie ↔ Gruppo2 per ORDINE ──────
+    // ── 6d. Accoppia categorie ↔ Gruppo 2 per ordine ──────
     const N = Math.min(uniqueCats.length, fin4s.length);
     for (let k = 0; k < N; k++) {
       const { cat, idx: catIdx } = uniqueCats[k];
       const { nums, idx: numIdx } = fin4s[k];
 
-      // Pdfjs BDI column order for Gruppo2: Utilizzato, Accordato, AccOp, SaldoMedio
+      // pdfjs order for Gruppo 2: Utilizzato, Accordato, AccOp, SaldoMedio
       const [utilizzato, accordato, accordato_operativo, saldo_medio] = nums;
 
-      // Importo Garantito: dal Gruppo1 più vicino DOPO la categoria (prima del Gruppo2)
-      const g1after = twoNums.find(t => t.idx > catIdx && t.idx < numIdx);
-      const importo_garantito = g1after ? g1after.second : 0;
+      // ImportoGarantito dal Gruppo 1 tra catIdx e numIdx
+      const g1 = twoNums.find(t => t.idx > catIdx && t.idx < numIdx);
+      const importo_garantito = g1 ? g1.second : 0;
 
-      // Contesto per garanzia/stato
       const ctxStart = Math.max(0, numIdx - 500);
       const ctx = ccText.substring(ctxStart, numIdx + 50);
 
