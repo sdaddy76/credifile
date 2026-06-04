@@ -208,16 +208,16 @@ export default function PraticaDetailPage() {
       const text = await extractPdfText(file);
       const { data_riferimento, righe } = parseCentraleRischi(text);
       if (!righe.length) {
-        // DEBUG: mostra i primi 800 caratteri del testo estratto da pdfjs
+        const snip = (kw: string, n = 250) => {
+          const i = text.indexOf(kw);
+          return i >= 0 ? `[${kw}] idx=${i}:\n...${JSON.stringify(text.substring(i, i+n))}...\n` : `[${kw}]: NON TROVATO\n`;
+        };
         setCrDebugText(
-          `TESTO ESTRATTO DA PDFJS (primi 800 char su ${text.length} totali):\n` +
-          `────────────────────────────────────────\n` +
-          text.substring(0, 800) +
-          `\n────────────────────────────────────────\n` +
-          `CERCA "Intermediario": ${text.includes('Intermediario') ? 'TROVATO' : 'NON TROVATO'}\n` +
-          `CERCA "Crediti per cassa": ${text.includes('Crediti per cassa') ? 'TROVATO' : 'NON TROVATO'}\n` +
-          `CERCA "RISCHI A SCADENZA": ${text.includes('RISCHI A SCADENZA') ? 'TROVATO' : 'NON TROVATO'}\n` +
-          `CERCA "DATA DI RIFERIMENTO": ${text.includes('DATA DI RIFERIMENTO') ? 'TROVATO' : 'NON TROVATO'}`
+          `Totale: ${text.length} char\n\n` +
+          snip('Intermediario:') +
+          snip('Crediti per cassa') +
+          snip('RISCHI A SCADENZA', 400) +
+          snip('DATA DI RIFERIMENTO')
         );
         return;
       }
