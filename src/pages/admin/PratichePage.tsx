@@ -115,7 +115,7 @@ export default function PratichePage() {
 
 
   async function load() {
-    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), created_by_agent:admin_profiles!practices_created_by_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)');
+    let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)');
 
     if (isAgente && user?.id) {
       // Agente: vede le proprie E quelle assegnate a lui
@@ -344,7 +344,7 @@ export default function PratichePage() {
           {filtered.map(p => {
             const client = (p as Practice & { clients?: { ragione_sociale: string; email: string } }).clients;
             const assignedAgent = (p as Practice & { assigned_agent?: { id: string; nome?: string; email: string } }).assigned_agent;
-            const createdByAgent = (p as Practice & { created_by_agent?: { id: string; nome?: string; email: string } }).created_by_agent;
+            const createdByAgent = agents.find(a => a.id === (p as Practice & { created_by?: string }).created_by) ?? null;
             const segnalatorePratica = (p as Practice & { segnalatore?: { id: string; nome?: string; email: string } }).segnalatore;
             return (
               <Card key={p.id} className="border-border hover:border-primary/30 transition-colors cursor-pointer" onClick={() => navigate(`/admin/pratiche/${p.id}`)}>
