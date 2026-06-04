@@ -19,9 +19,28 @@ import ReputazioneTab from '@/components/ReputazioneTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
-  PlusCircle, Save, BellRing
+  PlusCircle, Save, BellRing, Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
+import * as pdfjs from 'pdfjs-dist';
+import { parseCentraleRischi, categoriaToTipologia, type CRRiga } from '@/lib/parseCentraleRischi';
+
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
+
+async function extractPdfText(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: buf }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i);
+    const ct = await pg.getTextContent();
+    pages.push(ct.items.map((it: unknown) => (it as { str?: string }).str ?? '').join(' '));
+  }
+  return pages.join('\n');
+}
 import {
   STATUS_LABELS, STATUS_COLORS, DOC_STATUS_LABELS, DOC_STATUS_COLORS,
   type Practice, type PracticeDocument, type PracticeStatusLog,
@@ -54,15 +73,27 @@ export default function PraticaDetailPage() {
     id: string; tipologia: string; banca_finanziaria: string;
     importo_iniziale: string; rata: string; durata_mesi: string;
     debito_residuo: string; note: string;
+    // Campi Centrale Rischi
+    accordato?: string; accordato_operativo?: string; utilizzato?: string;
+    saldo_medio?: string; tipo_garanzia?: string; stato_rapporto?: string;
+    data_riferimento?: string; fonte?: string;
     _new?: boolean; _dirty?: boolean;
   }
   const TIPOLOGIE_FIN = [
     'Mutuo ipotecario', 'Prestito personale', 'Cessione del quinto',
     'Leasing auto', 'Leasing strumentale', 'Apertura di credito',
-    'Fido bancario', 'Carta di credito revolving', 'Altro',
+    'Fido bancario', 'Carta di credito revolving',
+    'Rischi a Scadenza (CR)', 'Rischi a Revoca (CR)', 'Rischi Autoliquidanti (CR)', 'Sofferenze (CR)',
+    'Altro',
   ];
   const [financing, setFinancing] = useState<FinRow[]>([]);
   const [savingFin, setSavingFin] = useState(false);
+  // Centrale Rischi
+  const [crParsing, setCrParsing]       = useState(false);
+  const [crPreview, setCrPreview]       = useState<CRRiga[] | null>(null);
+  const [crDate, setCrDate]             = useState('');
+  const [crImporting, setCrImporting]   = useState(false);
+  const crFileRef = useRef<HTMLInputElement>(null);
 
   // Dialogs
   const [showStatusChange, setShowStatusChange] = useState(false);
@@ -143,6 +174,14 @@ export default function PraticaDetailPage() {
       durata_mesi: r.durata_mesi != null ? String(r.durata_mesi) : '',
       debito_residuo: r.debito_residuo != null ? String(r.debito_residuo) : '',
       note: r.note ?? '',
+      accordato: r.accordato != null ? String(r.accordato) : undefined,
+      accordato_operativo: r.accordato_operativo != null ? String(r.accordato_operativo) : undefined,
+      utilizzato: r.utilizzato != null ? String(r.utilizzato) : undefined,
+      saldo_medio: r.saldo_medio != null ? String(r.saldo_medio) : undefined,
+      tipo_garanzia: r.tipo_garanzia ?? undefined,
+      stato_rapporto: r.stato_rapporto ?? undefined,
+      data_riferimento: r.data_riferimento ?? undefined,
+      fonte: r.fonte ?? 'manuale',
     })));
     const { data: pb } = await supabase.from('practice_banks').select('*, banks(nome,email,email_invio_banca)').eq('practice_id', id).order('created_at');
     setPracticeBanks(pb ?? []);
@@ -154,6 +193,55 @@ export default function PraticaDetailPage() {
     supabase.from('banks').select('*').eq('attiva', true).then(r => setBanks(r.data ?? []));
     supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome').then(r => setAgentsForReassign(r.data ?? []));
   }, [load]);
+
+  // ── Importa Centrale Rischi PDF ─────────────────────────────────────────────
+  const handleCRFile = async (file: File) => {
+    if (file.type !== 'application/pdf') { toast.error('Seleziona un PDF'); return; }
+    setCrParsing(true);
+    try {
+      const text = await extractPdfText(file);
+      const { data_riferimento, righe } = parseCentraleRischi(text);
+      if (!righe.length) { toast.error('Nessun finanziamento trovato nella Centrale Rischi'); return; }
+      setCrDate(data_riferimento);
+      setCrPreview(righe);
+    } catch (e) {
+      toast.error('Errore lettura PDF: ' + String(e));
+    } finally {
+      setCrParsing(false);
+      if (crFileRef.current) crFileRef.current.value = '';
+    }
+  };
+
+  const confirmCRImport = async () => {
+    if (!crPreview || !id) return;
+    setCrImporting(true);
+    try {
+      const rows = crPreview.map((riga, i): FinRow => ({
+        id: crypto.randomUUID(),
+        tipologia:         categoriaToTipologia(riga.categoria),
+        banca_finanziaria: riga.banca,
+        importo_iniziale:  String(riga.accordato),
+        rata:              '',
+        durata_mesi:       '',
+        debito_residuo:    String(riga.utilizzato),
+        note:              `CR ${riga.data_riferimento}${riga.tipo_garanzia ? ' | ' + riga.tipo_garanzia : ''}`,
+        accordato:         String(riga.accordato),
+        accordato_operativo: String(riga.accordato_operativo),
+        utilizzato:        String(riga.utilizzato),
+        saldo_medio:       String(riga.saldo_medio),
+        tipo_garanzia:     riga.tipo_garanzia,
+        stato_rapporto:    riga.stato_rapporto,
+        data_riferimento:  riga.data_riferimento,
+        fonte:             'centrale_rischi',
+        _new: true, _dirty: true,
+      }));
+      setFinancing(prev => [...prev, ...rows]);
+      setCrPreview(null);
+      toast.success(`Importati ${rows.length} finanziamenti dalla Centrale Rischi. Clicca "Salva finanziamenti" per confermare.`);
+    } finally {
+      setCrImporting(false);
+    }
+  };
 
   // Genera codice accesso cliente + invia email
   const generateAccessCode = async () => {
@@ -781,22 +869,38 @@ export default function PraticaDetailPage() {
             </TabsContent>
 
             <TabsContent value="finanziamenti" className="mt-3 space-y-3">
-              {/* Header con pulsante aggiungi (solo canEdit) */}
+              {/* Header con pulsanti (solo canEdit) */}
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-sm text-muted-foreground">
                   {canEdit
-                    ? 'Aggiungi o modifica i finanziamenti in essere del cliente.'
+                    ? 'Aggiungi manualmente o importa dalla Centrale Rischi.'
                     : 'Situazione finanziamenti in essere del cliente (sola lettura).'}
                 </p>
                 {canEdit && (
-                  <Button size="sm" variant="outline" className="gap-1.5"
-                    onClick={() => setFinancing(prev => [...prev, {
-                      id: crypto.randomUUID(), tipologia: '', banca_finanziaria: '',
-                      importo_iniziale: '', rata: '', durata_mesi: '', debito_residuo: '', note: '',
-                      _new: true, _dirty: true,
-                    }])}>
-                    <PlusCircle className="w-3.5 h-3.5" /> Aggiungi finanziamento
-                  </Button>
+                  <div className="flex gap-2 flex-wrap">
+                    {/* Carica Centrale Rischi */}
+                    <label className="cursor-pointer">
+                      <Button asChild size="sm" variant="outline" className="gap-1.5 pointer-events-none border-blue-300 text-blue-700 hover:bg-blue-50">
+                        <span>
+                          {crParsing
+                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Lettura CR…</>
+                            : <><Upload className="w-3.5 h-3.5" />Carica Centrale Rischi</>}
+                        </span>
+                      </Button>
+                      <input ref={crFileRef} type="file" accept="application/pdf" className="hidden"
+                        disabled={crParsing}
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleCRFile(f); }} />
+                    </label>
+                    {/* Aggiungi manuale */}
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                      onClick={() => setFinancing(prev => [...prev, {
+                        id: crypto.randomUUID(), tipologia: '', banca_finanziaria: '',
+                        importo_iniziale: '', rata: '', durata_mesi: '', debito_residuo: '', note: '',
+                        fonte: 'manuale', _new: true, _dirty: true,
+                      }])}>
+                      <PlusCircle className="w-3.5 h-3.5" /> Aggiungi
+                    </Button>
+                  </div>
                 )}
               </div>
 
@@ -814,9 +918,16 @@ export default function PraticaDetailPage() {
                     <Card key={f.id} className={`border ${f._dirty ? 'border-amber-300 bg-amber-50/30' : 'border-border'}`}>
                       <CardContent className="py-3 px-4 space-y-3">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Finanziamento {idx + 1}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                              Finanziamento {idx + 1}
+                            </span>
+                            {f.fonte === 'centrale_rischi' && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+                                CR {f.data_riferimento}
+                              </span>
+                            )}
+                          </div>
                           {canEdit && (
                             <Button size="sm" variant="ghost"
                               className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
@@ -919,6 +1030,35 @@ export default function PraticaDetailPage() {
                             )}
                           </div>
                         </div>
+
+                        {/* Dati Centrale Rischi — solo se importata da CR */}
+                        {f.fonte === 'centrale_rischi' && (
+                          <div className="mt-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs">
+                            <p className="font-semibold text-blue-700 mb-1.5 flex items-center gap-1">
+                              <FileText className="w-3 h-3" /> Dati Centrale Rischi
+                            </p>
+                            <div className="grid grid-cols-4 gap-x-4 gap-y-1 text-blue-900">
+                              <div><span className="text-blue-500">Accordato</span><br />
+                                <strong>€ {f.accordato ? parseFloat(f.accordato).toLocaleString('it-IT') : '—'}</strong>
+                              </div>
+                              <div><span className="text-blue-500">Acc. Operativo</span><br />
+                                <strong>€ {f.accordato_operativo ? parseFloat(f.accordato_operativo).toLocaleString('it-IT') : '—'}</strong>
+                              </div>
+                              <div><span className="text-blue-500">Utilizzato</span><br />
+                                <strong>€ {f.utilizzato ? parseFloat(f.utilizzato).toLocaleString('it-IT') : '—'}</strong>
+                              </div>
+                              <div><span className="text-blue-500">Saldo Medio</span><br />
+                                <strong>€ {f.saldo_medio ? parseFloat(f.saldo_medio).toLocaleString('it-IT') : '—'}</strong>
+                              </div>
+                              {f.tipo_garanzia && (
+                                <div className="col-span-2 mt-0.5"><span className="text-blue-500">Garanzia</span><br />{f.tipo_garanzia}</div>
+                              )}
+                              {f.stato_rapporto && (
+                                <div className="col-span-2 mt-0.5"><span className="text-blue-500">Stato</span><br />{f.stato_rapporto}</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   ))}
@@ -959,6 +1099,14 @@ export default function PraticaDetailPage() {
                               debito_residuo: parseFloat(r.debito_residuo) || null,
                               note: r.note || null,
                               ordinamento: i,
+                              accordato: r.accordato ? parseFloat(r.accordato) : null,
+                              accordato_operativo: r.accordato_operativo ? parseFloat(r.accordato_operativo) : null,
+                              utilizzato: r.utilizzato ? parseFloat(r.utilizzato) : null,
+                              saldo_medio: r.saldo_medio ? parseFloat(r.saldo_medio) : null,
+                              tipo_garanzia: r.tipo_garanzia || null,
+                              stato_rapporto: r.stato_rapporto || null,
+                              data_riferimento: r.data_riferimento || null,
+                              fonte: r.fonte || 'manuale',
                             };
                             if (r._new) {
                               const { data: ins } = await supabase.from('client_financing').insert(payload).select('id').single();
@@ -1203,6 +1351,59 @@ export default function PraticaDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Dialog preview Centrale Rischi ── */}
+      <Dialog open={!!crPreview} onOpenChange={v => { if (!v) setCrPreview(null); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-blue-600" />
+              Centrale Rischi — {crDate}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Trovati <strong>{crPreview?.length ?? 0} finanziamenti</strong> nella sezione "Crediti per cassa".
+            Verifica i dati e clicca <strong>Importa</strong> per aggiungerli alla pratica.
+          </p>
+          <div className="rounded-md border border-border overflow-hidden text-xs">
+            <table className="w-full">
+              <thead className="bg-muted/60">
+                <tr>
+                  <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Banca</th>
+                  <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Categoria</th>
+                  <th className="text-right px-2 py-1.5 font-medium text-muted-foreground">Accordato</th>
+                  <th className="text-right px-2 py-1.5 font-medium text-muted-foreground">Acc. Op.</th>
+                  <th className="text-right px-2 py-1.5 font-medium text-muted-foreground">Utilizzato</th>
+                  <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Garanzia</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {(crPreview ?? []).map((r, i) => (
+                  <tr key={i} className="bg-background hover:bg-muted/20">
+                    <td className="px-2 py-1.5 font-medium max-w-[180px] truncate" title={r.banca}>{r.banca}</td>
+                    <td className="px-2 py-1.5 text-blue-700">{r.categoria}</td>
+                    <td className="px-2 py-1.5 text-right font-mono">{r.accordato.toLocaleString('it-IT')}</td>
+                    <td className="px-2 py-1.5 text-right font-mono">{r.accordato_operativo.toLocaleString('it-IT')}</td>
+                    <td className="px-2 py-1.5 text-right font-mono font-semibold">{r.utilizzato.toLocaleString('it-IT')}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground max-w-[140px] truncate" title={r.tipo_garanzia}>{r.tipo_garanzia || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+            ⚠ I finanziamenti importati vengono aggiunti a quelli esistenti. Dopo l'importazione clicca <strong>"Salva finanziamenti"</strong>.
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCrPreview(null)}>Annulla</Button>
+            <Button onClick={confirmCRImport} disabled={crImporting} className="gap-2">
+              {crImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              Importa {crPreview?.length ?? 0} finanziamenti
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

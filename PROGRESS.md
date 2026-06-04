@@ -68,3 +68,4 @@
 [2026-06-04 01:07] COMPLETATO analisi reputazionale: DB reputational_analyses, edge function analisi-reputazione (ACTIVE), ReputazioneTab.tsx, tab PraticaDetailPage. Build+deploy ok, push GitHub ok.
 [2026-06-04 01:20] Fix BOOT_ERROR edge function analisi-reputazione: causa root = Deno.serve() nativo richiesto (non serve() da deno.land); funzione funzionante, push GitHub fd6a71a
 [2026-06-04 01:21] Soci e amministratori: sezioni read-only sostituite con UI editabile sempre visibile in ClientiPage.tsx (aggiungi/modifica/elimina riga)
+[2026-06-04 01:45] Analisi Centrale Rischi BDI: struttura compresa (Intermediario/Data/Crediti per cassa). Avvio migration DB + parser + UI
