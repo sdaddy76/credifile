@@ -70,3 +70,4 @@
 [2026-06-04 01:21] Soci e amministratori: sezioni read-only sostituite con UI editabile sempre visibile in ClientiPage.tsx (aggiungi/modifica/elimina riga)
 [2026-06-04 01:45] Analisi Centrale Rischi BDI: struttura compresa (Intermediario/Data/Crediti per cassa). Avvio migration DB + parser + UI
 [2026-06-04 01:53] Import Centrale Rischi: parser parseCentraleRischi.ts, DB migration client_financing (+8 colonne CR), UI preview+import in PraticaDetailPage. Build OK, push github
+[2026-06-04 01:58] Fix UtentiPage blank: SelectItem value='' → '__none__' (3 occorrenze). Radix UI vieta stringa vuota come value
