@@ -80,10 +80,15 @@ export default function PraticaDetailPage() {
     _new?: boolean; _dirty?: boolean;
   }
   const TIPOLOGIE_FIN = [
+    // Inserimento manuale – terminologia bancaria classica
     'Mutuo ipotecario', 'Prestito personale', 'Cessione del quinto',
     'Leasing auto', 'Leasing strumentale', 'Apertura di credito',
     'Fido bancario', 'Carta di credito revolving',
-    'Rischi a Scadenza (CR)', 'Rischi a Revoca (CR)', 'Rischi Autoliquidanti (CR)', 'Sofferenze (CR)',
+    // Importati da Centrale Rischi – categoriaToTipologia() restituisce questi valori
+    'Mutuo/Prestito (CR - A Scadenza)',   // ex "Rischi a Scadenza": finanziamenti con piano di rientro (mutui, prestiti, CQ)
+    'Fido/C.Corrente (CR - A Revoca)',    // ex "Rischi a Revoca": linee di credito revocabili (fidi cassa, scoperti CC)
+    'Anticipo/SBF (CR - Autoliquidante)', // ex "Rischi Autoliquidanti": anticipi su crediti commerciali (fatture, SBF)
+    'Sofferenza (CR)',
     'Altro',
   ];
   const [financing, setFinancing] = useState<FinRow[]>([]);

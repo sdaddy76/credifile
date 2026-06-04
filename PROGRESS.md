@@ -71,3 +71,4 @@
 [2026-06-04 01:45] Analisi Centrale Rischi BDI: struttura compresa (Intermediario/Data/Crediti per cassa). Avvio migration DB + parser + UI
 [2026-06-04 01:53] Import Centrale Rischi: parser parseCentraleRischi.ts, DB migration client_financing (+8 colonne CR), UI preview+import in PraticaDetailPage. Build OK, push github
 [2026-06-04 01:58] Fix UtentiPage blank: SelectItem value='' → '__none__' (3 occorrenze). Radix UI vieta stringa vuota come value
+[2026-06-04 02:26] Parser CR v2 deployato (9df2de8). Identificati 3 bug: 1) guida alla lettura estratta come dati reali (BANCA UNO/QUATTRO), 2) selezione mese sbagliata, 3) termini CR vs bancari. Fix in corso.
