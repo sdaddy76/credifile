@@ -83,3 +83,5 @@
 [2026-06-04 23:37] Deploy Indice Bancabilità completato. File: IndiceBancabilita.tsx (nuovo), BancabilitaTab.tsx (aggiornato). SQL migration salvata in supabase/migrations/bancabilita_pesi.sql.
 [2026-06-06 00:29] Avvio implementazione ruolo Consulente/Commercialista: SQL + edge functions + portale frontend + PDF generator
 [2026-06-06 00:30] Scrittura SQL migration consulente + tutte le edge functions + frontend portale consulente
+[2026-06-06 00:40] Deploy Consulente completato. File: IndiceBancabilita.tsx, generateReportPdf.ts, ConsulenteDashboard, NuovoReportWizard, ProfiloConsulentePage, RegistrazioneConsulentePage, LoginPage (redirect), App.tsx (routes), useAuth.ts (ruolo). Edge functions: invite-consulente, genera-suggerimenti-kpi (Groq), send-report-consulente. SQL: supabase/migrations/consulente.sql (manuale).
+[2026-06-06 00:57] Fix registrazione consulente + implementazione consenso CR (GDPR): edge functions, pagina consenso, wizard update

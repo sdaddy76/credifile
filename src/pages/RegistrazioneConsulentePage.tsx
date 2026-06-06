@@ -17,28 +17,29 @@ export default function RegistrazioneConsulentePage() {
     e.preventDefault();
     if (!nome.trim() || !email.trim() || !pwd) return;
     if (pwd !== pwd2) { toast.error('Le password non coincidono'); return; }
-    if (pwd.length < 8)  { toast.error('Password minimo 8 caratteri'); return; }
+    if (pwd.length < 8) { toast.error('Password minimo 8 caratteri'); return; }
 
     setLoading(true);
     try {
-      // Crea account con Supabase
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
-        password: pwd,
-        options: { data: { nome } }
+      // Registra tramite edge function (service role, nessuna conferma email)
+      const { data, error } = await supabase.functions.invoke('registra-consulente', {
+        body: { email: email.trim().toLowerCase(), password: pwd, nome: nome.trim() }
       });
-      if (error) { toast.error(error.message); return; }
-
-      // Aggiorna profilo con ruolo consulente
-      if (data.user) {
-        await supabase.from('admin_profiles').upsert({
-          id: data.user.id,
-          email: email.trim().toLowerCase(),
-          nome: nome.trim(),
-          ruolo: 'consulente'
-        });
+      if (error || !data?.success) {
+        toast.error(data?.error ?? error?.message ?? 'Errore registrazione');
+        return;
       }
-      setStep('done');
+      // Auto-login immediato
+      const { error: loginErr } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(), password: pwd
+      });
+      if (loginErr) {
+        // login fallito ma account creato: mostra schermata di successo con link
+        setStep('done');
+      } else {
+        // login ok: redirect al portale consulente
+        window.location.hash = '/consulente';
+      }
     } finally {
       setLoading(false);
     }

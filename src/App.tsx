@@ -22,6 +22,7 @@ import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
 import RegistrazioneSegnalPage from "@/pages/RegistrazioneSegnalPage";
 import RegistrazioneConsulentePage from "@/pages/RegistrazioneConsulentePage";
+import ConsensoCrePage from "@/pages/ConsensoCrePage";
 import ConsulenteDashboard from "@/pages/consulente/ConsulenteDashboard";
 import NuovoReportWizard from "@/pages/consulente/NuovoReportWizard";
 import ProfiloConsulentePage from "@/pages/consulente/ProfiloConsulentePage";
@@ -58,6 +59,7 @@ const App = () => (
           <Route path="/reset-password" element={<SetPasswordPage />} />
           <Route path="/invito-segnalatore" element={<RegistrazioneSegnalPage />} />
           <Route path="/registrazione-consulente" element={<RegistrazioneConsulentePage />} />
+          <Route path="/consenso-cr/:token" element={<ConsensoCrePage />} />
 
           {/* Portale Consulente — protetto */}
           <Route path="/consulente" element={<ProtectedRoute><ConsulenteDashboard /></ProtectedRoute>} />

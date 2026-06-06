@@ -6,7 +6,10 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { generateReportPdf } from '@/lib/generateReportPdf';
 import type { KpiScore, AiSuggerimento, ReportData } from '@/lib/generateReportPdf';
-import { Upload, CheckCircle, Loader2, ArrowLeft, ArrowRight, FileText, BarChart2, Brain, Send, Download } from 'lucide-react';
+import {
+  Upload, CheckCircle, Loader2, ArrowLeft, ArrowRight,
+  FileText, BarChart2, Brain, Send, Download, ShieldCheck, Clock, Mail,
+} from 'lucide-react';
 
 interface KpiEntry { valore: number | null; formatted: string; semaforo: string; label: string }
 type KpiResult = Record<string, Record<string, KpiEntry>>;
@@ -42,39 +45,66 @@ export default function NuovoReportWizard() {
   // Step 0: dati cliente & anno
   const [annoStr, setAnnoStr] = useState(String(new Date().getFullYear() - 1));
 
-  // Step 1: bilancio XBRL
+  // Step 1: Consenso CR
+  const [crConsentId,     setCrConsentId]     = useState<string | null>(null);
+  const [crConsentStatus, setCrConsentStatus] = useState<'none' | 'pending' | 'accepted' | 'declined'>('none');
+  const [crClientEmail,   setCrClientEmail]   = useState('');
+  const [sendingConsent,  setSendingConsent]  = useState(false);
+
+  // Step 2: bilancio XBRL
   const bilancioRef = useRef<HTMLInputElement>(null);
-  const [bilancioFile, setBilancioFile]     = useState<File | null>(null);
-  const [analyzingBil, setAnalyzingBil]     = useState(false);
-  const [kpiResult,    setKpiResult]        = useState<KpiResult | null>(null);
-  const [annoEsercizio, setAnnoEsercizio]   = useState<number | null>(null);
-  const [ragSociale,   setRagSociale]       = useState('');
+  const [bilancioFile, setBilancioFile]   = useState<File | null>(null);
+  const [analyzingBil, setAnalyzingBil]   = useState(false);
+  const [kpiResult,    setKpiResult]      = useState<KpiResult | null>(null);
+  const [annoEsercizio, setAnnoEsercizio] = useState<number | null>(null);
+  const [ragSociale,   setRagSociale]     = useState('');
 
-  // Step 2: calcolo scores
-  const [kpiScores, setKpiScores]   = useState<KpiScore[]>([]);
-  const [indice,    setIndice]      = useState<number | null>(null);
+  // Step 3: calcolo scores
+  const [kpiScores, setKpiScores] = useState<KpiScore[]>([]);
+  const [indice,    setIndice]    = useState<number | null>(null);
 
-  // Step 3: AI suggestions
-  const [aiLoading,    setAiLoading]    = useState(false);
-  const [aiSugg,       setAiSugg]       = useState<AiSuggerimento[]>([]);
+  // Step 4: AI suggestions
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSugg,    setAiSugg]   = useState<AiSuggerimento[]>([]);
 
-  // Step 4: genera PDF & invia
-  const [generating,   setGenerating]   = useState(false);
-  const [pdfBlob,      setPdfBlob]      = useState<Blob | null>(null);
-  const [pdfBase64,    setPdfBase64]    = useState<string>('');
-  const [sendEmail,    setSendEmail]    = useState('');
-  const [sending,      setSending]      = useState(false);
-  const [reportSaved,  setReportSaved]  = useState(false);
-  const [reportId,     setReportId]     = useState<string | null>(null);
+  // Step 5: genera PDF & invia
+  const [generating,  setGenerating]  = useState(false);
+  const [pdfBlob,     setPdfBlob]     = useState<Blob | null>(null);
+  const [pdfBase64,   setPdfBase64]   = useState<string>('');
+  const [sendEmail,   setSendEmail]   = useState('');
+  const [sending,     setSending]     = useState(false);
+  const [reportSaved, setReportSaved] = useState(false);
+  const [reportId,    setReportId]    = useState<string | null>(null);
 
   // Carica info cliente
-  const [client, setClient] = useState<{ ragione_sociale: string; email: string | null; partita_iva: string | null; codice_ateco: string | null; settore: string | null; indirizzo: string | null } | null>(null);
+  const [client, setClient] = useState<{
+    ragione_sociale: string; email: string | null; partita_iva: string | null;
+    codice_ateco: string | null; settore: string | null; indirizzo: string | null
+  } | null>(null);
   const [clientLoaded, setClientLoaded] = useState(false);
   if (!clientLoaded && clientId) {
     setClientLoaded(true);
     supabase.from('consulente_clients').select('*').eq('id', clientId).maybeSingle().then(({ data }) => {
-      if (data) { setClient(data as typeof client); setRagSociale(data.ragione_sociale); setSendEmail(data.email ?? ''); }
+      if (data) {
+        setClient(data as typeof client);
+        setRagSociale(data.ragione_sociale);
+        setSendEmail(data.email ?? '');
+        setCrClientEmail(data.email ?? '');
+      }
     });
+    // Controlla se esiste già un consenso CR accettato per questo cliente
+    if (user) {
+      supabase.from('consulente_cr_consents')
+        .select('id, status')
+        .eq('consulente_id', user.id)
+        .eq('client_id', clientId)
+        .eq('status', 'accepted')
+        .limit(1)
+        .maybeSingle()
+        .then(({ data: c }) => {
+          if (c) { setCrConsentId(c.id); setCrConsentStatus('accepted'); }
+        });
+    }
   }
 
   // Carica profilo consulente per logo
@@ -87,7 +117,42 @@ export default function NuovoReportWizard() {
     });
   }
 
-  // ── STEP 1: analizza bilancio XBRL ──────────────────────────────────────
+  // ── STEP 1: Richiedi consenso CR ─────────────────────────────────────────
+  const richiediConsenso = async () => {
+    if (!crClientEmail.trim()) { toast.error('Inserisci l\'email del cliente per inviare la richiesta'); return; }
+    setSendingConsent(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('richiedi-consenso-cr', {
+        body: {
+          consulente_id: user?.id,
+          consulente_nome: profileNome ?? user?.email ?? 'Il Consulente',
+          client_id: clientId ?? null,
+          client_name: ragSociale || client?.ragione_sociale || 'Cliente',
+          client_email: crClientEmail.trim().toLowerCase(),
+        }
+      });
+      if (error || !data?.success) { toast.error(data?.error ?? 'Errore invio richiesta'); return; }
+      setCrConsentId(data.consent_id);
+      setCrConsentStatus('pending');
+      toast.success(`Richiesta di autorizzazione inviata a ${crClientEmail}`);
+    } finally { setSendingConsent(false); }
+  };
+
+  const verificaConsenso = async () => {
+    if (!crConsentId) return;
+    const { data } = await supabase.from('consulente_cr_consents').select('status').eq('id', crConsentId).maybeSingle();
+    if (data?.status === 'accepted') {
+      setCrConsentStatus('accepted');
+      toast.success('Consenso ricevuto! Puoi procedere con il caricamento della Centrale dei Rischi.');
+    } else if (data?.status === 'declined') {
+      setCrConsentStatus('declined');
+      toast.error('Il cliente ha rifiutato l\'autorizzazione.');
+    } else {
+      toast.info('Consenso ancora in attesa...');
+    }
+  };
+
+  // ── STEP 2: analizza bilancio XBRL ──────────────────────────────────────
   const analizzaBilancio = async () => {
     if (!bilancioFile) { toast.error('Seleziona il file bilancio XBRL'); return; }
     setAnalyzingBil(true);
@@ -103,11 +168,11 @@ export default function NuovoReportWizard() {
       if (data.ragione_sociale) setRagSociale(data.ragione_sociale);
       toast.success('Bilancio analizzato con successo');
       computeScores(data.kpi as KpiResult);
-      setStep(2);
+      setStep(3);
     } finally { setAnalyzingBil(false); }
   };
 
-  // ── STEP 2: calcola scores ───────────────────────────────────────────────
+  // ── STEP 3: calcola scores ───────────────────────────────────────────────
   const computeScores = (kpi: KpiResult) => {
     const scores: KpiScore[] = KPI_CONFIG.map(cfg => {
       const entry = kpi?.[cfg.area]?.[cfg.key];
@@ -129,7 +194,7 @@ export default function NuovoReportWizard() {
     }
   };
 
-  // ── STEP 3: AI suggestions ───────────────────────────────────────────────
+  // ── STEP 4: AI suggestions ───────────────────────────────────────────────
   const generaSuggerimenti = async () => {
     const sorted = [...kpiScores].filter(k => k.score !== null).sort((a, b) => (a.score ?? 99) - (b.score ?? 99));
     const worst3 = sorted.slice(0, 3);
@@ -154,7 +219,7 @@ export default function NuovoReportWizard() {
     finally { setAiLoading(false); }
   };
 
-  // ── STEP 4: genera PDF ───────────────────────────────────────────────────
+  // ── STEP 5: genera PDF ───────────────────────────────────────────────────
   const generaPdf = async () => {
     setGenerating(true);
     try {
@@ -182,7 +247,6 @@ export default function NuovoReportWizard() {
       setPdfBlob(blob);
       setPdfBase64(base64);
 
-      // Salva in DB
       if (user) {
         const { data: saved, error } = await supabase.from('consulente_reports').insert({
           consulente_id: user.id,
@@ -233,7 +297,7 @@ export default function NuovoReportWizard() {
   };
 
   // ── STEPS UI ─────────────────────────────────────────────────────────────
-  const steps = ['Dati cliente', 'Analisi bilancio', 'Score KPI', 'AI Suggerimenti', 'Report finale'];
+  const steps = ['Dati cliente', 'Consenso CR', 'Bilancio XBRL', 'Score KPI', 'AI Suggerimenti', 'Report finale'];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50/40 to-slate-50">
@@ -289,8 +353,97 @@ export default function NuovoReportWizard() {
           </div>
         )}
 
-        {/* ── STEP 1: Upload bilancio ── */}
+        {/* ── STEP 1: Consenso CR ── */}
         {step === 1 && (
+          <div className="bg-white rounded-xl border p-6 space-y-4">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-teal-600" /> Autorizzazione Centrale dei Rischi
+            </h2>
+            <p className="text-sm text-slate-500">
+              Prima di caricare i dati della Centrale dei Rischi, è necessaria l'autorizzazione esplicita del cliente
+              ai sensi del GDPR (Reg. UE 2016/679). L'autorizzazione viene inviata via email al cliente con tracciatura IP.
+            </p>
+
+            {crConsentStatus === 'none' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Email del cliente per la richiesta di autorizzazione</label>
+                  <input type="email" className="w-full border rounded-lg px-3 py-2 text-sm mt-0.5 focus:ring-2 ring-teal-400 outline-none"
+                    placeholder="cliente@azienda.it" value={crClientEmail}
+                    onChange={e => setCrClientEmail(e.target.value)} />
+                </div>
+                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={richiediConsenso} disabled={sendingConsent || !crClientEmail.trim()}>
+                  {sendingConsent
+                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Invio in corso...</>
+                    : <><Mail className="w-4 h-4 mr-2" /> Invia richiesta di autorizzazione</>
+                  }
+                </Button>
+                <div className="border-t pt-3">
+                  <p className="text-xs text-slate-400 text-center">
+                    Se hai già un consenso CR valido per questo cliente puoi procedere direttamente.
+                  </p>
+                  <Button variant="outline" className="w-full mt-2 text-slate-500" onClick={() => setStep(2)}>
+                    Salta (consenso già ottenuto) <ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {crConsentStatus === 'pending' && (
+              <div className="space-y-3">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                  <Clock className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800">Richiesta inviata — in attesa di risposta</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Il cliente (<strong>{crClientEmail}</strong>) ha ricevuto l'email con il link per autorizzare il trattamento.
+                      Il link è valido 30 giorni.
+                    </p>
+                  </div>
+                </div>
+                <Button variant="outline" className="w-full" onClick={verificaConsenso}>
+                  🔄 Verifica stato consenso
+                </Button>
+                <p className="text-xs text-slate-400 text-center">Puoi procedere al bilancio e caricare la CR in un secondo momento, oppure attendere.</p>
+                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>
+                  Procedi al bilancio <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+            )}
+
+            {crConsentStatus === 'accepted' && (
+              <div className="space-y-3">
+                <div className="bg-teal-50 border border-teal-300 rounded-xl p-4 flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-teal-800">Autorizzazione confermata ✓</p>
+                    <p className="text-xs text-teal-700 mt-0.5">Il cliente ha autorizzato il trattamento dei dati CR. Puoi procedere.</p>
+                  </div>
+                </div>
+                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>
+                  Procedi al bilancio <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+            )}
+
+            {crConsentStatus === 'declined' && (
+              <div className="space-y-3">
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-red-700">Autorizzazione rifiutata</p>
+                  <p className="text-xs text-red-600 mt-1">Il cliente ha rifiutato il trattamento dei dati CR. Non è possibile caricare la Centrale dei Rischi.</p>
+                </div>
+                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>
+                  Procedi comunque (senza CR) <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+            )}
+
+            <Button variant="outline" onClick={() => setStep(0)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+          </div>
+        )}
+
+        {/* ── STEP 2: Upload bilancio ── */}
+        {step === 2 && (
           <div className="bg-white rounded-xl border p-6 space-y-4">
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><Upload className="w-4 h-4 text-teal-600" /> Carica Bilancio XBRL</h2>
             <p className="text-sm text-slate-500">Carica il bilancio depositato in formato XBRL (.xbrl, .xml) per l'analisi automatica dei KPI.</p>
@@ -306,7 +459,7 @@ export default function NuovoReportWizard() {
                 onChange={e => setBilancioFile(e.target.files?.[0] ?? null)} />
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(0)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+              <Button variant="outline" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
               <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={analizzaBilancio} disabled={!bilancioFile || analyzingBil}>
                 {analyzingBil ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Analisi in corso...</> : 'Analizza bilancio'}
               </Button>
@@ -314,8 +467,8 @@ export default function NuovoReportWizard() {
           </div>
         )}
 
-        {/* ── STEP 2: KPI Scores ── */}
-        {step === 2 && (
+        {/* ── STEP 3: KPI Scores ── */}
+        {step === 3 && (
           <div className="bg-white rounded-xl border p-6 space-y-4">
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><BarChart2 className="w-4 h-4 text-teal-600" /> Score KPI</h2>
             {indice !== null && (
@@ -338,16 +491,16 @@ export default function NuovoReportWizard() {
               ))}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
-              <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={() => { setStep(3); generaSuggerimenti(); }}>
+              <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+              <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={() => { setStep(4); generaSuggerimenti(); }}>
                 Genera suggerimenti AI <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* ── STEP 3: AI Suggerimenti ── */}
-        {step === 3 && (
+        {/* ── STEP 4: AI Suggerimenti ── */}
+        {step === 4 && (
           <div className="bg-white rounded-xl border p-6 space-y-4">
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><Brain className="w-4 h-4 text-teal-600" /> Raccomandazioni AI</h2>
             {aiLoading ? (
@@ -381,16 +534,16 @@ export default function NuovoReportWizard() {
               </div>
             )}
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
-              <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={() => setStep(4)} disabled={aiLoading}>
+              <Button variant="outline" onClick={() => setStep(3)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+              <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={() => setStep(5)} disabled={aiLoading}>
                 Genera report PDF <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* ── STEP 4: Report finale ── */}
-        {step === 4 && (
+        {/* ── STEP 5: Report finale ── */}
+        {step === 5 && (
           <div className="bg-white rounded-xl border p-6 space-y-4">
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><FileText className="w-4 h-4 text-teal-600" /> Report finale</h2>
             {!pdfBlob ? (
@@ -425,7 +578,7 @@ export default function NuovoReportWizard() {
               </div>
             )}
             {!pdfBlob && (
-              <Button variant="outline" onClick={() => setStep(3)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+              <Button variant="outline" onClick={() => setStep(4)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
             )}
           </div>
         )}
