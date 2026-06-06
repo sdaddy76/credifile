@@ -167,6 +167,8 @@ export default function ConsulenteDashboard() {
   const [visuraFound,    setVisuraFound]    = useState<string[]>([]);
   const [visuraNotFound, setVisuraNotFound] = useState<string[]>([]);
   const [visuraParsed,   setVisuraParsed]   = useState(false);
+  const [visuraChars,    setVisuraChars]    = useState(0);   // caratteri estratti
+  const [visuraError,    setVisuraError]    = useState('');  // messaggio errore estrazione
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -190,8 +192,19 @@ export default function ConsulenteDashboard() {
     setVisuraParsed(false);
     setVisuraFound([]);
     setVisuraNotFound([]);
+    setVisuraChars(0);
+    setVisuraError('');
     try {
-      const text   = await extractPdfText(file);
+      const text = await extractPdfText(file);
+      setVisuraChars(text.length);
+
+      if (text.trim().length < 50) {
+        // PDF scansionato o protetto — nessun testo estraibile
+        setVisuraError('PDF scansionato o protetto: nessun testo estraibile. Compila i campi manualmente.');
+        setVisuraParsed(true);
+        return;
+      }
+
       const parsed = parseVisura(text);
 
       const LABELS: Record<keyof VisuraData, string> = {
@@ -206,7 +219,11 @@ export default function ConsulenteDashboard() {
       setVisuraFound(found);
       setVisuraNotFound(notFound);
 
-      // Pre-popola il form
+      if (found.length === 0) {
+        setVisuraError(`Testo estratto (${text.length} caratteri) ma nessun campo riconosciuto. Formato visura non standard — compila manualmente.`);
+      }
+
+      // Pre-popola il form con i campi trovati
       setFormData(prev => ({
         ...prev,
         ragione_sociale: parsed.ragione_sociale ?? prev.ragione_sociale,
@@ -217,12 +234,20 @@ export default function ConsulenteDashboard() {
         codice_ateco:    parsed.codice_ateco     ?? prev.codice_ateco,
         indirizzo:       parsed.indirizzo        ?? prev.indirizzo,
       }));
-      setVisuraParsed(true);
-      toast.success(`Visura analizzata: ${found.length} campi estratti`);
+
+      if (found.length > 0) {
+        toast.success(`Visura analizzata: ${found.length} campi estratti`);
+      } else {
+        toast.warning('Nessun campo estratto automaticamente — compila il form manualmente');
+      }
     } catch (err) {
+      console.error('Errore parsing visura:', err);
+      setVisuraError(`Errore lettura PDF: ${String(err)}. Compila i campi manualmente.`);
       toast.error('Errore lettura PDF visura');
-      console.error(err);
-    } finally { setParsingVisura(false); }
+    } finally {
+      setVisuraParsed(true); // mostra SEMPRE il form, anche in caso di errore
+      setParsingVisura(false);
+    }
   };
 
   // ── Salva cliente ──────────────────────────────────────────────────────────
@@ -266,6 +291,8 @@ export default function ConsulenteDashboard() {
     setVisuraFileName('');
     setVisuraFound([]);
     setVisuraNotFound([]);
+    setVisuraChars(0);
+    setVisuraError('');
     setShowForm(s => !s);
   };
 
@@ -389,22 +416,36 @@ export default function ConsulenteDashboard() {
                 {/* ── Risultato parsing ── */}
                 {visuraParsed && (
                   <div className="bg-slate-50 rounded-lg p-3 border space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                      <FileText className="w-4 h-4 text-teal-600" /> {visuraFileName}
+                    <div className="flex items-center justify-between text-sm font-medium text-slate-700">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-teal-600" /> {visuraFileName}
+                      </div>
+                      {visuraChars > 0 && (
+                        <span className="text-xs text-slate-400">{visuraChars.toLocaleString()} caratteri estratti</span>
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {visuraFound.map(f => (
-                        <span key={f} className="inline-flex items-center gap-0.5 text-[11px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
-                          <CheckCircle className="w-2.5 h-2.5" /> {f}
-                        </span>
-                      ))}
-                      {visuraNotFound.map(f => (
-                        <span key={f} className="inline-flex items-center gap-0.5 text-[11px] bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">
-                          <AlertCircle className="w-2.5 h-2.5" /> {f}
-                        </span>
-                      ))}
-                    </div>
-                    <p className="text-xs text-teal-600">✏️ Controlla e correggi i campi pre-compilati sotto prima di salvare.</p>
+                    {visuraError ? (
+                      <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span>{visuraError}</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {visuraFound.map(f => (
+                          <span key={f} className="inline-flex items-center gap-0.5 text-[11px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+                            <CheckCircle className="w-2.5 h-2.5" /> {f}
+                          </span>
+                        ))}
+                        {visuraNotFound.map(f => (
+                          <span key={f} className="inline-flex items-center gap-0.5 text-[11px] bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">
+                            <AlertCircle className="w-2.5 h-2.5" /> {f}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {!visuraError && visuraFound.length > 0 && (
+                      <p className="text-xs text-teal-600">✏️ Controlla e correggi i campi pre-compilati sotto prima di salvare.</p>
+                    )}
                   </div>
                 )}
 
