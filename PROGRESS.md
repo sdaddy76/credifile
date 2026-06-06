@@ -80,3 +80,6 @@
 [2026-06-04 23:31] Avvio implementazione Indice di Bancabilità: tabella bancabilita_pesi + componente + config pesi per banca
 [2026-06-04 23:33] Inizio build frontend Indice Bancabilità: IndiceBancabilita.tsx + integrazione BancabilitaTab + config BanchePage
 [2026-06-04 23:36] Creato IndiceBancabilita.tsx, integrato in BancabilitaTab.tsx (globale + per-banca). Build in corso.
+[2026-06-04 23:37] Deploy Indice Bancabilità completato. File: IndiceBancabilita.tsx (nuovo), BancabilitaTab.tsx (aggiornato). SQL migration salvata in supabase/migrations/bancabilita_pesi.sql.
+[2026-06-06 00:29] Avvio implementazione ruolo Consulente/Commercialista: SQL + edge functions + portale frontend + PDF generator
+[2026-06-06 00:30] Scrittura SQL migration consulente + tutte le edge functions + frontend portale consulente

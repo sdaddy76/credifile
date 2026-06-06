@@ -21,6 +21,10 @@ import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
 import RegistrazioneSegnalPage from "@/pages/RegistrazioneSegnalPage";
+import RegistrazioneConsulentePage from "@/pages/RegistrazioneConsulentePage";
+import ConsulenteDashboard from "@/pages/consulente/ConsulenteDashboard";
+import NuovoReportWizard from "@/pages/consulente/NuovoReportWizard";
+import ProfiloConsulentePage from "@/pages/consulente/ProfiloConsulentePage";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +57,12 @@ const App = () => (
           <Route path="/set-password" element={<SetPasswordPage />} />
           <Route path="/reset-password" element={<SetPasswordPage />} />
           <Route path="/invito-segnalatore" element={<RegistrazioneSegnalPage />} />
+          <Route path="/registrazione-consulente" element={<RegistrazioneConsulentePage />} />
+
+          {/* Portale Consulente — protetto */}
+          <Route path="/consulente" element={<ProtectedRoute><ConsulenteDashboard /></ProtectedRoute>} />
+          <Route path="/consulente/profilo" element={<ProtectedRoute><ProfiloConsulentePage /></ProtectedRoute>} />
+          <Route path="/consulente/cliente/:clientId/nuovo-report" element={<ProtectedRoute><NuovoReportWizard /></ProtectedRoute>} />
 
           {/* Admin protetto */}
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>

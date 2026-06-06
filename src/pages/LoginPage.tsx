@@ -11,35 +11,35 @@ import { FileText, Lock, Mail, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
-  const { signIn, user, loading: authLoading } = useAuth();
+  const { signIn, user, loading: authLoading, role } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
   const [waitingForAuth, setWaitingForAuth] = useState(false);
-
-  // Recupera password
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [sendingRecovery, setSendingRecovery] = useState(false);
 
+  const getRedirect = (r: string | null) => r === 'consulente' ? '/consulente' : '/admin/dashboard';
+
   // Se già loggato (es. refresh con sessione attiva) → redirect diretto + log
   useEffect(() => {
-    if (!authLoading && user) {
+    if (!authLoading && user && role !== null) {
       supabase.functions.invoke('log-access').catch(() => {/* silent */});
-      navigate('/admin/dashboard', { replace: true });
+      navigate(getRedirect(role), { replace: true });
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, role]);
 
   // Naviga SOLO quando onAuthStateChange ha aggiornato user
   // Evita la race condition su mobile (navigate() prima che user sia nel state)
   useEffect(() => {
-    if (waitingForAuth && user) {
-      navigate('/admin/dashboard', { replace: true });
+    if (waitingForAuth && user && role !== null) {
+      navigate(getRedirect(role), { replace: true });
       supabase.functions.invoke('log-access').catch(() => {/* silent */});
     }
-  }, [waitingForAuth, user]);
+  }, [waitingForAuth, user, role]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

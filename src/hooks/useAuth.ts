@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
-export type UserRole = 'super_admin' | 'agente' | 'supervisore_segreteria' | 'segnalatore' | null;
+export type UserRole = 'super_admin' | 'agente' | 'supervisore_segreteria' | 'segnalatore' | 'consulente' | null;
 
 interface AuthProfile {
   ruolo: UserRole;
@@ -98,10 +98,11 @@ export function useAuth() {
   const isAgente       = role === 'agente';
   const isSegreteria   = role === 'supervisore_segreteria';
   const isSegnalatore  = role === 'segnalatore';
+  const isConsulente   = role === 'consulente';
 
   return {
     user, session, loading, role, profileNome,
-    isSuperAdmin, isAgente, isSegreteria, isSegnalatore,
+    isSuperAdmin, isAgente, isSegreteria, isSegnalatore, isConsulente,
     canEdit:        isSuperAdmin || isAgente,
     canApprove:     isSuperAdmin || isSegreteria,
     canManageBanks: isSuperAdmin || isSegreteria,
