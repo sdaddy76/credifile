@@ -85,3 +85,4 @@
 [2026-06-06 00:30] Scrittura SQL migration consulente + tutte le edge functions + frontend portale consulente
 [2026-06-06 00:40] Deploy Consulente completato. File: IndiceBancabilita.tsx, generateReportPdf.ts, ConsulenteDashboard, NuovoReportWizard, ProfiloConsulentePage, RegistrazioneConsulentePage, LoginPage (redirect), App.tsx (routes), useAuth.ts (ruolo). Edge functions: invite-consulente, genera-suggerimenti-kpi (Groq), send-report-consulente. SQL: supabase/migrations/consulente.sql (manuale).
 [2026-06-06 00:57] Fix registrazione consulente + implementazione consenso CR (GDPR): edge functions, pagina consenso, wizard update
+[2026-06-06 01:04] Deploy commit 24d2c15 su GitHub (Vercel auto-deploy). Fix reg. consulente + consenso CR + wizard step + pagina pubblica.

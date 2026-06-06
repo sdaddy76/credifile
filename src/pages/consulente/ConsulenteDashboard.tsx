@@ -1,12 +1,130 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as pdfjs from 'pdfjs-dist';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { Plus, FileBarChart2, Users, LogOut, Settings, TrendingUp, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  Plus, FileBarChart2, Users, LogOut, Settings, TrendingUp,
+  RefreshCw, Trash2, Upload, FileText, CheckCircle, AlertCircle,
+} from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
+
+// ── PDF text extractor ──────────────────────────────────────────────────────
+async function extractPdfText(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: buf }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i);
+    const ct = await pg.getTextContent();
+    pages.push(ct.items.map((it: unknown) => (it as { str?: string }).str ?? '').join(' '));
+  }
+  return pages.join('\n');
+}
+
+function isolaSezione(text: string, start: RegExp, end: RegExp): string {
+  const si = text.search(start);
+  if (si === -1) return '';
+  const sub = text.substring(si);
+  const ei  = sub.search(end);
+  return ei !== -1 ? sub.substring(0, ei) : sub;
+}
+
+function cleanup(s: string): string {
+  return s.trim().replace(/\s{2,}/g, ' ').replace(/[,|\/\\]+$/, '').trim();
+}
+
+// ── Parser visura camerale (estratto da ClientiPage) ───────────────────────
+interface VisuraData {
+  ragione_sociale?: string; piva?: string; codice_fiscale?: string;
+  indirizzo?: string; email?: string; telefono?: string;
+  codice_ateco?: string; data_costituzione?: string; capitale_versato?: string;
+}
+
+function parseVisura(text: string): VisuraData {
+  const clean = text.replace(/[^\S\n]+/g, ' ').replace(/\n+/g, '\n');
+  const flat  = clean.replace(/\n/g, ' ');
+
+  const get = (patterns: RegExp[]): string | undefined => {
+    for (const re of patterns) {
+      const m = flat.match(re);
+      if (m?.[1]?.trim()) return cleanup(m[1]);
+    }
+  };
+
+  const B = String.raw`(?=\s+(?:Data\s+(?:atto|cost)|Forma\s+giuridica|Natura\s+giuridica|` +
+            String.raw`Codice\s+[Ff]iscale|Partita\s+IVA|P\.?\s*IVA|Sede\s+legale|Indirizzo|` +
+            String.raw`Numero\s+REA|REA\s|Registro\s+[Ii]mprese|Iscrizione|Stato\s+dell|` +
+            String.raw`Capitale|Pec\b|PEC\b|Attivit|Oggetto\s+sociale|Sistema\s+di|` +
+            String.raw`Durata\s+della|Poteri\b|Archivio\s+ufficiale))`;
+
+  const LABEL_RS = String.raw`(?:Denominazione(?:\s*[\/eo]\s*[Rr]agione\s+[Ss]ociale)?|Ragione\s+[Ss]ociale)\s*[:\-]?\s*`;
+
+  const ragione_sociale = (() => {
+    const m1 = flat.match(new RegExp(LABEL_RS + String.raw`(.{2,}?)` + B, 'i'));
+    if (m1?.[1]?.trim()) return cleanup(m1[1]);
+    const m2 = flat.match(new RegExp(
+      LABEL_RS + String.raw`([^\:]{2,80}?(?:S\.?\s*R\.?\s*L\.?|S\.?\s*P\.?\s*A\.?|S\.?\s*N\.?\s*C\.?|S\.?\s*A\.?\s*S\.?|SRL|SPA|SNC|SAS|S\.?\s*S\.?|Soc\.?\s*Coop\.?|ONLUS|ETS|APS|ODV|IMPRESA\s+INDIVIDUALE)\.?)`, 'i'
+    ));
+    if (m2?.[1]?.trim()) return cleanup(m2[1]);
+    return undefined;
+  })();
+
+  const piva = get([
+    /Partita\s*IVA\s*[:\-]?\s*(\d{11})/i,
+    /P\.?\s*IVA\s*[:\-]?\s*(\d{11})/i,
+  ]) ?? flat.match(/\b(\d{11})\b/)?.[1];
+
+  const codice_fiscale_raw = get([
+    /Codice\s+[Ff]iscale\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
+    /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
+  ]);
+  const codice_fiscale = codice_fiscale_raw === piva ? undefined : codice_fiscale_raw;
+
+  const ADDR_B = String.raw`(?=\s+(?:Partita\s+IVA|P\.?\s*IVA|Codice\s+[Ff]iscale|Pec\b|PEC\b|REA\s|Registro|Telefono|Tel\b|Email|Attivit|Stato\s+dell))`;
+  const indirizzo = (() => {
+    const m = flat.match(new RegExp(String.raw`Sede\s+legale\s*[:\-]?\s*(.{5,})` + ADDR_B, 'i'));
+    if (m?.[1]?.trim()) return cleanup(m[1]);
+    return get([
+      /Sede\s+legale\s*[:\-]?\s*([^\:]{5,120})/i,
+      /Indirizzo\s*[:\-]?\s*([^\:]{5,120})/i,
+    ]);
+  })();
+
+  const atecoMatch = flat.match(
+    /(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:\-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)/i
+  ) ?? flat.match(/\bATECO\b[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)/i);
+  const codice_ateco = atecoMatch?.[1];
+
+  const email = flat.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/)?.[1];
+
+  const telMatch = flat.match(
+    /\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s\-]?\d{5,10}|3\d{2}[\s\-]?\d{6,7}))\b/
+  );
+  const telefono = telMatch?.[1]?.replace(/\s+/g, ' ').trim();
+
+  const data_costituzione = get([
+    /Data\s+atto\s+di\s+costituzione\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i,
+    /Data\s+cost(?:ituzione)?\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i,
+  ]);
+
+  const capitale_versato = get([
+    /[Cc]apitale\s+sociale\s+in\s+[Ee]uro\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /[Cc]apitale\s+(?:sociale\s+)?(?:interamente\s+)?versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /[Cc]apitale\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+  ]);
+
+  return { ragione_sociale, piva, codice_fiscale, indirizzo, email, telefono, codice_ateco, data_costituzione, capitale_versato };
+}
+
+// ── Tipi ────────────────────────────────────────────────────────────────────
 interface Client {
   id: string; ragione_sociale: string; partita_iva: string | null;
   codice_ateco: string | null; settore: string | null; email: string | null;
@@ -25,6 +143,9 @@ function ratingInfo(score: number) {
   return               { label: 'Non bancabile',cls: 'bg-red-100 text-red-800' };
 }
 
+const EMPTY_FORM = { ragione_sociale: '', partita_iva: '', codice_fiscale: '', email: '', codice_ateco: '', settore: '', telefono: '', indirizzo: '' };
+
+// ── Componente principale ────────────────────────────────────────────────────
 export default function ConsulenteDashboard() {
   const { user, profileNome, signOut } = useAuth();
   const navigate = useNavigate();
@@ -32,10 +153,20 @@ export default function ConsulenteDashboard() {
   const [reports,  setReports]  = useState<Report[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [tab,      setTab]      = useState<'clienti' | 'report'>('clienti');
+
   // form nuovo cliente
-  const [showForm,    setShowForm]    = useState(false);
-  const [formData,    setFormData]    = useState({ ragione_sociale: '', partita_iva: '', email: '', codice_ateco: '', settore: '', telefono: '', indirizzo: '' });
+  const [showForm,     setShowForm]     = useState(false);
+  const [inputMode,    setInputMode]    = useState<'manuale' | 'visura'>('manuale');
+  const [formData,     setFormData]     = useState({ ...EMPTY_FORM });
   const [savingClient, setSavingClient] = useState(false);
+
+  // upload visura
+  const visuraRef = useRef<HTMLInputElement>(null);
+  const [parsingVisura,  setParsingVisura]  = useState(false);
+  const [visuraFileName, setVisuraFileName] = useState('');
+  const [visuraFound,    setVisuraFound]    = useState<string[]>([]);
+  const [visuraNotFound, setVisuraNotFound] = useState<string[]>([]);
+  const [visuraParsed,   setVisuraParsed]   = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -51,16 +182,73 @@ export default function ConsulenteDashboard() {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── Parsing visura ─────────────────────────────────────────────────────────
+  const handleVisuraFile = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.pdf')) { toast.error('Carica un file PDF'); return; }
+    setParsingVisura(true);
+    setVisuraFileName(file.name);
+    setVisuraParsed(false);
+    setVisuraFound([]);
+    setVisuraNotFound([]);
+    try {
+      const text   = await extractPdfText(file);
+      const parsed = parseVisura(text);
+
+      const LABELS: Record<keyof VisuraData, string> = {
+        ragione_sociale: 'Ragione Sociale', piva: 'P.IVA', codice_fiscale: 'Codice Fiscale',
+        indirizzo: 'Sede Legale', email: 'Email', telefono: 'Telefono',
+        codice_ateco: 'ATECO', data_costituzione: 'Data Costituzione', capitale_versato: 'Capitale',
+      };
+      const found: string[] = [], notFound: string[] = [];
+      (Object.keys(LABELS) as (keyof VisuraData)[]).forEach(k => {
+        (parsed[k] ? found : notFound).push(LABELS[k]);
+      });
+      setVisuraFound(found);
+      setVisuraNotFound(notFound);
+
+      // Pre-popola il form
+      setFormData(prev => ({
+        ...prev,
+        ragione_sociale: parsed.ragione_sociale ?? prev.ragione_sociale,
+        partita_iva:     parsed.piva             ?? prev.partita_iva,
+        codice_fiscale:  parsed.codice_fiscale   ?? prev.codice_fiscale,
+        email:           parsed.email            ?? prev.email,
+        telefono:        parsed.telefono         ?? prev.telefono,
+        codice_ateco:    parsed.codice_ateco     ?? prev.codice_ateco,
+        indirizzo:       parsed.indirizzo        ?? prev.indirizzo,
+      }));
+      setVisuraParsed(true);
+      toast.success(`Visura analizzata: ${found.length} campi estratti`);
+    } catch (err) {
+      toast.error('Errore lettura PDF visura');
+      console.error(err);
+    } finally { setParsingVisura(false); }
+  };
+
+  // ── Salva cliente ──────────────────────────────────────────────────────────
   const saveClient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !formData.ragione_sociale.trim()) return;
     setSavingClient(true);
-    const { error } = await supabase.from('consulente_clients').insert({ ...formData, consulente_id: user.id });
+    const { error } = await supabase.from('consulente_clients').insert({
+      ragione_sociale: formData.ragione_sociale,
+      partita_iva:     formData.partita_iva    || null,
+      codice_fiscale:  formData.codice_fiscale || null,
+      email:           formData.email          || null,
+      telefono:        formData.telefono       || null,
+      codice_ateco:    formData.codice_ateco   || null,
+      settore:         formData.settore        || null,
+      indirizzo:       formData.indirizzo      || null,
+      consulente_id:   user.id,
+    });
     setSavingClient(false);
     if (error) { toast.error('Errore salvataggio cliente'); return; }
     toast.success('Cliente aggiunto');
     setShowForm(false);
-    setFormData({ ragione_sociale: '', partita_iva: '', email: '', codice_ateco: '', settore: '', telefono: '', indirizzo: '' });
+    setFormData({ ...EMPTY_FORM });
+    setInputMode('manuale');
+    setVisuraParsed(false);
+    setVisuraFileName('');
     load();
   };
 
@@ -71,6 +259,17 @@ export default function ConsulenteDashboard() {
     load();
   };
 
+  const openForm = () => {
+    setFormData({ ...EMPTY_FORM });
+    setInputMode('manuale');
+    setVisuraParsed(false);
+    setVisuraFileName('');
+    setVisuraFound([]);
+    setVisuraNotFound([]);
+    setShowForm(s => !s);
+  };
+
+  // ── RENDER ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50/40 to-slate-50">
       {/* Header */}
@@ -98,9 +297,9 @@ export default function ConsulenteDashboard() {
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4">
           {[
-            { icon: Users, label: 'Clienti', value: clients.length, color: 'text-teal-600 bg-teal-50' },
-            { icon: FileBarChart2, label: 'Report generati', value: reports.length, color: 'text-blue-600 bg-blue-50' },
-            { icon: TrendingUp, label: 'Inviati', value: reports.filter(r => r.sent_at).length, color: 'text-emerald-600 bg-emerald-50' },
+            { icon: Users,        label: 'Clienti',        value: clients.length,                        color: 'text-teal-600 bg-teal-50' },
+            { icon: FileBarChart2,label: 'Report generati', value: reports.length,                        color: 'text-blue-600 bg-blue-50' },
+            { icon: TrendingUp,   label: 'Inviati',         value: reports.filter(r => r.sent_at).length, color: 'text-emerald-600 bg-emerald-50' },
           ].map(s => (
             <div key={s.label} className="bg-white rounded-xl border p-4 flex items-center gap-3 shadow-sm">
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${s.color}`}>
@@ -124,55 +323,142 @@ export default function ConsulenteDashboard() {
           ))}
         </div>
 
-        {/* Tab Clienti */}
+        {/* ── Tab Clienti ── */}
         {tab === 'clienti' && (
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <h2 className="font-semibold text-slate-700">I tuoi clienti</h2>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={load} disabled={loading}><RefreshCw className="w-3.5 h-3.5 mr-1" /> Aggiorna</Button>
-                <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={() => setShowForm(s => !s)}>
+                <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={openForm}>
                   <Plus className="w-3.5 h-3.5 mr-1" /> Nuovo cliente
                 </Button>
               </div>
             </div>
 
-            {/* Form nuovo cliente */}
+            {/* ── Form nuovo cliente ── */}
             {showForm && (
-              <form onSubmit={saveClient} className="bg-white border-2 border-teal-200 rounded-xl p-5 space-y-3">
-                <h3 className="font-semibold text-teal-700 text-sm">Aggiungi nuovo cliente</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { key: 'ragione_sociale', label: 'Ragione Sociale *', required: true },
-                    { key: 'partita_iva',     label: 'Partita IVA' },
-                    { key: 'email',           label: 'Email cliente' },
-                    { key: 'telefono',        label: 'Telefono' },
-                    { key: 'codice_ateco',    label: 'Codice ATECO' },
-                    { key: 'settore',         label: 'Settore' },
-                  ].map(f => (
-                    <div key={f.key}>
-                      <label className="text-xs font-medium text-slate-600">{f.label}</label>
-                      <input required={f.required}
-                        className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 ring-teal-400 outline-none"
-                        value={(formData as Record<string,string>)[f.key]}
-                        onChange={e => setFormData(d => ({ ...d, [f.key]: e.target.value }))} />
-                    </div>
-                  ))}
-                  <div className="col-span-2">
-                    <label className="text-xs font-medium text-slate-600">Indirizzo</label>
-                    <input className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 ring-teal-400 outline-none"
-                      value={formData.indirizzo} onChange={e => setFormData(d => ({ ...d, indirizzo: e.target.value }))} />
+              <div className="bg-white border-2 border-teal-200 rounded-xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-teal-700 text-sm">Aggiungi nuovo cliente</h3>
+                  {/* Toggle modalità */}
+                  <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => { setInputMode('manuale'); setVisuraParsed(false); setVisuraFileName(''); }}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1
+                        ${inputMode === 'manuale' ? 'bg-white shadow text-teal-700' : 'text-slate-500 hover:text-slate-700'}`}>
+                      <FileText className="w-3 h-3" /> Manuale
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInputMode('visura')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1
+                        ${inputMode === 'visura' ? 'bg-white shadow text-teal-700' : 'text-slate-500 hover:text-slate-700'}`}>
+                      <Upload className="w-3 h-3" /> Da Visura
+                    </button>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button type="submit" size="sm" className="bg-teal-600 hover:bg-teal-700" disabled={savingClient}>
-                    {savingClient ? 'Salvataggio...' : 'Salva cliente'}
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Annulla</Button>
-                </div>
-              </form>
+
+                {/* ── Sezione caricamento visura ── */}
+                {inputMode === 'visura' && !visuraParsed && (
+                  <div
+                    className="border-2 border-dashed border-teal-200 rounded-xl p-6 text-center cursor-pointer hover:border-teal-400 hover:bg-teal-50/30 transition-all"
+                    onClick={() => visuraRef.current?.click()}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleVisuraFile(f); }}>
+                    {parsingVisura ? (
+                      <div className="space-y-2">
+                        <div className="w-7 h-7 border-2 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                        <p className="text-sm text-teal-600 font-medium">Analisi visura in corso...</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Upload className="w-8 h-8 mx-auto text-teal-400" />
+                        <p className="text-sm font-medium text-slate-600">
+                          Trascina qui la visura camerale PDF<br />
+                          <span className="text-xs text-slate-400">oppure clicca per selezionare il file</span>
+                        </p>
+                      </div>
+                    )}
+                    <input ref={visuraRef} type="file" accept=".pdf" className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleVisuraFile(f); }} />
+                  </div>
+                )}
+
+                {/* ── Risultato parsing ── */}
+                {visuraParsed && (
+                  <div className="bg-slate-50 rounded-lg p-3 border space-y-2">
+                    <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                      <FileText className="w-4 h-4 text-teal-600" /> {visuraFileName}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {visuraFound.map(f => (
+                        <span key={f} className="inline-flex items-center gap-0.5 text-[11px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+                          <CheckCircle className="w-2.5 h-2.5" /> {f}
+                        </span>
+                      ))}
+                      {visuraNotFound.map(f => (
+                        <span key={f} className="inline-flex items-center gap-0.5 text-[11px] bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">
+                          <AlertCircle className="w-2.5 h-2.5" /> {f}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-teal-600">✏️ Controlla e correggi i campi pre-compilati sotto prima di salvare.</p>
+                  </div>
+                )}
+
+                {/* ── Campi form (sempre visibili, pre-compilati dopo visura) ── */}
+                {(inputMode === 'manuale' || visuraParsed) && (
+                  <form onSubmit={saveClient} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { key: 'ragione_sociale', label: 'Ragione Sociale *', required: true, span: 2 },
+                        { key: 'partita_iva',     label: 'Partita IVA' },
+                        { key: 'codice_fiscale',  label: 'Codice Fiscale' },
+                        { key: 'email',           label: 'Email cliente' },
+                        { key: 'telefono',        label: 'Telefono' },
+                        { key: 'codice_ateco',    label: 'Codice ATECO' },
+                        { key: 'settore',         label: 'Settore' },
+                      ].map(f => (
+                        <div key={f.key} className={f.span === 2 ? 'col-span-2' : ''}>
+                          <label className="text-xs font-medium text-slate-600">{f.label}</label>
+                          <input
+                            required={f.required}
+                            className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 ring-teal-400 outline-none"
+                            value={(formData as Record<string, string>)[f.key]}
+                            onChange={e => setFormData(d => ({ ...d, [f.key]: e.target.value }))} />
+                        </div>
+                      ))}
+                      <div className="col-span-2">
+                        <label className="text-xs font-medium text-slate-600">Indirizzo / Sede Legale</label>
+                        <input
+                          className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 ring-teal-400 outline-none"
+                          value={formData.indirizzo}
+                          onChange={e => setFormData(d => ({ ...d, indirizzo: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button type="submit" size="sm" className="bg-teal-600 hover:bg-teal-700" disabled={savingClient}>
+                        {savingClient ? 'Salvataggio...' : 'Salva cliente'}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm"
+                        onClick={() => { setShowForm(false); setInputMode('manuale'); setVisuraParsed(false); }}>
+                        Annulla
+                      </Button>
+                      {visuraParsed && (
+                        <Button type="button" variant="outline" size="sm"
+                          onClick={() => { setVisuraParsed(false); setVisuraFileName(''); setFormData({ ...EMPTY_FORM }); }}>
+                          🔄 Ricarica visura
+                        </Button>
+                      )}
+                    </div>
+                  </form>
+                )}
+              </div>
             )}
 
+            {/* ── Lista clienti ── */}
             {loading ? (
               <div className="py-10 text-center text-sm text-slate-400"><RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" /> Caricamento...</div>
             ) : clients.length === 0 ? (
@@ -215,7 +501,7 @@ export default function ConsulenteDashboard() {
           </div>
         )}
 
-        {/* Tab Report */}
+        {/* ── Tab Report ── */}
         {tab === 'report' && (
           <div className="space-y-3">
             <h2 className="font-semibold text-slate-700">Report generati</h2>
