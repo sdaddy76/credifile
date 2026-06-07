@@ -91,3 +91,4 @@
 [2026-06-07 17:33] Banner read-only agente nel tab Banche pratica
 [2026-06-07 18:06] Inizio implementazione riassegnazione filtrata + note declino
 [2026-06-07 18:16] Avvio implementazione portale banche anonimo: bank_interest_requests, BancaPortalPage, flusso richiesta/approvazione documenti
+[2026-06-07 18:30] Portale banche completato: BancaPortalPage (lista anonima KPI/ATECO/città), ruolo 'banca', creazione account da BanchePage, richieste pendenti in Dashboard con approvazione/rifiuto. Commit 4235903 su GitHub/Vercel. SQL migration da eseguire manualmente.

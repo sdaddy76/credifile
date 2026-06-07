@@ -165,7 +165,7 @@ export default function BanchePage() {
         body: { email: accountEmail.trim().toLowerCase(), password: accountPassword, nome: showAccountDialog.nome, ruolo: 'banca' },
       });
       if (error || data?.error) { toast.error(data?.error ?? error?.message); return; }
-      const userId: string = data?.user_id ?? data?.user?.id;
+      const userId: string = data?.id;
       if (!userId) { toast.error('Account creato ma ID non ricevuto'); return; }
       await supabase.from('banks').update({ bank_user_id: userId }).eq('id', showAccountDialog.id);
       setBanks(prev => prev.map(b => b.id === showAccountDialog.id ? { ...b, bank_user_id: userId } : b));
