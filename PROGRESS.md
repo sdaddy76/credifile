@@ -90,3 +90,4 @@
 [2026-06-06 01:53] Fix parsing visura consulente: form sempre visibile, diagnostica errori, gestione PDF scansionato
 [2026-06-07 17:33] Banner read-only agente nel tab Banche pratica
 [2026-06-07 18:06] Inizio implementazione riassegnazione filtrata + note declino
+[2026-06-07 18:16] Avvio implementazione portale banche anonimo: bank_interest_requests, BancaPortalPage, flusso richiesta/approvazione documenti

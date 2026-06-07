@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarChart3, Upload, FileDown, Loader2 } from 'lucide-react';
+import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarChart3, Upload, FileDown, Loader2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Bank, BankDocumentRequirement } from '@/lib/types';
@@ -143,9 +143,39 @@ export default function BanchePage() {
   const [moduloFormFile,  setModuloFormFile]  = useState<File | null>(null);
   const [uploadingModulo, setUploadingModulo] = useState<string | null>(null);
 
+  // Creazione account banca
+  const [showAccountDialog, setShowAccountDialog] = useState<Bank | null>(null);
+  const [accountEmail, setAccountEmail] = useState('');
+  const [accountPassword, setAccountPassword] = useState('');
+  const [creatingAccount, setCreatingAccount] = useState(false);
+
   async function loadModuli(bankId: string) {
     const { data } = await supabase.from('bank_moduli').select('*').eq('bank_id', bankId).order('created_at');
     setBankModuli(prev => ({ ...prev, [bankId]: data ?? [] }));
+  }
+
+  async function handleCreateBankAccount() {
+    if (!showAccountDialog || !accountEmail.trim() || accountPassword.length < 8) {
+      toast.error('Email e password (min 8 caratteri) obbligatorie');
+      return;
+    }
+    setCreatingAccount(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('create-admin-user', {
+        body: { email: accountEmail.trim().toLowerCase(), password: accountPassword, nome: showAccountDialog.nome, ruolo: 'banca' },
+      });
+      if (error || data?.error) { toast.error(data?.error ?? error?.message); return; }
+      const userId: string = data?.user_id ?? data?.user?.id;
+      if (!userId) { toast.error('Account creato ma ID non ricevuto'); return; }
+      await supabase.from('banks').update({ bank_user_id: userId }).eq('id', showAccountDialog.id);
+      setBanks(prev => prev.map(b => b.id === showAccountDialog.id ? { ...b, bank_user_id: userId } : b));
+      toast.success(`Account banca creato: ${accountEmail}`);
+      setShowAccountDialog(null);
+      setAccountEmail('');
+      setAccountPassword('');
+    } finally {
+      setCreatingAccount(false);
+    }
   }
 
   async function handleUploadModulo(bankId: string) {
@@ -285,6 +315,13 @@ export default function BanchePage() {
                     <Button variant="ghost" size="sm" className="h-8 px-2 text-xs gap-1" onClick={() => toggleExpand(b.id)}>
                       <FileText className="w-3.5 h-3.5" />
                       {expandedBank === b.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </Button>
+                    <Button
+                      variant="ghost" size="sm"
+                      className={`h-8 px-2 text-xs gap-1 ${(b as Bank & { bank_user_id?: string }).bank_user_id ? 'text-green-600' : 'text-blue-600'}`}
+                      title={(b as Bank & { bank_user_id?: string }).bank_user_id ? 'Account banca già configurato' : 'Crea account portale banche'}
+                      onClick={() => { setShowAccountDialog(b); setAccountEmail(b.email ?? ''); setAccountPassword(''); }}>
+                      <UserPlus className="w-3.5 h-3.5" />
                     </Button>
                     <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEditBank(b)}><Pencil className="w-3.5 h-3.5" /></Button>
                     <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10" onClick={() => handleDeleteBank(b.id, b.nome)}><Trash2 className="w-3.5 h-3.5" /></Button>
@@ -618,6 +655,47 @@ export default function BanchePage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowBankForm(false)}>Annulla</Button>
             <Button onClick={handleSaveBank} disabled={saving}>{saving ? 'Salvo...' : (editingBank ? 'Salva' : 'Crea')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog crea account portale banca */}
+      <Dialog open={!!showAccountDialog} onOpenChange={(o) => { if (!o) setShowAccountDialog(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>🏦 Crea Account Portale Banche</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Crea le credenziali di accesso per <strong>{showAccountDialog?.nome}</strong>.
+              La banca accederà al portale anonimo per visualizzare le pratiche.
+            </p>
+            {showAccountDialog && (showAccountDialog as Bank & { bank_user_id?: string }).bank_user_id && (
+              <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700">
+                ✅ Account già configurato per questa banca. Crearne uno nuovo sovrascriverà il collegamento.
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Email accesso</Label>
+              <Input type="email" placeholder="banca@esempio.it" value={accountEmail} onChange={e => setAccountEmail(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Password (min 8 caratteri)</Label>
+              <Input type="password" placeholder="Password sicura..." value={accountPassword} onChange={e => setAccountPassword(e.target.value)} />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Comunica manualmente le credenziali alla banca. Il link di accesso è: <code className="bg-muted px-1 rounded">/#/login</code>
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAccountDialog(null)}>Annulla</Button>
+            <Button
+              onClick={handleCreateBankAccount}
+              disabled={creatingAccount || !accountEmail.trim() || accountPassword.length < 8}
+              className="gap-1.5">
+              <UserPlus className="w-3.5 h-3.5" />
+              {creatingAccount ? 'Creazione...' : 'Crea Account'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

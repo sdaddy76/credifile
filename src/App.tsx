@@ -26,6 +26,7 @@ import ConsensoCrePage from "@/pages/ConsensoCrePage";
 import ConsulenteDashboard from "@/pages/consulente/ConsulenteDashboard";
 import NuovoReportWizard from "@/pages/consulente/NuovoReportWizard";
 import ProfiloConsulentePage from "@/pages/consulente/ProfiloConsulentePage";
+import BancaPortalPage from "@/pages/banca/BancaPortalPage";
 
 const queryClient = new QueryClient();
 
@@ -65,6 +66,9 @@ const App = () => (
           <Route path="/consulente" element={<ProtectedRoute><ConsulenteDashboard /></ProtectedRoute>} />
           <Route path="/consulente/profilo" element={<ProtectedRoute><ProfiloConsulentePage /></ProtectedRoute>} />
           <Route path="/consulente/cliente/:clientId/nuovo-report" element={<ProtectedRoute><NuovoReportWizard /></ProtectedRoute>} />
+
+          {/* Portale Banche — protetto */}
+          <Route path="/banca" element={<ProtectedRoute><BancaPortalPage /></ProtectedRoute>} />
 
           {/* Admin protetto */}
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>

@@ -22,7 +22,7 @@ export default function LoginPage() {
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [sendingRecovery, setSendingRecovery] = useState(false);
 
-  const getRedirect = (r: string | null) => r === 'consulente' ? '/consulente' : '/admin/dashboard';
+  const getRedirect = (r: string | null) => r === 'consulente' ? '/consulente' : r === 'banca' ? '/banca' : '/admin/dashboard';
 
   // Se già loggato (es. refresh con sessione attiva) → redirect diretto + log
   useEffect(() => {

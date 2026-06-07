@@ -46,9 +46,27 @@ export interface Bank {
   codice: string;
   contatto?: string;
   email?: string;
+  email_invio_banca?: string;
   note?: string;
   attiva: boolean;
+  bank_user_id?: string;
   created_at: string;
+}
+
+export interface BankInterestRequest {
+  id: string;
+  practice_id: string;
+  bank_id: string;
+  requested_by: string;
+  status: 'in_attesa' | 'approvata' | 'rifiutata';
+  note_banca?: string;
+  note_segreteria?: string;
+  handled_by?: string;
+  created_at: string;
+  updated_at: string;
+  banks?: Bank;
+  practices?: { numero_pratica: string; clients?: { citta?: string; codice_ateco?: string } };
+  requester?: { email: string; nome?: string };
 }
 
 export interface DocumentTemplate {
