@@ -759,6 +759,15 @@ export default function PraticaDetailPage() {
             </TabsContent>
 
             <TabsContent value="banche" className="mt-3 space-y-3">
+              {/* Banner informativo per agente/segnalatore */}
+              {(isAgente || isSegnalatore) && (
+                <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
+                  <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>L'assegnazione e l'invio alle banche è gestita dalla <strong>segreteria</strong>. Di seguito puoi vedere a quale banca è stata assegnata questa pratica.</span>
+                </div>
+              )}
               {/* Assegna nuova banca — solo canApprove */}
               {canApprove && (
                 <div className="flex gap-2">

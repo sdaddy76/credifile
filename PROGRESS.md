@@ -87,3 +87,4 @@
 [2026-06-06 00:57] Fix registrazione consulente + implementazione consenso CR (GDPR): edge functions, pagina consenso, wizard update
 [2026-06-06 01:04] Deploy commit 24d2c15 su GitHub (Vercel auto-deploy). Fix reg. consulente + consenso CR + wizard step + pagina pubblica.
 [2026-06-06 01:34] Upload visura camerale nel form nuovo cliente consulente
+[2026-06-06 01:53] Fix parsing visura consulente: form sempre visibile, diagnostica errori, gestione PDF scansionato
