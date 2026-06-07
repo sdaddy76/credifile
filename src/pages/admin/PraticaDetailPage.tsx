@@ -198,22 +198,26 @@ export default function PraticaDetailPage() {
   useEffect(() => {
     load();
     supabase.from('banks').select('*').eq('attiva', true).then(r => setBanks(r.data ?? []));
-    // Carica agenti filtrati per ruolo
+  }, [load]);
+
+  // Carica agenti filtrati per ruolo — dipende dall'auth che può arrivare dopo il mount
+  useEffect(() => {
     if (isSuperAdmin) {
-      // Super admin vede tutti gli agenti
-      supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome').then(r => setAgentsForReassign(r.data ?? []));
+      supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome')
+        .then(r => setAgentsForReassign(r.data ?? []));
     } else if (isSegreteria && user?.id) {
-      // Segreteria vede solo i propri agenti assegnati
       supabase.from('segreteria_agent_assignments').select('agent_user_id').eq('segreteria_user_id', user.id)
         .then(async ({ data: assignments }) => {
-          const ids = (assignments ?? []).map((a: {agent_user_id: string}) => a.agent_user_id);
+          const ids = (assignments ?? []).map((a: { agent_user_id: string }) => a.agent_user_id);
           if (ids.length > 0) {
             const { data } = await supabase.from('admin_profiles').select('id,nome,email').in('id', ids).order('nome');
             setAgentsForReassign(data ?? []);
+          } else {
+            setAgentsForReassign([]);
           }
         });
     }
-  }, [load]);
+  }, [isSuperAdmin, isSegreteria, user?.id]);
 
   // ── Importa Centrale Rischi PDF ─────────────────────────────────────────────
   const handleCRFile = async (file: File) => {
