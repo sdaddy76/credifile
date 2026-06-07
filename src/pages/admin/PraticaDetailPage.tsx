@@ -109,6 +109,7 @@ export default function PraticaDetailPage() {
 
   const [newStatus, setNewStatus] = useState('');
   const [statusNote, setStatusNote] = useState('');
+  const [noteDeclino, setNoteDeclino] = useState('');
   const [newDocName, setNewDocName] = useState('');
   const [newDocDesc, setNewDocDesc] = useState('');
   const [rejectNote, setRejectNote] = useState('');
@@ -197,7 +198,21 @@ export default function PraticaDetailPage() {
   useEffect(() => {
     load();
     supabase.from('banks').select('*').eq('attiva', true).then(r => setBanks(r.data ?? []));
-    supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome').then(r => setAgentsForReassign(r.data ?? []));
+    // Carica agenti filtrati per ruolo
+    if (isSuperAdmin) {
+      // Super admin vede tutti gli agenti
+      supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome').then(r => setAgentsForReassign(r.data ?? []));
+    } else if (isSegreteria && user?.id) {
+      // Segreteria vede solo i propri agenti assegnati
+      supabase.from('segreteria_agent_assignments').select('agent_user_id').eq('segreteria_user_id', user.id)
+        .then(async ({ data: assignments }) => {
+          const ids = (assignments ?? []).map((a: {agent_user_id: string}) => a.agent_user_id);
+          if (ids.length > 0) {
+            const { data } = await supabase.from('admin_profiles').select('id,nome,email').in('id', ids).order('nome');
+            setAgentsForReassign(data ?? []);
+          }
+        });
+    }
   }, [load]);
 
   // ── Importa Centrale Rischi PDF ─────────────────────────────────────────────
@@ -336,15 +351,21 @@ export default function PraticaDetailPage() {
   const handleStatusChange = async () => {
     if (!practice || !newStatus) return;
     setSaving(true);
-    await supabase.from('practices').update({ status: newStatus }).eq('id', practice.id);
+    const updatePayload: Record<string, unknown> = { status: newStatus };
+    if (newStatus === 'declinata' && noteDeclino.trim()) {
+      updatePayload.note_declino = noteDeclino.trim();
+    }
+    await supabase.from('practices').update(updatePayload).eq('id', practice.id);
     await supabase.from('practice_status_log').insert({
       practice_id: practice.id, old_status: practice.status, new_status: newStatus,
-      note: statusNote || null, created_by: 'admin',
+      note: (newStatus === 'declinata' && noteDeclino.trim()) ? noteDeclino.trim() : (statusNote || null),
+      created_by: 'admin',
     });
     toast.success('Stato aggiornato');
     setSaving(false);
     setShowStatusChange(false);
     setStatusNote('');
+    setNoteDeclino('');
     load();
   };
 
@@ -478,6 +499,12 @@ export default function PraticaDetailPage() {
             Creata il {new Date(practice.created_at).toLocaleDateString('it-IT')}
             {bank && ` · ${bank.nome}`}{assignedAgent && ` · 👤 ${assignedAgent.nome || assignedAgent.email}`}
           </p>
+          {practice.status === 'declinata' && (practice as Practice & { note_declino?: string }).note_declino && (
+            <div className="mt-2 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 max-w-xl">
+              <span className="shrink-0 mt-0.5">🚫</span>
+              <span><span className="font-semibold">Motivo declino:</span> {(practice as Practice & { note_declino?: string }).note_declino}</span>
+            </div>
+          )}
         </div>
         {canApprove && practice.bank_id && (
           <Button variant="outline" size="sm" className="gap-1.5 bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100" onClick={() => { setBankNote(''); setShowSendBankDialog(practice.bank_id ?? null); }}>
@@ -1195,11 +1222,21 @@ export default function PraticaDetailPage() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>👤 Riassegna Pratica</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">Seleziona l'agente a cui assegnare questa pratica.</p>
+            {isSegreteria && agentsForReassign.length === 0 && (
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
+                Nessun agente associato al tuo profilo. Contatta il super admin per aggiungere agenti.
+              </p>
+            )}
+            {isSegreteria && agentsForReassign.length > 0 && (
+              <p className="text-xs text-muted-foreground">Puoi assegnare la pratica solo ai tuoi agenti.</p>
+            )}
+            {isSuperAdmin && (
+              <p className="text-xs text-muted-foreground">Seleziona l'agente a cui assegnare questa pratica.</p>
+            )}
             <Select value={reassignTo} onValueChange={setReassignTo}>
               <SelectTrigger><SelectValue placeholder="Seleziona agente..." /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="nessuno">— Rimuovi assegnazione —</SelectItem>
+                {isSuperAdmin && <SelectItem value="nessuno">— Rimuovi assegnazione —</SelectItem>}
                 {agentsForReassign.map(a => (
                   <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
                 ))}
@@ -1215,13 +1252,13 @@ export default function PraticaDetailPage() {
               toast.success('Pratica riassegnata');
               setShowReassign(false);
               load();
-            }}>Salva</Button>
+            }} disabled={!reassignTo}>Salva</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Dialog cambio stato */}
-      <Dialog open={showStatusChange} onOpenChange={setShowStatusChange}>
+      <Dialog open={showStatusChange} onOpenChange={(open) => { setShowStatusChange(open); if (!open) { setNoteDeclino(''); setStatusNote(''); } }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Cambia Stato Pratica</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
@@ -1234,14 +1271,33 @@ export default function PraticaDetailPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Note (opzionale)</Label>
-              <Textarea placeholder="Aggiungi una nota per questo cambio di stato..." rows={3} value={statusNote} onChange={e => setStatusNote(e.target.value)} />
-            </div>
+            {newStatus === 'declinata' ? (
+              <div className="space-y-2">
+                <Label>Motivo del declino *</Label>
+                <Textarea
+                  placeholder="Inserisci il motivo del declino (verrà registrato nella pratica)..."
+                  rows={4}
+                  value={noteDeclino}
+                  onChange={e => setNoteDeclino(e.target.value)}
+                  className="border-red-200 focus:ring-red-400"
+                />
+                <p className="text-xs text-muted-foreground">Le note di declino vengono salvate nella pratica e visibili agli agenti.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>Note (opzionale)</Label>
+                <Textarea placeholder="Aggiungi una nota per questo cambio di stato..." rows={3} value={statusNote} onChange={e => setStatusNote(e.target.value)} />
+              </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowStatusChange(false)}>Annulla</Button>
-            <Button onClick={handleStatusChange} disabled={saving}>Conferma</Button>
+            <Button variant="outline" onClick={() => { setShowStatusChange(false); setNoteDeclino(''); setStatusNote(''); }}>Annulla</Button>
+            <Button
+              onClick={handleStatusChange}
+              disabled={saving || (newStatus === 'declinata' && !noteDeclino.trim())}
+              className={newStatus === 'declinata' ? 'bg-red-600 hover:bg-red-700' : ''}>
+              {saving ? 'Salvataggio...' : newStatus === 'declinata' ? 'Declina Pratica' : 'Conferma'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

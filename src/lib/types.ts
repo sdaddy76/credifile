@@ -5,7 +5,8 @@ export type PracticeStatus =
   | 'integrazioni_richieste'
   | 'completata'
   | 'approvata'
-  | 'rifiutata';
+  | 'rifiutata'
+  | 'declinata';
 
 export type DocumentStatus = 'richiesto' | 'caricato' | 'approvato' | 'rifiutato';
 export type DocumentType = 'standard' | 'banca' | 'integrazione';
@@ -161,6 +162,7 @@ export const STATUS_LABELS: Record<PracticeStatus, string> = {
   completata: 'Completata',
   approvata: 'Approvata',
   rifiutata: 'Rifiutata',
+  declinata: 'Declinata',
 };
 
 export const STATUS_COLORS: Record<PracticeStatus, string> = {
@@ -171,6 +173,7 @@ export const STATUS_COLORS: Record<PracticeStatus, string> = {
   completata: 'bg-green-100 text-green-800',
   approvata: 'bg-emerald-100 text-emerald-800',
   rifiutata: 'bg-red-100 text-red-800',
+  declinata: 'bg-rose-100 text-rose-800',
 };
 
 export const DOC_STATUS_LABELS: Record<DocumentStatus, string> = {
