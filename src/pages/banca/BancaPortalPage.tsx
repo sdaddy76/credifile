@@ -9,8 +9,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { MapPin, BarChart2, Euro, TrendingUp, Clock, CheckCircle, XCircle, Send, Building, RefreshCw, LogOut, Building2 } from 'lucide-react';
+import {
+  MapPin, BarChart2, Euro, TrendingUp, Clock, CheckCircle, XCircle,
+  Send, Building, RefreshCw, LogOut, Building2, Inbox, Search,
+  FileText, User, Phone, Mail, Calendar, Hash, Landmark,
+} from 'lucide-react';
 
+/* ─── Layout ─── */
 function BancaLayout({ children }: { children: React.ReactNode }) {
   const { signOut, profileNome } = useAuth();
   const navigate = useNavigate();
@@ -39,6 +44,7 @@ function BancaLayout({ children }: { children: React.ReactNode }) {
   );
 }
 
+/* ─── Types ─── */
 interface AnonymousPractice {
   id: string;
   numero_pratica: string;
@@ -66,6 +72,47 @@ interface AnonymousPractice {
   myRequest?: { status: string; id: string };
 }
 
+interface ReceivedPractice {
+  requestId: string;
+  requestDate: string;
+  approvedDate: string;
+  noteBanca?: string;
+  segreteriaNome?: string;
+  segreteriaEmail?: string;
+  practice: {
+    id: string;
+    numero_pratica: string;
+    importo_richiesto?: number;
+    motivazione?: string;
+    status: string;
+    created_at: string;
+    clients?: {
+      ragione_sociale?: string;
+      piva?: string;
+      codice_fiscale?: string;
+      indirizzo?: string;
+      citta?: string;
+      cap?: string;
+      provincia?: string;
+      codice_ateco?: string;
+      settore?: string;
+      forma_giuridica?: string;
+      anno_costituzione?: string;
+      telefono?: string;
+      email?: string;
+    };
+    kpi?: {
+      anno?: number;
+      fatturato?: number;
+      dscr?: number;
+      pfn?: number;
+      ebitda?: number;
+      patrimonio_netto?: number;
+    };
+  };
+}
+
+/* ─── Helpers ─── */
 const VISIBLE_STATUSES = ['raccolta_documenti', 'inviata_banca', 'integrazioni_richieste', 'completata', 'approvata'];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -74,6 +121,20 @@ const STATUS_LABEL: Record<string, string> = {
   integrazioni_richieste: 'Integrazioni',
   completata: 'Completa',
   approvata: 'Approvata',
+  bozza: 'Bozza',
+  rifiutata: 'Rifiutata',
+  declinata: 'Declinata',
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  raccolta_documenti: 'bg-blue-100 text-blue-800',
+  inviata_banca: 'bg-purple-100 text-purple-800',
+  integrazioni_richieste: 'bg-amber-100 text-amber-800',
+  completata: 'bg-green-100 text-green-800',
+  approvata: 'bg-emerald-100 text-emerald-800',
+  rifiutata: 'bg-red-100 text-red-800',
+  declinata: 'bg-rose-100 text-rose-800',
+  bozza: 'bg-slate-100 text-slate-600',
 };
 
 const fmt = (n?: number | null) =>
@@ -82,17 +143,21 @@ const fmt = (n?: number | null) =>
 const fmtN = (n?: number | null, decimals = 2) =>
   n != null ? n.toFixed(decimals) : '—';
 
+/* ─── Component ─── */
 export default function BancaPortalPage() {
   const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'disponibili' | 'ricevute'>('disponibili');
   const [practices, setPractices] = useState<AnonymousPractice[]>([]);
+  const [received, setReceived] = useState<ReceivedPractice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingReceived, setLoadingReceived] = useState(false);
   const [bankId, setBankId] = useState<string | null>(null);
   const [bankNome, setBankNome] = useState<string>('');
   const [selected, setSelected] = useState<AnonymousPractice | null>(null);
   const [notaBanca, setNotaBanca] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Carica bank_id dalla tabella banks tramite bank_user_id
+  /* Carica bank_id dalla tabella banks */
   useEffect(() => {
     if (!user) return;
     supabase
@@ -105,11 +170,11 @@ export default function BancaPortalPage() {
       });
   }, [user]);
 
-  const load = async () => {
+  /* Pratiche disponibili (anonime) */
+  const loadDisponibili = async () => {
     if (!bankId) return;
     setLoading(true);
     try {
-      // Pratiche visibili
       const { data: pData } = await supabase
         .from('practices')
         .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(citta, cap, codice_ateco, settore, forma_giuridica, anno_costituzione)')
@@ -118,40 +183,99 @@ export default function BancaPortalPage() {
 
       const pList = (pData ?? []) as AnonymousPractice[];
 
-      // KPI (bilanci_kpi) — prendo l'anno più recente per ogni practice
       const { data: kpiData } = await supabase
         .from('bilanci_kpi')
         .select('practice_id, anno, fatturato, dscr, pfn, ebitda, patrimonio_netto')
         .in('practice_id', pList.map(p => p.id))
         .order('anno', { ascending: false });
 
-      // Mie richieste
       const { data: reqData } = await supabase
         .from('bank_interest_requests')
         .select('id, practice_id, status')
         .eq('bank_id', bankId);
 
       const kpiMap: Record<string, AnonymousPractice['kpi']> = {};
-      (kpiData ?? []).forEach(k => {
-        if (!kpiMap[k.practice_id]) kpiMap[k.practice_id] = k;
-      });
+      (kpiData ?? []).forEach(k => { if (!kpiMap[k.practice_id]) kpiMap[k.practice_id] = k; });
 
       const reqMap: Record<string, { status: string; id: string }> = {};
       (reqData ?? []).forEach(r => { reqMap[r.practice_id] = { status: r.status, id: r.id }; });
 
-      const enriched = pList.map(p => ({
-        ...p,
-        kpi: kpiMap[p.id],
-        myRequest: reqMap[p.id],
-      }));
-
-      setPractices(enriched);
+      setPractices(pList.map(p => ({ ...p, kpi: kpiMap[p.id], myRequest: reqMap[p.id] })));
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, [bankId]);
+  /* Pratiche ricevute (dati completi) */
+  const loadRicevute = async () => {
+    if (!bankId) return;
+    setLoadingReceived(true);
+    try {
+      // 1. Richieste approvate
+      const { data: reqData } = await supabase
+        .from('bank_interest_requests')
+        .select('id, practice_id, note_banca, handled_by, created_at, updated_at')
+        .eq('bank_id', bankId)
+        .eq('status', 'approvata')
+        .order('updated_at', { ascending: false });
+
+      if (!reqData?.length) { setReceived([]); return; }
+
+      const practiceIds = reqData.map(r => r.practice_id);
+      const handledByIds = [...new Set(reqData.map(r => r.handled_by).filter(Boolean))];
+
+      // 2. Pratiche con dati completi
+      const { data: pData } = await supabase
+        .from('practices')
+        .select('id, numero_pratica, importo_richiesto, motivazione, status, created_at, clients(ragione_sociale, piva, codice_fiscale, indirizzo, citta, cap, provincia, codice_ateco, settore, forma_giuridica, anno_costituzione, telefono, email)')
+        .in('id', practiceIds);
+
+      // 3. KPI (anno più recente per pratica)
+      const { data: kpiData } = await supabase
+        .from('bilanci_kpi')
+        .select('practice_id, anno, fatturato, dscr, pfn, ebitda, patrimonio_netto')
+        .in('practice_id', practiceIds)
+        .order('anno', { ascending: false });
+
+      // 4. Profili segreteria
+      const segMap: Record<string, { nome?: string; email?: string }> = {};
+      if (handledByIds.length) {
+        const { data: sData } = await supabase
+          .from('admin_profiles')
+          .select('id, nome, email')
+          .in('id', handledByIds);
+        (sData ?? []).forEach(s => { segMap[s.id] = { nome: s.nome, email: s.email }; });
+      }
+
+      const kpiMap: Record<string, typeof kpiData extends (infer T)[] | null ? T : never> = {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (kpiData ?? []).forEach((k: any) => { if (!kpiMap[k.practice_id]) kpiMap[k.practice_id] = k; });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pMap: Record<string, any> = {};
+      (pData ?? []).forEach(p => { pMap[p.id] = p; });
+
+      const result: ReceivedPractice[] = reqData.map(r => ({
+        requestId: r.id,
+        requestDate: r.created_at,
+        approvedDate: r.updated_at,
+        noteBanca: r.note_banca,
+        segreteriaNome: segMap[r.handled_by]?.nome,
+        segreteriaEmail: segMap[r.handled_by]?.email,
+        practice: {
+          ...pMap[r.practice_id],
+          kpi: kpiMap[r.practice_id],
+        },
+      }));
+
+      setReceived(result);
+    } finally {
+      setLoadingReceived(false);
+    }
+  };
+
+  useEffect(() => { loadDisponibili(); }, [bankId]);
+  useEffect(() => { if (activeTab === 'ricevute') loadRicevute(); }, [activeTab, bankId]);
 
   const handleRequest = async () => {
     if (!selected || !bankId || !user) return;
@@ -168,7 +292,7 @@ export default function BancaPortalPage() {
       toast.success('Richiesta inviata! La segreteria riceverà una notifica.');
       setSelected(null);
       setNotaBanca('');
-      load();
+      loadDisponibili();
     } finally {
       setSubmitting(false);
     }
@@ -177,9 +301,9 @@ export default function BancaPortalPage() {
   const RequestBadge = ({ req }: { req?: { status: string } }) => {
     if (!req) return null;
     const map: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-      in_attesa:  { label: 'Richiesta in attesa',  color: 'bg-amber-100 text-amber-800',   icon: <Clock className="w-3 h-3" /> },
-      approvata:  { label: 'Documenti inviati',     color: 'bg-green-100 text-green-800',   icon: <CheckCircle className="w-3 h-3" /> },
-      rifiutata:  { label: 'Richiesta rifiutata',   color: 'bg-red-100 text-red-800',       icon: <XCircle className="w-3 h-3" /> },
+      in_attesa: { label: 'In attesa', color: 'bg-amber-100 text-amber-800', icon: <Clock className="w-3 h-3" /> },
+      approvata: { label: 'Documenti inviati', color: 'bg-green-100 text-green-800', icon: <CheckCircle className="w-3 h-3" /> },
+      rifiutata: { label: 'Rifiutata', color: 'bg-red-100 text-red-800', icon: <XCircle className="w-3 h-3" /> },
     };
     const s = map[req.status] ?? { label: req.status, color: 'bg-muted text-muted-foreground', icon: null };
     return (
@@ -189,6 +313,7 @@ export default function BancaPortalPage() {
     );
   };
 
+  /* Account non configurato */
   if (!bankId && !loading) {
     return (
       <BancaLayout>
@@ -201,160 +326,422 @@ export default function BancaPortalPage() {
     );
   }
 
+  const ricevuteCount = received.length;
+
   return (
     <BancaLayout>
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">Pratiche Disponibili</h1>
-            <p className="text-slate-500 mt-1 text-sm">
-              {bankNome && <span className="font-medium text-blue-700">{bankNome}</span>} · I dati anagrafici delle aziende sono riservati. Richiedere i documenti per visualizzarli.
-            </p>
+            <h1 className="text-2xl font-bold text-slate-800">
+              {bankNome && <span className="text-blue-700">{bankNome}</span>}
+            </h1>
+            <p className="text-slate-500 mt-0.5 text-sm">Portale pratiche finanziarie</p>
           </div>
-          <Button variant="outline" size="sm" onClick={load} className="gap-1.5">
+          <Button
+            variant="outline" size="sm"
+            onClick={() => { if (activeTab === 'disponibili') loadDisponibili(); else loadRicevute(); }}
+            className="gap-1.5">
             <RefreshCw className="w-3.5 h-3.5" /> Aggiorna
           </Button>
         </div>
-        <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-700">
-          ℹ️ Le informazioni aziendali (ragione sociale, P.IVA, indirizzo) sono visibili solo dopo l'invio dei documenti da parte della segreteria.
-        </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        </div>
-      ) : practices.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
-          <BarChart2 className="w-10 h-10 text-slate-300" />
-          <p className="text-slate-500">Nessuna pratica disponibile al momento.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {practices.map(p => {
-            const ateco = p.clients?.codice_ateco || p.codice_ateco;
-            const citta = p.clients?.citta;
-            const hasKpi = !!p.kpi;
-            const alreadyRequested = !!p.myRequest;
+      {/* Tab bar */}
+      <div className="flex border-b border-slate-200 mb-6 gap-1">
+        <button
+          onClick={() => setActiveTab('disponibili')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'disponibili'
+              ? 'border-blue-600 text-blue-700'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}>
+          <Search className="w-4 h-4" />
+          Pratiche Disponibili
+          <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === 'disponibili' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+            {practices.length}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('ricevute')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'ricevute'
+              ? 'border-green-600 text-green-700'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}>
+          <Inbox className="w-4 h-4" />
+          Pratiche Ricevute
+          {ricevuteCount > 0 && (
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === 'ricevute' ? 'bg-green-100 text-green-700' : 'bg-green-100 text-green-700'}`}>
+              {ricevuteCount}
+            </span>
+          )}
+        </button>
+      </div>
 
-            return (
-              <Card key={p.id} className="border border-slate-200 hover:shadow-md transition-shadow">
-                <CardHeader className="pb-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-base font-semibold text-slate-700">
-                        Pratica #{p.numero_pratica}
-                      </CardTitle>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        {new Date(p.created_at).toLocaleDateString('it-IT')}
-                      </p>
-                    </div>
-                    <Badge variant="outline" className="text-xs shrink-0">
-                      {STATUS_LABEL[p.status] ?? p.status}
-                    </Badge>
-                  </div>
-                  {p.myRequest && (
-                    <div className="mt-1">
-                      <RequestBadge req={p.myRequest} />
-                    </div>
-                  )}
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {/* Dati geografici / settore */}
-                  <div className="flex flex-wrap gap-2">
-                    {citta && (
-                      <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
-                        <MapPin className="w-3 h-3" /> {citta}
-                      </span>
-                    )}
-                    {ateco && (
-                      <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
-                        🏭 ATECO {ateco}
-                      </span>
-                    )}
-                    {p.clients?.forma_giuridica && (
-                      <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
-                        {p.clients.forma_giuridica}
-                      </span>
-                    )}
-                  </div>
+      {/* ── TAB: Pratiche Disponibili ── */}
+      {activeTab === 'disponibili' && (
+        <>
+          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-700">
+            ℹ️ I dati aziendali (ragione sociale, P.IVA) sono riservati. Richiedi i documenti per visualizzarli nella sezione <strong>Pratiche Ricevute</strong>.
+          </div>
 
-                  {/* Importo richiesto */}
-                  {p.importo_richiesto && (
-                    <div className="flex items-center gap-2 bg-blue-50 rounded-md px-3 py-2">
-                      <Euro className="w-4 h-4 text-blue-500 shrink-0" />
-                      <div>
-                        <p className="text-xs text-blue-600 font-medium">Importo richiesto</p>
-                        <p className="text-sm font-bold text-blue-800">{fmt(p.importo_richiesto)}</p>
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : practices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
+              <BarChart2 className="w-10 h-10 text-slate-300" />
+              <p className="text-slate-500">Nessuna pratica disponibile al momento.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {practices.map(p => {
+                const ateco = p.clients?.codice_ateco || p.codice_ateco;
+                const citta = p.clients?.citta;
+                const hasKpi = !!p.kpi;
+                const alreadyRequested = !!p.myRequest;
+
+                return (
+                  <Card key={p.id} className="border border-slate-200 hover:shadow-md transition-shadow">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <CardTitle className="text-base font-semibold text-slate-700">
+                            Pratica #{p.numero_pratica}
+                          </CardTitle>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {new Date(p.created_at).toLocaleDateString('it-IT')}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className={`text-xs shrink-0 ${STATUS_COLOR[p.status] ?? ''}`}>
+                          {STATUS_LABEL[p.status] ?? p.status}
+                        </Badge>
                       </div>
-                    </div>
-                  )}
+                      {p.myRequest && (
+                        <div className="mt-1"><RequestBadge req={p.myRequest} /></div>
+                      )}
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        {citta && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
+                            <MapPin className="w-3 h-3" /> {citta}
+                          </span>
+                        )}
+                        {ateco && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
+                            🏭 ATECO {ateco}
+                          </span>
+                        )}
+                        {p.clients?.forma_giuridica && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
+                            {p.clients.forma_giuridica}
+                          </span>
+                        )}
+                      </div>
 
-                  {/* KPI */}
-                  {hasKpi && (
-                    <div className="grid grid-cols-2 gap-2">
-                      {p.kpi?.fatturato != null && (
-                        <div className="bg-green-50 rounded-md px-3 py-2">
-                          <p className="text-xs text-green-600">Fatturato</p>
-                          <p className="text-sm font-bold text-green-800">{fmt(p.kpi.fatturato)}</p>
-                          {p.kpi.anno && <p className="text-xs text-green-500">Anno {p.kpi.anno}</p>}
+                      {p.importo_richiesto && (
+                        <div className="flex items-center gap-2 bg-blue-50 rounded-md px-3 py-2">
+                          <Euro className="w-4 h-4 text-blue-500 shrink-0" />
+                          <div>
+                            <p className="text-xs text-blue-600 font-medium">Importo richiesto</p>
+                            <p className="text-sm font-bold text-blue-800">{fmt(p.importo_richiesto)}</p>
+                          </div>
                         </div>
                       )}
-                      {p.kpi?.ebitda != null && (
-                        <div className="bg-emerald-50 rounded-md px-3 py-2">
-                          <p className="text-xs text-emerald-600">EBITDA</p>
-                          <p className="text-sm font-bold text-emerald-800">{fmt(p.kpi.ebitda)}</p>
-                        </div>
-                      )}
-                      {p.kpi?.dscr != null && (
-                        <div className="bg-purple-50 rounded-md px-3 py-2">
-                          <p className="text-xs text-purple-600">DSCR</p>
-                          <p className="text-sm font-bold text-purple-800">{fmtN(p.kpi.dscr)}</p>
-                        </div>
-                      )}
-                      {p.kpi?.pfn != null && (
-                        <div className="bg-orange-50 rounded-md px-3 py-2">
-                          <p className="text-xs text-orange-600">PFN</p>
-                          <p className="text-sm font-bold text-orange-800">{fmt(p.kpi.pfn)}</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
 
-                  {!hasKpi && (
-                    <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-50 rounded-md px-3 py-2">
-                      <TrendingUp className="w-3 h-3" />
-                      <span>Dati finanziari non ancora disponibili</span>
-                    </div>
-                  )}
+                      {hasKpi && (
+                        <div className="grid grid-cols-2 gap-2">
+                          {p.kpi?.fatturato != null && (
+                            <div className="bg-green-50 rounded-md px-3 py-2">
+                              <p className="text-xs text-green-600">Fatturato</p>
+                              <p className="text-sm font-bold text-green-800">{fmt(p.kpi.fatturato)}</p>
+                              {p.kpi.anno && <p className="text-xs text-green-500">Anno {p.kpi.anno}</p>}
+                            </div>
+                          )}
+                          {p.kpi?.ebitda != null && (
+                            <div className="bg-emerald-50 rounded-md px-3 py-2">
+                              <p className="text-xs text-emerald-600">EBITDA</p>
+                              <p className="text-sm font-bold text-emerald-800">{fmt(p.kpi.ebitda)}</p>
+                            </div>
+                          )}
+                          {p.kpi?.dscr != null && (
+                            <div className="bg-purple-50 rounded-md px-3 py-2">
+                              <p className="text-xs text-purple-600">DSCR</p>
+                              <p className="text-sm font-bold text-purple-800">{fmtN(p.kpi.dscr)}</p>
+                            </div>
+                          )}
+                          {p.kpi?.pfn != null && (
+                            <div className="bg-orange-50 rounded-md px-3 py-2">
+                              <p className="text-xs text-orange-600">PFN</p>
+                              <p className="text-sm font-bold text-orange-800">{fmt(p.kpi.pfn)}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
-                  {/* Pulsante */}
-                  {!alreadyRequested ? (
-                    <Button
-                      className="w-full gap-1.5 bg-blue-600 hover:bg-blue-700"
-                      size="sm"
-                      onClick={() => { setSelected(p); setNotaBanca(''); }}>
-                      <Send className="w-3.5 h-3.5" /> Richiedi Documenti
-                    </Button>
-                  ) : p.myRequest?.status === 'in_attesa' ? (
-                    <div className="text-center text-xs text-amber-600 bg-amber-50 rounded-md py-2">
-                      ⏳ Richiesta inviata — in attesa di approvazione segreteria
-                    </div>
-                  ) : p.myRequest?.status === 'approvata' ? (
-                    <div className="text-center text-xs text-green-600 bg-green-50 rounded-md py-2">
-                      ✅ Documenti inviati via email
-                    </div>
-                  ) : (
-                    <div className="text-center text-xs text-red-600 bg-red-50 rounded-md py-2">
-                      ❌ Richiesta rifiutata
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                      {!hasKpi && (
+                        <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-50 rounded-md px-3 py-2">
+                          <TrendingUp className="w-3 h-3" />
+                          <span>Dati finanziari non ancora disponibili</span>
+                        </div>
+                      )}
+
+                      {!alreadyRequested ? (
+                        <Button
+                          className="w-full gap-1.5 bg-blue-600 hover:bg-blue-700" size="sm"
+                          onClick={() => { setSelected(p); setNotaBanca(''); }}>
+                          <Send className="w-3.5 h-3.5" /> Richiedi Documenti
+                        </Button>
+                      ) : p.myRequest?.status === 'in_attesa' ? (
+                        <div className="text-center text-xs text-amber-600 bg-amber-50 rounded-md py-2">
+                          ⏳ In attesa di approvazione segreteria
+                        </div>
+                      ) : p.myRequest?.status === 'approvata' ? (
+                        <div
+                          className="text-center text-xs text-green-600 bg-green-50 rounded-md py-2 cursor-pointer hover:bg-green-100"
+                          onClick={() => setActiveTab('ricevute')}
+                          title="Vai a Pratiche Ricevute">
+                          ✅ Documenti ricevuti — vedi in <strong>Pratiche Ricevute</strong>
+                        </div>
+                      ) : (
+                        <div className="text-center text-xs text-red-600 bg-red-50 rounded-md py-2">
+                          ❌ Richiesta rifiutata
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── TAB: Pratiche Ricevute ── */}
+      {activeTab === 'ricevute' && (
+        <>
+          <div className="mb-4 bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700">
+            ✅ Le pratiche qui riportate sono state approvate e inviate dalla segreteria competente.
+          </div>
+
+          {loadingReceived ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : received.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
+              <Inbox className="w-10 h-10 text-slate-300" />
+              <p className="text-slate-600 font-medium">Nessuna pratica ricevuta ancora</p>
+              <p className="text-slate-400 text-sm max-w-xs">Le pratiche appariranno qui dopo che la segreteria avrà approvato le tue richieste.</p>
+              <Button variant="outline" size="sm" onClick={() => setActiveTab('disponibili')} className="mt-2 gap-1.5">
+                <Search className="w-3.5 h-3.5" /> Sfoglia Pratiche Disponibili
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {received.map(r => {
+                const c = r.practice?.clients;
+                const kpi = r.practice?.kpi;
+                return (
+                  <Card key={r.requestId} className="border border-green-200 shadow-sm">
+                    {/* Card header */}
+                    <CardHeader className="pb-2">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <CardTitle className="text-base font-bold text-slate-800">
+                              {c?.ragione_sociale ?? '—'}
+                            </CardTitle>
+                            <Badge variant="outline" className={`text-xs ${STATUS_COLOR[r.practice?.status] ?? ''}`}>
+                              {STATUS_LABEL[r.practice?.status] ?? r.practice?.status}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500 font-mono mt-0.5">#{r.practice?.numero_pratica}</p>
+                        </div>
+                        {/* Segreteria mittente */}
+                        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs">
+                          <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <div>
+                            <p className="text-slate-500">Inviata da</p>
+                            <p className="font-semibold text-slate-700">{r.segreteriaNome ?? 'Segreteria'}</p>
+                            {r.segreteriaEmail && <p className="text-slate-400">{r.segreteriaEmail}</p>}
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Ricevuta il {new Date(r.approvedDate).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' })}
+                      </p>
+                    </CardHeader>
+
+                    <CardContent className="space-y-4">
+                      {/* Dati aziendali */}
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+                          <Building className="w-3.5 h-3.5" /> Dati Aziendali
+                        </p>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2">
+                          {c?.piva && (
+                            <div>
+                              <p className="text-xs text-slate-400">P.IVA</p>
+                              <p className="text-sm font-medium text-slate-700">{c.piva}</p>
+                            </div>
+                          )}
+                          {c?.codice_fiscale && (
+                            <div>
+                              <p className="text-xs text-slate-400">Codice Fiscale</p>
+                              <p className="text-sm font-medium text-slate-700">{c.codice_fiscale}</p>
+                            </div>
+                          )}
+                          {c?.forma_giuridica && (
+                            <div>
+                              <p className="text-xs text-slate-400">Forma Giuridica</p>
+                              <p className="text-sm font-medium text-slate-700">{c.forma_giuridica}</p>
+                            </div>
+                          )}
+                          {c?.codice_ateco && (
+                            <div>
+                              <p className="text-xs text-slate-400">ATECO</p>
+                              <p className="text-sm font-medium text-slate-700">{c.codice_ateco}</p>
+                            </div>
+                          )}
+                          {c?.anno_costituzione && (
+                            <div>
+                              <p className="text-xs text-slate-400">Anno Costituzione</p>
+                              <p className="text-sm font-medium text-slate-700">{c.anno_costituzione}</p>
+                            </div>
+                          )}
+                          {c?.settore && (
+                            <div>
+                              <p className="text-xs text-slate-400">Settore</p>
+                              <p className="text-sm font-medium text-slate-700">{c.settore}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Sede */}
+                      {(c?.indirizzo || c?.citta) && (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5" /> Sede
+                          </p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-700">
+                            {c?.indirizzo && <span>{c.indirizzo}</span>}
+                            {(c?.citta || c?.cap || c?.provincia) && (
+                              <span>
+                                {[c.cap, c.citta, c.provincia && `(${c.provincia})`].filter(Boolean).join(' ')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Contatti */}
+                      {(c?.telefono || c?.email) && (
+                        <div className="flex flex-wrap gap-4">
+                          {c?.telefono && (
+                            <div className="flex items-center gap-1.5 text-sm text-slate-600">
+                              <Phone className="w-3.5 h-3.5 text-slate-400" /> {c.telefono}
+                            </div>
+                          )}
+                          {c?.email && (
+                            <div className="flex items-center gap-1.5 text-sm text-slate-600">
+                              <Mail className="w-3.5 h-3.5 text-slate-400" /> {c.email}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Pratica */}
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5" /> Pratica Finanziaria
+                        </p>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2">
+                          {r.practice?.importo_richiesto != null && (
+                            <div className="bg-blue-50 rounded-md px-3 py-2">
+                              <p className="text-xs text-blue-600">Importo Richiesto</p>
+                              <p className="text-sm font-bold text-blue-800">{fmt(r.practice.importo_richiesto)}</p>
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-xs text-slate-400 flex items-center gap-1"><Calendar className="w-3 h-3" /> Creata il</p>
+                            <p className="text-sm font-medium text-slate-700">
+                              {new Date(r.practice?.created_at).toLocaleDateString('it-IT')}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-400 flex items-center gap-1"><Hash className="w-3 h-3" /> Numero</p>
+                            <p className="text-sm font-medium text-slate-700 font-mono">#{r.practice?.numero_pratica}</p>
+                          </div>
+                        </div>
+                        {r.practice?.motivazione && (
+                          <div className="mt-2 bg-slate-50 rounded-md px-3 py-2 text-sm text-slate-600">
+                            <span className="text-xs text-slate-400 block mb-0.5">Motivazione</span>
+                            {r.practice.motivazione}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* KPI */}
+                      {kpi && (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+                            <Landmark className="w-3.5 h-3.5" /> KPI Finanziari
+                            {kpi.anno && <span className="text-slate-400 font-normal ml-1">(Anno {kpi.anno})</span>}
+                          </p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            {kpi.fatturato != null && (
+                              <div className="bg-green-50 rounded-md px-3 py-2">
+                                <p className="text-xs text-green-600">Fatturato</p>
+                                <p className="text-sm font-bold text-green-800">{fmt(kpi.fatturato)}</p>
+                              </div>
+                            )}
+                            {kpi.ebitda != null && (
+                              <div className="bg-emerald-50 rounded-md px-3 py-2">
+                                <p className="text-xs text-emerald-600">EBITDA</p>
+                                <p className="text-sm font-bold text-emerald-800">{fmt(kpi.ebitda)}</p>
+                              </div>
+                            )}
+                            {kpi.dscr != null && (
+                              <div className="bg-purple-50 rounded-md px-3 py-2">
+                                <p className="text-xs text-purple-600">DSCR</p>
+                                <p className="text-sm font-bold text-purple-800">{fmtN(kpi.dscr)}</p>
+                              </div>
+                            )}
+                            {kpi.pfn != null && (
+                              <div className="bg-orange-50 rounded-md px-3 py-2">
+                                <p className="text-xs text-orange-600">PFN</p>
+                                <p className="text-sm font-bold text-orange-800">{fmt(kpi.pfn)}</p>
+                              </div>
+                            )}
+                            {kpi.patrimonio_netto != null && (
+                              <div className="bg-sky-50 rounded-md px-3 py-2">
+                                <p className="text-xs text-sky-600">Patrimonio Netto</p>
+                                <p className="text-sm font-bold text-sky-800">{fmt(kpi.patrimonio_netto)}</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Note banca */}
+                      {r.noteBanca && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-500 italic">
+                          📝 Note richiesta: "{r.noteBanca}"
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* Dialog conferma richiesta */}
@@ -378,7 +765,7 @@ export default function BancaPortalPage() {
               />
             </div>
             <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-500">
-              Dopo l'invio, la segreteria validerà la richiesta. Se approvata, riceverai i documenti completi all'email della tua banca.
+              Se approvata, la pratica apparirà nella sezione <strong>Pratiche Ricevute</strong> con tutti i dati aziendali.
             </div>
           </div>
           <DialogFooter>
