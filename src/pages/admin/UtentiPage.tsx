@@ -216,12 +216,21 @@ export default function UtentiPage() {
     load();
   };
 
+  // Ruoli che non possono essere modificati tramite questa UI
+  const PROTECTED_ROLES = ['super_admin', 'banca', 'consulente'];
+
   const handleUpdateRole = async () => {
     if (!showEdit) return;
 
-    // Protezione: non permettere modifica ruolo a un super_admin tramite questa UI
-    if (showEdit.ruolo === 'super_admin' && editRuolo !== 'super_admin') {
-      toast.error('Non è possibile modificare il ruolo di un Super Admin da questa interfaccia.');
+    // Protezione: blocca la modifica di ruoli riservati
+    if (PROTECTED_ROLES.includes(showEdit.ruolo)) {
+      toast.error(`Non è possibile modificare il ruolo di un utente con ruolo "${showEdit.ruolo}" da questa interfaccia.`);
+      return;
+    }
+
+    // Protezione: non permettere di assegnare un ruolo riservato tramite questa UI
+    if (PROTECTED_ROLES.includes(editRuolo)) {
+      toast.error(`Non è possibile assegnare il ruolo "${editRuolo}" da questa interfaccia.`);
       return;
     }
 
@@ -719,12 +728,16 @@ export default function UtentiPage() {
             </div>
             <div className="space-y-2">
               <Label>Ruolo</Label>
-              <Select value={editRuolo} onValueChange={setEditRuolo}>
+              <Select
+                value={editRuolo}
+                onValueChange={setEditRuolo}
+                disabled={!!showEdit && PROTECTED_ROLES.includes(showEdit.ruolo)}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {RUOLI.map(r => (
                     <SelectItem key={r.value} value={r.value}
-                      disabled={showEdit?.ruolo === 'super_admin' && r.value !== 'super_admin'}
+                      disabled={PROTECTED_ROLES.includes(r.value)}
                     >
                       <div>
                         <p className="font-medium">{r.label}</p>
@@ -734,9 +747,9 @@ export default function UtentiPage() {
                   ))}
                 </SelectContent>
               </Select>
-              {showEdit?.ruolo === 'super_admin' && (
+              {showEdit && PROTECTED_ROLES.includes(showEdit.ruolo) && (
                 <p className="text-xs text-destructive flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Ruolo Super Admin non modificabile da questa UI.
+                  <AlertTriangle className="w-3.5 h-3.5" /> Ruolo <strong>{showEdit.ruolo}</strong> — non modificabile da questa interfaccia.
                 </p>
               )}
             </div>
