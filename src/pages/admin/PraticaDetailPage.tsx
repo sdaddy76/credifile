@@ -19,7 +19,7 @@ import ReputazioneTab from '@/components/ReputazioneTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
-  PlusCircle, Save, BellRing, Loader2
+  PlusCircle, Save, BellRing, Loader2, Send
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
@@ -509,6 +509,26 @@ export default function PraticaDetailPage() {
         {canApprove && practice.bank_id && (
           <Button variant="outline" size="sm" className="gap-1.5 bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100" onClick={() => { setBankNote(''); setShowSendBankDialog(practice.bank_id ?? null); }}>
             ✉️ Invia alla Banca
+          </Button>
+        )}
+        {/* Agente su pratica in bozza: pulsante per sottomettere alla segreteria */}
+        {isAgente && practice.status === 'bozza' && (
+          <Button
+            size="sm"
+            className="gap-1.5 bg-green-600 hover:bg-green-700"
+            onClick={async () => {
+              if (!confirm('Inviare la pratica alla segreteria?\nLo stato cambierà in "Raccolta Documenti" e sarà visibile alla segreteria.')) return;
+              const { error } = await supabase.from('practices').update({ status: 'raccolta_documenti' }).eq('id', practice.id);
+              if (error) { toast.error('Errore: ' + error.message); return; }
+              await supabase.from('practice_status_log').insert({
+                practice_id: practice.id, old_status: 'bozza', new_status: 'raccolta_documenti',
+                note: 'Pratica inviata alla segreteria dall\'agente', created_by: 'agente',
+              });
+              toast.success('Pratica inviata alla segreteria!');
+              load();
+            }}
+          >
+            <Send className="w-3.5 h-3.5" /> Invia alla Segreteria
           </Button>
         )}
         {canApprove && (
