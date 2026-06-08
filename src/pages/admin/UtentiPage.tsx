@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Activity, Monitor, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Activity, Monitor, RefreshCw, ChevronDown, ChevronUp, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 
@@ -151,6 +151,11 @@ export default function UtentiPage() {
 
   const handleDelete = async () => {
     if (!showDelete) return;
+    if (showDelete.ruolo === 'super_admin') {
+      toast.error('Il Super Admin non può essere eliminato.');
+      setShowDelete(null);
+      return;
+    }
     setDeleting(true);
     const { data, error } = await supabase.functions.invoke('delete-agent', {
       body: { agent_id: showDelete.id },
@@ -408,15 +413,21 @@ export default function UtentiPage() {
                         </Badge>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost" size="sm"
-                      className="h-8 w-8 p-0 shrink-0"
-                      onClick={() => openEdit(p)}
-                      title="Modifica ruolo/password"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
-                    {!isSelf && isSuperAdmin && (
+                    {p.ruolo === 'super_admin' ? (
+                      <div className="h-8 w-8 p-0 shrink-0 flex items-center justify-center text-muted-foreground" title="Super Admin — protetto">
+                        <Lock className="w-3.5 h-3.5" />
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-8 w-8 p-0 shrink-0"
+                        onClick={() => openEdit(p)}
+                        title="Modifica ruolo/password"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                    {!isSelf && isSuperAdmin && p.ruolo !== 'super_admin' && (
                       <Button
                         variant="ghost" size="sm"
                         className="h-8 w-8 p-0 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
