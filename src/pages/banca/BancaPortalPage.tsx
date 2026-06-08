@@ -113,12 +113,21 @@ interface ReceivedPractice {
 /* ─── Helpers ─── */
 const VISIBLE_STATUSES = ['raccolta_documenti', 'inviata_banca', 'integrazioni_richieste', 'completata', 'approvata'];
 
-/** Estrae solo la città dall'indirizzo (formato visura: "...00000 CITTÀ (RM)") */
+/** Estrae solo la città dall'indirizzo visura (formato: "ROMA (RM) VIA...") */
 function extractCity(indirizzo?: string): string | null {
   if (!indirizzo) return null;
-  // Pattern: CAP a 5 cifre seguito da nome città
-  const m = indirizzo.match(/\b\d{5}\s+([A-ZÀÈÉÌÒÙA-Za-zàèéìòù][A-Za-zÀÈÉÌÒÙàèéìòùA-Z\s\-']{1,30}?)(?:\s*\(|\s*,|\s*\n|$)/);
-  if (m?.[1]) return m[1].trim().replace(/\s+/g, ' ');
+  // La città è all'inizio, prima della sigla provincia tra parentesi
+  const m = indirizzo.match(/^([A-ZÀÈÉÌÒÙA-Za-zÀÈÉÌÒÙàèéìòù][A-Za-zÀÈÉÌÒÙàèéìòù\s\-']{1,40}?)\s*\([A-Z]{2}\)/);
+  if (m?.[1]) return m[1].trim();
+  return null;
+}
+
+/** Estrae il codice ATECO dall'indirizzo visura (formato: "Codice ATECO 68.11.00" o "Codice: 68.11.00") */
+function extractAteco(indirizzo?: string, fallback?: string): string | null {
+  if (fallback) return fallback;
+  if (!indirizzo) return null;
+  const m = indirizzo.match(/(?:ATECO|attivit[àa])[^\d]*(\d{2}[.\-]\d{2}(?:[.\-]\d{1,2})?)/i);
+  if (m?.[1]) return m[1];
   return null;
 }
 
@@ -451,8 +460,8 @@ export default function BancaPortalPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {practices.map(p => {
-                const ateco = p.codice_ateco;
                 const city  = extractCity(p.clients?.indirizzo);
+                const ateco = extractAteco(p.clients?.indirizzo, p.codice_ateco ?? undefined);
                 const hasKpi = !!p.kpi;
                 const alreadyRequested = !!p.myRequest;
 
