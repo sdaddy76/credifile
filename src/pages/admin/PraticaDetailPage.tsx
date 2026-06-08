@@ -19,7 +19,7 @@ import ReputazioneTab from '@/components/ReputazioneTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
-  PlusCircle, Save, BellRing, Loader2, Send
+  PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
@@ -120,6 +120,159 @@ export default function PraticaDetailPage() {
   const [showSollecita, setShowSollecita] = useState(false);
   const [sollecitando, setSollecitando] = useState(false);
 
+  // ── 1. TIMELINE ATTIVITÀ ──────────────────────────────────────────────────
+  interface ActivityLog {
+    id: string;
+    practice_id: string;
+    action: string;
+    actor_nome?: string;
+    actor_ruolo?: string;
+    metadata?: Record<string, unknown>;
+    created_at: string;
+  }
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [loadingActivity, setLoadingActivity] = useState(false);
+
+  const loadActivityLogs = async () => {
+    if (!id) return;
+    setLoadingActivity(true);
+    const { data } = await supabase
+      .from('practice_activity_log')
+      .select('*')
+      .eq('practice_id', id)
+      .order('created_at', { ascending: false });
+    setActivityLogs(data ?? []);
+    setLoadingActivity(false);
+  };
+
+  // ── 2. SCORE COMBINATO ───────────────────────────────────────────────────
+  const [scoreBancabilita, setScoreBancabilita] = useState<number | null>(null);
+  const [scoreReputazione, setScoreReputazione] = useState<number | null>(null);
+
+  const loadScores = async () => {
+    if (!id) return;
+    // Score Bancabilità: media semafori da bancabilita_pesi
+    const { data: pesi } = await supabase
+      .from('bancabilita_pesi')
+      .select('semaforo')
+      .eq('practice_id', id);
+    if (pesi && pesi.length > 0) {
+      const scores = (pesi as { semaforo: string }[]).map(p =>
+        p.semaforo === 'verde' ? 100 : p.semaforo === 'giallo' ? 50 : 0
+      );
+      setScoreBancabilita(Math.round(scores.reduce((a, b) => a + b, 0) / scores.length));
+    }
+    // Score Reputazione: ultimo score_globale da reputational_analyses
+    const { data: rep } = await supabase
+      .from('reputational_analyses')
+      .select('score_globale')
+      .eq('practice_id', id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (rep?.score_globale != null) {
+      setScoreReputazione(rep.score_globale);
+    }
+  };
+
+  // ── 3. AI MATCHING BANCHE ────────────────────────────────────────────────
+  interface BancaMatch {
+    bank_id: string;
+    nome: string;
+    score: number;
+    kpi_passati: number;
+    kpi_falliti: number;
+    dettagli?: string;
+    criteri?: { nome: string; esito: boolean }[];
+  }
+  interface MatchingResult {
+    banche: BancaMatch[];
+    suggerimento_ai?: string;
+  }
+  const [matchingResult, setMatchingResult] = useState<MatchingResult | null>(null);
+  const [loadingMatching, setLoadingMatching] = useState(false);
+
+  const runMatching = async () => {
+    if (!id) return;
+    setLoadingMatching(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-matching-banche', {
+        body: { practice_id: id },
+      });
+      if (error) { toast.error('Errore matching: ' + error.message); return; }
+      setMatchingResult(data as MatchingResult);
+    } catch (e) {
+      toast.error('Errore: ' + String(e));
+    } finally {
+      setLoadingMatching(false);
+    }
+  };
+
+  // ── 4. SCADENZARIO DOCUMENTI ─────────────────────────────────────────────
+  interface DocDeadline {
+    id: string;
+    practice_id: string;
+    documento: string;
+    data_scadenza: string;
+    note?: string;
+    notificato?: boolean;
+  }
+  const [deadlines, setDeadlines] = useState<DocDeadline[]>([]);
+  const [newDeadlineDoc, setNewDeadlineDoc] = useState('');
+  const [newDeadlineDate, setNewDeadlineDate] = useState('');
+  const [newDeadlineNote, setNewDeadlineNote] = useState('');
+  const [savingDeadline, setSavingDeadline] = useState(false);
+
+  const loadDeadlines = async () => {
+    if (!id) return;
+    const { data } = await supabase
+      .from('document_deadlines')
+      .select('*')
+      .eq('practice_id', id)
+      .order('data_scadenza', { ascending: true });
+    setDeadlines(data ?? []);
+  };
+
+  const addDeadline = async () => {
+    if (!newDeadlineDoc.trim() || !newDeadlineDate) {
+      toast.error('Inserisci nome documento e data scadenza');
+      return;
+    }
+    setSavingDeadline(true);
+    const { error } = await supabase.from('document_deadlines').insert({
+      practice_id: id,
+      documento: newDeadlineDoc.trim(),
+      data_scadenza: newDeadlineDate,
+      note: newDeadlineNote.trim() || null,
+    });
+    setSavingDeadline(false);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    toast.success('Scadenza aggiunta');
+    setNewDeadlineDoc('');
+    setNewDeadlineDate('');
+    setNewDeadlineNote('');
+    loadDeadlines();
+  };
+
+  const deleteDeadline = async (deadlineId: string) => {
+    if (!confirm('Eliminare questa scadenza?')) return;
+    const { error } = await supabase.from('document_deadlines').delete().eq('id', deadlineId);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    toast.success('Scadenza eliminata');
+    loadDeadlines();
+  };
+
+  const getDeadlineBadge = (dataScadenza: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const scad = new Date(dataScadenza);
+    scad.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil((scad.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return { label: 'Scaduto', color: 'bg-red-100 text-red-700 border-red-200' };
+    if (diffDays <= 7) return { label: `< 7 giorni`, color: 'bg-orange-100 text-orange-700 border-orange-200' };
+    return { label: 'OK', color: 'bg-green-100 text-green-700 border-green-200' };
+  };
+
   // Invia email richiesta documenti (senza rigenerare il codice)
   const sendDocumentRequest = async () => {
     if (!practice || !accessCode) return;
@@ -199,6 +352,15 @@ export default function PraticaDetailPage() {
     load();
     supabase.from('banks').select('*').eq('attiva', true).then(r => setBanks(r.data ?? []));
   }, [load]);
+
+  // Carica dati aggiuntivi dopo load principale
+  useEffect(() => {
+    if (!id) return;
+    loadActivityLogs();
+    loadScores();
+    loadDeadlines();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // Carica agenti filtrati per ruolo — dipende dall'auth che può arrivare dopo il mount
   useEffect(() => {
@@ -364,6 +526,14 @@ export default function PraticaDetailPage() {
       practice_id: practice.id, old_status: practice.status, new_status: newStatus,
       note: (newStatus === 'declinata' && noteDeclino.trim()) ? noteDeclino.trim() : (statusNote || null),
       created_by: 'admin',
+    });
+    // Log attività timeline
+    await supabase.from('practice_activity_log').insert({
+      practice_id: practice.id,
+      action: `Stato cambiato: ${practice.status} → ${newStatus}`,
+      actor_nome: user?.email ?? 'Admin',
+      actor_ruolo: 'admin',
+      metadata: { old_status: practice.status, new_status: newStatus },
     });
     toast.success('Stato aggiornato');
     setSaving(false);
@@ -623,6 +793,79 @@ export default function PraticaDetailPage() {
             </CardContent>
           </Card>
 
+          {/* ── Score Rischio Complessivo ── */}
+          {(scoreBancabilita !== null || scoreReputazione !== null) && (() => {
+            const sb = scoreBancabilita ?? 50;
+            const sr = scoreReputazione ?? 50;
+            const scoreComplessivo = Math.round(sb * 0.6 + sr * 0.4);
+            const gaugeColor = scoreComplessivo >= 70 ? '#22c55e' : scoreComplessivo >= 40 ? '#f59e0b' : '#ef4444';
+            const gaugeBg = scoreComplessivo >= 70 ? 'bg-green-50 border-green-200' : scoreComplessivo >= 40 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
+            const labelColor = scoreComplessivo >= 70 ? 'text-green-700' : scoreComplessivo >= 40 ? 'text-amber-700' : 'text-red-700';
+            // SVG gauge semicircolare
+            const r = 40; const cx = 56; const cy = 56;
+            const startAngle = -180; const endAngle = 0;
+            const toRad = (deg: number) => (deg * Math.PI) / 180;
+            const arcX = (deg: number) => cx + r * Math.cos(toRad(deg));
+            const arcY = (deg: number) => cy + r * Math.sin(toRad(deg));
+            const fillAngle = startAngle + (scoreComplessivo / 100) * (endAngle - startAngle);
+            return (
+              <Card className={`border ${gaugeBg}`}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <span className="text-base">🎯</span> Score Rischio Complessivo
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* SVG Gauge */}
+                  <div className="flex flex-col items-center">
+                    <svg width="112" height="64" viewBox="0 0 112 64">
+                      {/* Track */}
+                      <path
+                        d={`M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 0 1 ${arcX(endAngle)} ${arcY(endAngle)}`}
+                        fill="none" stroke="#e5e7eb" strokeWidth="10" strokeLinecap="round"
+                      />
+                      {/* Fill */}
+                      {scoreComplessivo > 0 && (
+                        <path
+                          d={`M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${scoreComplessivo >= 50 ? 1 : 0} 1 ${arcX(fillAngle)} ${arcY(fillAngle)}`}
+                          fill="none" stroke={gaugeColor} strokeWidth="10" strokeLinecap="round"
+                        />
+                      )}
+                      <text x={cx} y={cy - 4} textAnchor="middle" className="font-bold" fontSize="18" fontWeight="bold" fill={gaugeColor}>
+                        {scoreComplessivo}
+                      </text>
+                      <text x={cx} y={cy + 10} textAnchor="middle" fontSize="9" fill="#6b7280">/ 100</text>
+                    </svg>
+                    <p className={`text-sm font-semibold ${labelColor}`}>
+                      {scoreComplessivo >= 70 ? '✅ Basso Rischio' : scoreComplessivo >= 40 ? '⚠️ Rischio Medio' : '🚨 Alto Rischio'}
+                    </p>
+                  </div>
+                  {/* Dettaglio componenti */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Bancabilità <span className="text-[10px]">(60%)</span></span>
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${sb}%` }} />
+                        </div>
+                        <span className="font-semibold w-8 text-right">{scoreBancabilita ?? '—'}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Reputazione <span className="text-[10px]">(40%)</span></span>
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-purple-500 transition-all" style={{ width: `${sr}%` }} />
+                        </div>
+                        <span className="font-semibold w-8 text-right">{scoreReputazione ?? '—'}</span>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
+
           {/* Link cliente — solo agente */}
           {isAgente && (
           <Card className="border-border">
@@ -682,6 +925,9 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="analisi">Analisi Finanziaria</TabsTrigger>
               <TabsTrigger value="bancabilita">Bancabilità</TabsTrigger>
               <TabsTrigger value="reputazione">Reputazione</TabsTrigger>
+              <TabsTrigger value="banche-ai">🤖 Banche AI</TabsTrigger>
+              <TabsTrigger value="scadenze">📅 Scadenze {deadlines.length > 0 ? `(${deadlines.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="timeline" onClick={loadActivityLogs}>📋 Timeline</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
             </TabsList>
 
@@ -1237,6 +1483,257 @@ export default function PraticaDetailPage() {
                 ))}
                 {logs.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">Nessun cambio di stato registrato</p>}
               </div>
+            </TabsContent>
+
+            {/* ── Tab Banche AI ── */}
+            <TabsContent value="banche-ai" className="mt-3 space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold">Compatibilità Banche (AI)</h3>
+                  <p className="text-xs text-muted-foreground">Analisi automatica dei criteri di ogni banca rispetto ai KPI della pratica.</p>
+                </div>
+                <Button
+                  size="sm"
+                  className="gap-2 bg-blue-600 hover:bg-blue-700"
+                  disabled={loadingMatching}
+                  onClick={runMatching}
+                >
+                  {loadingMatching
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Analisi in corso…</>
+                    : <><Building2 className="w-3.5 h-3.5" />Analizza Compatibilità Banche</>}
+                </Button>
+              </div>
+
+              {!matchingResult && !loadingMatching && (
+                <Card>
+                  <CardContent className="py-12 text-center text-muted-foreground text-sm">
+                    <Building2 className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                    Clicca "Analizza Compatibilità Banche" per avviare l'analisi AI.
+                  </CardContent>
+                </Card>
+              )}
+
+              {matchingResult && (
+                <div className="space-y-3">
+                  {/* Suggerimento AI */}
+                  {matchingResult.suggerimento_ai && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-1">
+                      <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+                        <span>🤖</span> Suggerimento AI
+                      </p>
+                      <p className="text-sm text-blue-900 leading-relaxed">{matchingResult.suggerimento_ai}</p>
+                    </div>
+                  )}
+
+                  {/* Lista banche */}
+                  {(matchingResult.banche ?? []).length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-6">Nessuna banca trovata nell'analisi.</p>
+                  )}
+                  {(matchingResult.banche ?? []).map((banca) => {
+                    const scoreColor = banca.score >= 70 ? 'bg-green-500' : banca.score >= 40 ? 'bg-amber-500' : 'bg-red-500';
+                    const badgeColor = banca.score >= 70 ? 'bg-green-100 text-green-700' : banca.score >= 40 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700';
+                    return (
+                      <Card key={banca.bank_id} className="border-border">
+                        <CardContent className="py-3 px-4 space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <Building2 className="w-4 h-4 text-muted-foreground" />
+                              <p className="font-semibold text-sm">{banca.nome}</p>
+                            </div>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>
+                              {banca.score}%
+                            </span>
+                          </div>
+                          {/* Barra progresso */}
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${scoreColor}`} style={{ width: `${banca.score}%` }} />
+                          </div>
+                          {/* KPI */}
+                          <div className="flex gap-4 text-xs text-muted-foreground">
+                            <span className="text-green-600">✅ {banca.kpi_passati} KPI passati</span>
+                            <span className="text-red-600">❌ {banca.kpi_falliti} KPI falliti</span>
+                          </div>
+                          {/* Criteri */}
+                          {banca.criteri && banca.criteri.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {banca.criteri.map((c, i) => (
+                                <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded border ${c.esito ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                  {c.esito ? '✓' : '✗'} {c.nome}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {banca.dettagli && (
+                            <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1">{banca.dettagli}</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </TabsContent>
+
+            {/* ── Tab Scadenze ── */}
+            <TabsContent value="scadenze" className="mt-3 space-y-4">
+              {/* Form aggiunta scadenza */}
+              {canEdit && (
+                <Card className="border-border">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-primary" /> Aggiungi Scadenza
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="col-span-2 sm:col-span-1 space-y-1.5">
+                        <Label className="text-xs">Nome Documento *</Label>
+                        <Input
+                          placeholder="es. Visura camerale"
+                          value={newDeadlineDoc}
+                          onChange={e => setNewDeadlineDoc(e.target.value)}
+                        />
+                      </div>
+                      <div className="col-span-2 sm:col-span-1 space-y-1.5">
+                        <Label className="text-xs">Data Scadenza *</Label>
+                        <Input
+                          type="date"
+                          value={newDeadlineDate}
+                          onChange={e => setNewDeadlineDate(e.target.value)}
+                        />
+                      </div>
+                      <div className="col-span-2 space-y-1.5">
+                        <Label className="text-xs">Note (opzionale)</Label>
+                        <Input
+                          placeholder="Note aggiuntive..."
+                          value={newDeadlineNote}
+                          onChange={e => setNewDeadlineNote(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <Button size="sm" className="gap-1.5" disabled={savingDeadline} onClick={addDeadline}>
+                      {savingDeadline ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      Aggiungi Scadenza
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Lista scadenze */}
+              {deadlines.length === 0 ? (
+                <Card>
+                  <CardContent className="py-10 text-center text-muted-foreground text-sm">
+                    <Calendar className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    Nessuna scadenza registrata
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-2">
+                  {deadlines.map(dl => {
+                    const badge = getDeadlineBadge(dl.data_scadenza);
+                    return (
+                      <Card key={dl.id} className="border-border">
+                        <CardContent className="py-3 px-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium">{dl.documento}</p>
+                                <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${badge.color}`}>
+                                  {badge.label}
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                                <Calendar className="w-3 h-3" />
+                                {new Date(dl.data_scadenza).toLocaleDateString('it-IT')}
+                              </p>
+                              {dl.note && (
+                                <p className="text-xs text-muted-foreground mt-0.5">{dl.note}</p>
+                              )}
+                            </div>
+                            {canEdit && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10 shrink-0"
+                                onClick={() => deleteDeadline(dl.id)}
+                                title="Elimina scadenza"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </TabsContent>
+
+            {/* ── Tab Timeline Attività ── */}
+            <TabsContent value="timeline" className="mt-3">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold">Timeline Attività</h3>
+                <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={loadActivityLogs} disabled={loadingActivity}>
+                  <RefreshCw className={`w-3 h-3 ${loadingActivity ? 'animate-spin' : ''}`} /> Aggiorna
+                </Button>
+              </div>
+
+              {loadingActivity && (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              )}
+
+              {!loadingActivity && activityLogs.length === 0 && (
+                <div className="text-center py-10 text-muted-foreground text-sm">
+                  <Clock className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                  Nessuna attività registrata per questa pratica
+                </div>
+              )}
+
+              {!loadingActivity && activityLogs.length > 0 && (
+                <div className="space-y-0">
+                  {activityLogs.map((log, idx) => {
+                    // Icona per tipo azione
+                    const isStato = log.action.toLowerCase().includes('stato');
+                    const isDoc = log.action.toLowerCase().includes('document') || log.action.toLowerCase().includes('caric');
+                    const isNota = log.action.toLowerCase().includes('nota') || log.action.toLowerCase().includes('note');
+                    const isBanca = log.action.toLowerCase().includes('banca');
+                    const iconColor = isStato ? 'text-blue-600 bg-blue-100' : isDoc ? 'text-green-600 bg-green-100' : isNota ? 'text-purple-600 bg-purple-100' : isBanca ? 'text-amber-600 bg-amber-100' : 'text-muted-foreground bg-muted';
+                    const Icon = isStato ? RefreshCw : isDoc ? FileText : isNota ? MessageSquare : isBanca ? Building2 : Clock;
+
+                    return (
+                      <div key={log.id} className="flex gap-3 relative">
+                        {/* Linea verticale */}
+                        {idx < activityLogs.length - 1 && (
+                          <div className="absolute left-[18px] top-8 bottom-0 w-px bg-border" />
+                        )}
+                        {/* Icona */}
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 z-10 ${iconColor}`}>
+                          <Icon className="w-4 h-4" />
+                        </div>
+                        {/* Contenuto */}
+                        <div className="flex-1 pb-4 min-w-0">
+                          <p className="text-sm font-medium text-foreground">{log.action}</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {log.actor_nome && (
+                              <span className="text-xs text-muted-foreground">{log.actor_nome}</span>
+                            )}
+                            {log.actor_ruolo && (
+                              <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded-full text-muted-foreground capitalize">{log.actor_ruolo}</span>
+                            )}
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {new Date(log.created_at).toLocaleString('it-IT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </TabsContent>
           </Tabs>
         </div>

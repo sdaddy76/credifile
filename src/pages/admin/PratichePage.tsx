@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send, CheckCircle2, Clock } from 'lucide-react';
+import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send, CheckCircle2, Clock, LayoutList, Columns, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -42,6 +42,8 @@ export default function PratichePage() {
   const [allAssignedBankIds, setAllAssignedBankIds] = useState<string[]>([]);
   const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
   const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
+  const [viewMode, setViewMode] = useState<'lista' | 'kanban'>('lista');
+  const [draggedId, setDraggedId] = useState<string | null>(null);
 
   async function openBankDialog(practice: Practice) {
     setShowAssignBank(practice);
@@ -296,6 +298,48 @@ export default function PratichePage() {
     load();
   };
 
+  const handleExportCSV = () => {
+    const headers = ['Numero Pratica', 'Cliente', 'Stato', 'Importo (€)', 'ATECO', 'Data Creazione', 'Banca Assegnata'];
+    const rows = filtered.map(p => {
+      const client = (p as Practice & { clients?: { ragione_sociale: string } }).clients;
+      const bankName = (p as Practice & { banks?: { nome: string } }).banks?.nome ?? '';
+      return [
+        p.numero_pratica,
+        client?.ragione_sociale ?? '',
+        STATUS_LABELS[p.status] ?? p.status,
+        p.importo_richiesto != null ? String(p.importo_richiesto) : '',
+        p.codice_ateco ?? '',
+        new Date(p.created_at).toLocaleDateString('it-IT'),
+        bankName,
+      ];
+    });
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `credifile-pratiche-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Esportate ${filtered.length} pratiche`);
+  };
+
+  const handleKanbanDrop = async (e: React.DragEvent, newStatus: string) => {
+    e.preventDefault();
+    if (!draggedId || !canEdit) return;
+    const practice = practices.find(p => p.id === draggedId);
+    if (!practice || practice.status === newStatus) { setDraggedId(null); return; }
+    const { error } = await supabase.from('practices').update({ status: newStatus }).eq('id', draggedId);
+    if (error) { toast.error('Errore aggiornamento stato: ' + error.message); }
+    else {
+      setPractices(prev => prev.map(p => p.id === draggedId ? { ...p, status: newStatus as Practice['status'] } : p));
+      toast.success(`Pratica spostata in "${STATUS_LABELS[newStatus as Practice['status']] ?? newStatus}"`);
+    }
+    setDraggedId(null);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -303,11 +347,35 @@ export default function PratichePage() {
           <h1 className="text-2xl font-bold text-foreground">Pratiche</h1>
           <p className="text-muted-foreground text-sm mt-1">{practices.length} pratiche totali</p>
         </div>
-        {canEdit && (
-          <Button onClick={() => setShowCreate(true)} className="gap-2">
-            <Plus className="w-4 h-4" /> Nuova Pratica
+        <div className="flex items-center gap-2">
+          {/* Toggle Lista / Kanban */}
+          <div className="flex items-center border border-border rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setViewMode('lista')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${viewMode === 'lista' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
+              title="Vista lista"
+            >
+              <LayoutList className="w-4 h-4" /> Lista
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('kanban')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${viewMode === 'kanban' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
+              title="Vista kanban"
+            >
+              <Columns className="w-4 h-4" /> Kanban
+            </button>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleExportCSV} className="gap-1.5" title="Esporta in CSV">
+            <Download className="w-4 h-4" /> Export CSV
           </Button>
-        )}
+          {canEdit && (
+            <Button onClick={() => setShowCreate(true)} className="gap-2">
+              <Plus className="w-4 h-4" /> Nuova Pratica
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Filtri */}
@@ -339,7 +407,72 @@ export default function PratichePage() {
             <Button variant="outline" className="mt-4" onClick={() => setShowCreate(true)}>Crea la prima pratica</Button>
           </CardContent>
         </Card>
+      ) : viewMode === 'kanban' ? (
+        /* ── VISTA KANBAN ─────────────────────────────────────────── */
+        (() => {
+          const KANBAN_COLUMNS: { status: string; label: string; headerCls: string; dropBg: string }[] = [
+            { status: 'bozza',                   label: 'Bozza',               headerCls: 'bg-slate-100 text-slate-700',   dropBg: 'bg-slate-50' },
+            { status: 'raccolta_documenti',       label: 'Raccolta Documenti',  headerCls: 'bg-blue-100 text-blue-700',    dropBg: 'bg-blue-50/40' },
+            { status: 'inviata_banca',            label: 'Inviata Banca',       headerCls: 'bg-purple-100 text-purple-700',dropBg: 'bg-purple-50/40' },
+            { status: 'integrazioni_richieste',   label: 'Integrazioni',        headerCls: 'bg-amber-100 text-amber-700',  dropBg: 'bg-amber-50/40' },
+            { status: 'completata',               label: 'Completata',          headerCls: 'bg-green-100 text-green-700',  dropBg: 'bg-green-50/40' },
+            { status: 'approvata',                label: 'Approvata',           headerCls: 'bg-emerald-100 text-emerald-700', dropBg: 'bg-emerald-50/40' },
+            { status: 'declinata',                label: 'Declinata',           headerCls: 'bg-red-100 text-red-700',      dropBg: 'bg-red-50/40' },
+          ];
+          return (
+            <div className="overflow-x-auto pb-2">
+              <div className="flex gap-3 min-w-max">
+                {KANBAN_COLUMNS.map(col => {
+                  const colPractices = filtered.filter(p => p.status === col.status);
+                  return (
+                    <div
+                      key={col.status}
+                      className={`flex flex-col w-60 rounded-xl border border-border ${col.dropBg} transition-colors`}
+                      onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('ring-2', 'ring-primary/40'); }}
+                      onDragLeave={e => { e.currentTarget.classList.remove('ring-2', 'ring-primary/40'); }}
+                      onDrop={e => { e.currentTarget.classList.remove('ring-2', 'ring-primary/40'); handleKanbanDrop(e, col.status); }}
+                    >
+                      {/* Intestazione colonna */}
+                      <div className={`flex items-center justify-between px-3 py-2 rounded-t-xl ${col.headerCls}`}>
+                        <span className="text-xs font-semibold">{col.label}</span>
+                        <span className="text-xs font-bold opacity-70">{colPractices.length}</span>
+                      </div>
+                      {/* Cards */}
+                      <div className="flex flex-col gap-2 p-2 min-h-[120px]">
+                        {colPractices.map(p => {
+                          const client = (p as Practice & { clients?: { ragione_sociale: string } }).clients;
+                          return (
+                            <div
+                              key={p.id}
+                              draggable={canEdit}
+                              onDragStart={() => setDraggedId(p.id)}
+                              onDragEnd={() => setDraggedId(null)}
+                              onClick={() => navigate(`/admin/pratiche/${p.id}`)}
+                              className={`bg-white border border-border rounded-lg p-2.5 cursor-pointer hover:border-primary/40 hover:shadow-sm transition-all select-none ${draggedId === p.id ? 'opacity-50 ring-2 ring-primary' : ''}`}
+                            >
+                              <p className="text-xs font-semibold text-foreground leading-tight truncate">{client?.ragione_sociale ?? '—'}</p>
+                              <code className="text-[10px] text-muted-foreground font-mono">{p.numero_pratica}</code>
+                              {p.importo_richiesto != null && (
+                                <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-0.5">
+                                  <Euro className="w-2.5 h-2.5" />{p.importo_richiesto.toLocaleString('it-IT')}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {colPractices.length === 0 && (
+                          <p className="text-[11px] text-muted-foreground text-center py-4 opacity-50">Nessuna pratica</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()
       ) : (
+        /* ── VISTA LISTA ──────────────────────────────────────────── */
         <div className="space-y-2">
           {filtered.map(p => {
             const client = (p as Practice & { clients?: { ragione_sociale: string; email: string } }).clients;

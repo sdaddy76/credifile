@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
@@ -6,14 +6,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import {
   MapPin, BarChart2, Euro, TrendingUp, Clock, CheckCircle, XCircle,
   Send, Building, RefreshCw, LogOut, Building2, Inbox, Search,
-  FileText, User, Phone, Mail, Calendar, Hash, Landmark,
+  FileText, User, Phone, Mail, Calendar, Hash, Landmark, Heart,
+  SlidersHorizontal, GitCompare, X as XIcon,
 } from 'lucide-react';
+import jsPDF from 'jspdf';
 
 /* ─── Layout ─── */
 function BancaLayout({ children }: { children: React.ReactNode }) {
@@ -182,7 +186,7 @@ const fmtN = (n?: unknown, decimals = 2) => {
 /* ─── Component ─── */
 export default function BancaPortalPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'disponibili' | 'ricevute'>('disponibili');
+  const [activeTab, setActiveTab] = useState<'disponibili' | 'ricevute' | 'preferiti'>('disponibili');
   const [practices, setPractices] = useState<AnonymousPractice[]>([]);
   const [received, setReceived] = useState<ReceivedPractice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -193,6 +197,16 @@ export default function BancaPortalPage() {
   const [notaBanca, setNotaBanca] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
+
+  /* ── Filtri ── */
+  const [filters, setFilters] = useState({ city: '', ateco: '', importoMin: 0, soloConKpi: '' });
+
+  /* ── Watchlist ── */
+  const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
+
+  /* ── Confronto ── */
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   /* Carica bank_id dalla tabella banks */
   useEffect(() => {
@@ -333,6 +347,131 @@ export default function BancaPortalPage() {
   useEffect(() => { loadDisponibili(); }, [bankId]);
   useEffect(() => { if (activeTab === 'ricevute') loadRicevute(); }, [activeTab, bankId]);
 
+  /* ── Carica watchlist al mount ── */
+  useEffect(() => {
+    if (!bankId) return;
+    supabase
+      .from('bank_watchlist')
+      .select('practice_id')
+      .eq('bank_id', bankId)
+      .then(({ data }) => {
+        if (data) setWatchlist(new Set(data.map((r: { practice_id: string }) => r.practice_id)));
+      });
+  }, [bankId]);
+
+  /* ── Toggle watchlist ── */
+  const toggleWatchlist = async (practiceId: string) => {
+    if (!bankId) return;
+    const isInList = watchlist.has(practiceId);
+    if (isInList) {
+      await supabase.from('bank_watchlist').delete().eq('bank_id', bankId).eq('practice_id', practiceId);
+      setWatchlist(prev => { const next = new Set(prev); next.delete(practiceId); return next; });
+    } else {
+      await supabase.from('bank_watchlist').insert({ bank_id: bankId, practice_id: practiceId });
+      setWatchlist(prev => new Set([...prev, practiceId]));
+    }
+  };
+
+  /* ── Pratiche filtrate (useMemo) ── */
+  const filteredPractices = useMemo(() => {
+    return practices.filter(p => {
+      const city  = extractCity(p.clients?.indirizzo) ?? '';
+      const ateco = extractAteco(p.clients?.indirizzo, p.codice_ateco ?? undefined) ?? '';
+      if (filters.city  && !city.toLowerCase().includes(filters.city.toLowerCase()))  return false;
+      if (filters.ateco && !ateco.toLowerCase().includes(filters.ateco.toLowerCase())) return false;
+      if (filters.importoMin > 0 && (p.importo_richiesto ?? 0) < filters.importoMin)   return false;
+      if (filters.soloConKpi === 'con'  && !p.kpi)  return false;
+      if (filters.soloConKpi === 'senza' && !!p.kpi) return false;
+      return true;
+    });
+  }, [practices, filters]);
+
+  /* ── Pratiche preferiti ── */
+  const favoritePractices = useMemo(() => practices.filter(p => watchlist.has(p.id)), [practices, watchlist]);
+
+  /* ── Toggle confronto ── */
+  const toggleCompare = (id: string) => {
+    setCompareIds(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      if (prev.length >= 3) { toast.warning('Puoi confrontare al massimo 3 pratiche.'); return prev; }
+      return [...prev, id];
+    });
+  };
+
+  /* ── Export PDF scheda anonima ── */
+  const handleExportPdf = (p: AnonymousPractice) => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    let y = 15;
+
+    // Intestazione
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, pageW, 22, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Credifile - Scheda Pratica Anonima', pageW / 2, 13, { align: 'center' });
+    y = 30;
+
+    // Info pratica
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Pratica #${p.numero_pratica}`, 14, y); y += 7;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(`Data: ${new Date(p.created_at).toLocaleDateString('it-IT')}`, 14, y);
+    doc.text(`Stato: ${STATUS_LABEL[p.status] ?? p.status}`, 80, y); y += 6;
+
+    const city  = extractCity(p.clients?.indirizzo);
+    const ateco = extractAteco(p.clients?.indirizzo, p.codice_ateco ?? undefined);
+    if (city)  { doc.text(`Città: ${city}`,          14, y); y += 6; }
+    if (ateco) { doc.text(`Codice ATECO: ${ateco}`,  14, y); y += 6; }
+    if (p.importo_richiesto != null) {
+      doc.text(`Importo richiesto: ${fmt(p.importo_richiesto)}`, 14, y); y += 6;
+    }
+
+    // KPI per area con semaforo
+    if (p.kpi?.kpi) {
+      y += 4;
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('KPI Finanziari', 14, y); y += 6;
+      const areas = p.kpi.kpi as KpiAreas;
+      const SEMAFORO_SYMBOLS: Record<string, string> = { verde: '●', giallo: '◑', rosso: '○', nd: '–' };
+      (Object.keys(AREA_LABEL) as (keyof KpiAreas)[]).forEach(areaKey => {
+        const area = areas[areaKey];
+        if (!area) return;
+        const entries = Object.values(area).filter(e => e.valore !== null);
+        if (!entries.length) return;
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.text(AREA_LABEL[areaKey].replace(/[^\w\s]/gu, '').trim(), 14, y); y += 5;
+        doc.setFont('helvetica', 'normal');
+        entries.forEach(e => {
+          const sym = SEMAFORO_SYMBOLS[e.semaforo] ?? '–';
+          const colorMap: Record<string, [number, number, number]> = {
+            verde: [22, 163, 74], giallo: [217, 119, 6], rosso: [220, 38, 38], nd: [148, 163, 184],
+          };
+          const [r2, g, b] = colorMap[e.semaforo] ?? colorMap.nd;
+          doc.setTextColor(r2, g, b);
+          doc.text(`${sym} ${e.label}: ${e.formatted}`, 20, y);
+          doc.setTextColor(30, 41, 59);
+          y += 5;
+          if (y > 270) { doc.addPage(); y = 15; }
+        });
+      });
+    }
+
+    // Footer anonimato
+    y += 6;
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text('Documento anonimo - ragione sociale, P.IVA e CF non inclusi per tutela della riservatezza.', 14, y);
+
+    doc.save(`scheda-pratica-${p.numero_pratica}.pdf`);
+  };
+
   const handleRequest = async () => {
     if (!selected || !bankId || !user) return;
     setSubmitting(true);
@@ -425,6 +564,21 @@ export default function BancaPortalPage() {
           </span>
         </button>
         <button
+          onClick={() => setActiveTab('preferiti')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'preferiti'
+              ? 'border-red-500 text-red-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}>
+          <Heart className="w-4 h-4" />
+          Preferiti
+          {favoritePractices.length > 0 && (
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === 'preferiti' ? 'bg-red-100 text-red-600' : 'bg-red-100 text-red-600'}`}>
+              {favoritePractices.length}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => setActiveTab('ricevute')}
           className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'ricevute'
@@ -448,38 +602,125 @@ export default function BancaPortalPage() {
             ℹ️ I dati aziendali (ragione sociale, P.IVA) sono riservati. Richiedi i documenti per visualizzarli nella sezione <strong>Pratiche Ricevute</strong>.
           </div>
 
+          {/* ── Barra filtri ── */}
+          <div className="mb-4 bg-white border border-slate-200 rounded-lg px-4 py-3 flex flex-wrap gap-3 items-end">
+            <SlidersHorizontal className="w-4 h-4 text-slate-400 self-center shrink-0" />
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs text-slate-500">Città</Label>
+              <Input
+                placeholder="Es. Milano"
+                value={filters.city}
+                onChange={e => setFilters(f => ({ ...f, city: e.target.value }))}
+                className="h-8 w-36 text-sm"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs text-slate-500">ATECO</Label>
+              <Input
+                placeholder="Es. 68.11"
+                value={filters.ateco}
+                onChange={e => setFilters(f => ({ ...f, ateco: e.target.value }))}
+                className="h-8 w-32 text-sm"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs text-slate-500">Importo min</Label>
+              <Select
+                value={String(filters.importoMin)}
+                onValueChange={v => setFilters(f => ({ ...f, importoMin: Number(v) }))}>
+                <SelectTrigger className="h-8 w-36 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">Tutti</SelectItem>
+                  <SelectItem value="50000">&gt; 50.000 €</SelectItem>
+                  <SelectItem value="100000">&gt; 100.000 €</SelectItem>
+                  <SelectItem value="250000">&gt; 250.000 €</SelectItem>
+                  <SelectItem value="500000">&gt; 500.000 €</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs text-slate-500">KPI</Label>
+              <Select
+                value={filters.soloConKpi}
+                onValueChange={v => setFilters(f => ({ ...f, soloConKpi: v }))}>
+                <SelectTrigger className="h-8 w-40 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Tutti</SelectItem>
+                  <SelectItem value="con">Solo con KPI</SelectItem>
+                  <SelectItem value="senza">Solo senza KPI</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              variant="outline" size="sm"
+              onClick={() => setFilters({ city: '', ateco: '', importoMin: 0, soloConKpi: '' })}
+              className="h-8 gap-1.5">
+              <XIcon className="w-3.5 h-3.5" /> Reset filtri
+            </Button>
+            <span className="text-xs text-slate-400 self-center ml-auto">
+              {filteredPractices.length} / {practices.length} pratiche
+            </span>
+          </div>
+
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
             </div>
-          ) : practices.length === 0 ? (
+          ) : filteredPractices.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
               <BarChart2 className="w-10 h-10 text-slate-300" />
-              <p className="text-slate-500">Nessuna pratica disponibile al momento.</p>
+              <p className="text-slate-500">Nessuna pratica corrisponde ai filtri selezionati.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {practices.map(p => {
+              {filteredPractices.map(p => {
                 const city  = extractCity(p.clients?.indirizzo);
                 const ateco = extractAteco(p.clients?.indirizzo, p.codice_ateco ?? undefined);
                 const hasKpi = !!p.kpi;
                 const alreadyRequested = !!p.myRequest;
+                const isWatchlisted = watchlist.has(p.id);
+                const isCompared = compareIds.includes(p.id);
 
                 return (
-                  <Card key={p.id} className="border border-slate-200 hover:shadow-md transition-shadow">
+                  <Card key={p.id} className={`border transition-shadow hover:shadow-md ${isCompared ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'}`}>
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <CardTitle className="text-base font-semibold text-slate-700">
-                            Pratica #{p.numero_pratica}
-                          </CardTitle>
-                          <p className="text-xs text-slate-400 mt-0.5">
-                            {new Date(p.created_at).toLocaleDateString('it-IT')}
-                          </p>
+                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                          {/* Checkbox confronto */}
+                          <input
+                            type="checkbox"
+                            checked={isCompared}
+                            onChange={() => toggleCompare(p.id)}
+                            className="mt-1 accent-indigo-600 shrink-0 cursor-pointer"
+                            title="Aggiungi al confronto"
+                          />
+                          <div className="min-w-0">
+                            <CardTitle className="text-base font-semibold text-slate-700">
+                              Pratica #{p.numero_pratica}
+                            </CardTitle>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {new Date(p.created_at).toLocaleDateString('it-IT')}
+                            </p>
+                          </div>
                         </div>
-                        <Badge variant="outline" className={`text-xs shrink-0 ${STATUS_COLOR[p.status] ?? ''}`}>
-                          {STATUS_LABEL[p.status] ?? p.status}
-                        </Badge>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Badge variant="outline" className={`text-xs ${STATUS_COLOR[p.status] ?? ''}`}>
+                            {STATUS_LABEL[p.status] ?? p.status}
+                          </Badge>
+                          {/* Pulsante cuore watchlist */}
+                          <button
+                            onClick={() => toggleWatchlist(p.id)}
+                            className="p-1 rounded-full hover:bg-slate-100 transition-colors"
+                            title={isWatchlisted ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'}>
+                            <Heart
+                              className={`w-4 h-4 transition-colors ${isWatchlisted ? 'fill-red-500 text-red-500' : 'text-slate-300 hover:text-red-400'}`}
+                            />
+                          </button>
+                        </div>
                       </div>
                       {p.myRequest && (
                         <div className="mt-1"><RequestBadge req={p.myRequest} /></div>
@@ -571,28 +812,153 @@ export default function BancaPortalPage() {
                         </div>
                       )}
 
-                      {!alreadyRequested ? (
+                      {/* Azioni: PDF + Richiedi */}
+                      <div className="flex gap-2">
                         <Button
-                          className="w-full gap-1.5 bg-blue-600 hover:bg-blue-700" size="sm"
-                          onClick={() => { setSelected(p); setNotaBanca(''); }}>
-                          <Send className="w-3.5 h-3.5" /> Richiedi Documenti
+                          variant="outline" size="sm"
+                          onClick={() => handleExportPdf(p)}
+                          className="gap-1.5 text-xs shrink-0">
+                          📄 Scheda PDF
                         </Button>
-                      ) : p.myRequest?.status === 'in_attesa' ? (
-                        <div className="text-center text-xs text-amber-600 bg-amber-50 rounded-md py-2">
-                          ⏳ In attesa di approvazione segreteria
+                        {!alreadyRequested ? (
+                          <Button
+                            className="flex-1 gap-1.5 bg-blue-600 hover:bg-blue-700" size="sm"
+                            onClick={() => { setSelected(p); setNotaBanca(''); }}>
+                            <Send className="w-3.5 h-3.5" /> Richiedi Documenti
+                          </Button>
+                        ) : p.myRequest?.status === 'in_attesa' ? (
+                          <div className="flex-1 text-center text-xs text-amber-600 bg-amber-50 rounded-md py-2">
+                            ⏳ In attesa di approvazione segreteria
+                          </div>
+                        ) : p.myRequest?.status === 'approvata' ? (
+                          <div
+                            className="flex-1 text-center text-xs text-green-600 bg-green-50 rounded-md py-2 cursor-pointer hover:bg-green-100"
+                            onClick={() => setActiveTab('ricevute')}
+                            title="Vai a Pratiche Ricevute">
+                            ✅ Documenti ricevuti — vedi in <strong>Pratiche Ricevute</strong>
+                          </div>
+                        ) : (
+                          <div className="flex-1 text-center text-xs text-red-600 bg-red-50 rounded-md py-2">
+                            ❌ Richiesta rifiutata
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── TAB: Preferiti ── */}
+      {activeTab === 'preferiti' && (
+        <>
+          <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-700">
+            ❤️ Le pratiche salvate nei preferiti. Clicca il cuore su una pratica per rimuoverla.
+          </div>
+          {favoritePractices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
+              <Heart className="w-10 h-10 text-slate-300" />
+              <p className="text-slate-600 font-medium">Nessun preferito ancora</p>
+              <p className="text-slate-400 text-sm max-w-xs">Clicca il cuore su una pratica disponibile per salvarla qui.</p>
+              <Button variant="outline" size="sm" onClick={() => setActiveTab('disponibili')} className="mt-2 gap-1.5">
+                <Search className="w-3.5 h-3.5" /> Sfoglia Pratiche Disponibili
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {favoritePractices.map(p => {
+                const city  = extractCity(p.clients?.indirizzo);
+                const ateco = extractAteco(p.clients?.indirizzo, p.codice_ateco ?? undefined);
+                const hasKpi = !!p.kpi;
+                const alreadyRequested = !!p.myRequest;
+                const isCompared = compareIds.includes(p.id);
+
+                return (
+                  <Card key={p.id} className={`border transition-shadow hover:shadow-md ${isCompared ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-red-200'}`}>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isCompared}
+                            onChange={() => toggleCompare(p.id)}
+                            className="mt-1 accent-indigo-600 shrink-0 cursor-pointer"
+                            title="Aggiungi al confronto"
+                          />
+                          <div className="min-w-0">
+                            <CardTitle className="text-base font-semibold text-slate-700">
+                              Pratica #{p.numero_pratica}
+                            </CardTitle>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {new Date(p.created_at).toLocaleDateString('it-IT')}
+                            </p>
+                          </div>
                         </div>
-                      ) : p.myRequest?.status === 'approvata' ? (
-                        <div
-                          className="text-center text-xs text-green-600 bg-green-50 rounded-md py-2 cursor-pointer hover:bg-green-100"
-                          onClick={() => setActiveTab('ricevute')}
-                          title="Vai a Pratiche Ricevute">
-                          ✅ Documenti ricevuti — vedi in <strong>Pratiche Ricevute</strong>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Badge variant="outline" className={`text-xs ${STATUS_COLOR[p.status] ?? ''}`}>
+                            {STATUS_LABEL[p.status] ?? p.status}
+                          </Badge>
+                          <button
+                            onClick={() => toggleWatchlist(p.id)}
+                            className="p-1 rounded-full hover:bg-slate-100 transition-colors"
+                            title="Rimuovi dai preferiti">
+                            <Heart className="w-4 h-4 fill-red-500 text-red-500" />
+                          </button>
                         </div>
-                      ) : (
-                        <div className="text-center text-xs text-red-600 bg-red-50 rounded-md py-2">
-                          ❌ Richiesta rifiutata
+                      </div>
+                      {p.myRequest && <div className="mt-1"><RequestBadge req={p.myRequest} /></div>}
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        {city && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
+                            <MapPin className="w-3 h-3" /> {city}
+                          </span>
+                        )}
+                        {ateco && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
+                            🏭 ATECO {ateco}
+                          </span>
+                        )}
+                      </div>
+                      {p.importo_richiesto && (
+                        <div className="flex items-center gap-2 bg-blue-50 rounded-md px-3 py-2">
+                          <Euro className="w-4 h-4 text-blue-500 shrink-0" />
+                          <div>
+                            <p className="text-xs text-blue-600 font-medium">Importo richiesto</p>
+                            <p className="text-sm font-bold text-blue-800">{fmt(p.importo_richiesto)}</p>
+                          </div>
                         </div>
                       )}
+                      {!hasKpi && (
+                        <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-50 rounded-md px-3 py-2">
+                          <TrendingUp className="w-3 h-3" />
+                          <span>Dati finanziari non ancora disponibili</span>
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => handleExportPdf(p)} className="gap-1.5 text-xs shrink-0">
+                          📄 Scheda PDF
+                        </Button>
+                        {!alreadyRequested ? (
+                          <Button className="flex-1 gap-1.5 bg-blue-600 hover:bg-blue-700" size="sm"
+                            onClick={() => { setSelected(p); setNotaBanca(''); }}>
+                            <Send className="w-3.5 h-3.5" /> Richiedi Documenti
+                          </Button>
+                        ) : p.myRequest?.status === 'approvata' ? (
+                          <div className="flex-1 text-center text-xs text-green-600 bg-green-50 rounded-md py-2 cursor-pointer hover:bg-green-100"
+                            onClick={() => setActiveTab('ricevute')}>
+                            ✅ Documenti ricevuti
+                          </div>
+                        ) : (
+                          <div className="flex-1 text-center text-xs text-amber-600 bg-amber-50 rounded-md py-2">
+                            ⏳ In attesa
+                          </div>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 );
@@ -801,6 +1167,125 @@ export default function BancaPortalPage() {
           )}
         </>
       )}
+
+      {/* ── Banner sticky confronto ── */}
+      {compareIds.length >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-indigo-700 text-white px-5 py-3 rounded-full shadow-xl">
+          <GitCompare className="w-4 h-4" />
+          <span className="text-sm font-medium">{compareIds.length} pratiche selezionate</span>
+          <Button
+            size="sm"
+            className="bg-white text-indigo-700 hover:bg-indigo-50 rounded-full px-4 h-7 text-xs font-semibold"
+            onClick={() => setCompareOpen(true)}>
+            Confronta
+          </Button>
+          <button
+            onClick={() => setCompareIds([])}
+            className="ml-1 p-1 rounded-full hover:bg-indigo-600 transition-colors"
+            title="Annulla selezione">
+            <XIcon className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Dialog confronto pratiche ── */}
+      <Dialog open={compareOpen} onOpenChange={setCompareOpen}>
+        <DialogContent className="max-w-4xl w-full overflow-auto max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GitCompare className="w-4 h-4 text-indigo-600" />
+              Confronto Pratiche
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-separate border-spacing-0">
+              <thead>
+                <tr>
+                  <th className="text-left text-xs text-slate-500 uppercase tracking-wide py-2 pr-4 font-semibold w-32">Campo</th>
+                  {compareIds.map(id => {
+                    const p = practices.find(x => x.id === id);
+                    return (
+                      <th key={id} className="text-left py-2 px-3 bg-indigo-50 rounded-t border-b border-indigo-200 font-semibold text-slate-700">
+                        #{p?.numero_pratica ?? id.slice(0, 8)}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {/* Righe fisse */}
+                {([
+                  { label: 'Città', render: (p: AnonymousPractice) => extractCity(p.clients?.indirizzo) ?? '—' },
+                  { label: 'ATECO',  render: (p: AnonymousPractice) => extractAteco(p.clients?.indirizzo, p.codice_ateco ?? undefined) ?? '—' },
+                  { label: 'Importo', render: (p: AnonymousPractice) => p.importo_richiesto != null ? fmt(p.importo_richiesto) : '—' },
+                  { label: 'Stato',  render: (p: AnonymousPractice) => STATUS_LABEL[p.status] ?? p.status },
+                  { label: 'Data',   render: (p: AnonymousPractice) => new Date(p.created_at).toLocaleDateString('it-IT') },
+                  { label: 'Fatturato', render: (p: AnonymousPractice) => p.kpi?.ricavi_vendite != null ? fmt(p.kpi.ricavi_vendite) : '—' },
+                  { label: 'Patrimonio Netto', render: (p: AnonymousPractice) => p.kpi?.totale_patrimonio_netto != null ? fmt(p.kpi.totale_patrimonio_netto) : '—' },
+                ] as { label: string; render: (p: AnonymousPractice) => string }[]).map(row => (
+                  <tr key={row.label}>
+                    <td className="py-2 pr-4 text-xs font-medium text-slate-500">{row.label}</td>
+                    {compareIds.map(id => {
+                      const p = practices.find(x => x.id === id);
+                      return (
+                        <td key={id} className="py-2 px-3 text-slate-700">{p ? row.render(p) : '—'}</td>
+                      );
+                    })}
+                  </tr>
+                ))}
+
+                {/* KPI per area */}
+                {(Object.keys(AREA_LABEL) as (keyof KpiAreas)[]).map(areaKey => {
+                  // Raccoglie tutti i label KPI di questa area tra le pratiche selezionate
+                  const kpiLabels = new Set<string>();
+                  compareIds.forEach(id => {
+                    const p = practices.find(x => x.id === id);
+                    const area = (p?.kpi?.kpi as KpiAreas | undefined)?.[areaKey];
+                    if (area) Object.values(area).forEach(e => { if (e.valore !== null) kpiLabels.add(e.label); });
+                  });
+                  if (!kpiLabels.size) return null;
+                  return (
+                    <>
+                      <tr key={`header-${areaKey}`}>
+                        <td colSpan={compareIds.length + 1} className="pt-3 pb-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                            {AREA_LABEL[areaKey]}
+                          </span>
+                        </td>
+                      </tr>
+                      {[...kpiLabels].map(kpiLabel => (
+                        <tr key={`${areaKey}-${kpiLabel}`}>
+                          <td className="py-1.5 pr-4 text-xs text-slate-500 pl-2">{kpiLabel}</td>
+                          {compareIds.map(id => {
+                            const p = practices.find(x => x.id === id);
+                            const area = (p?.kpi?.kpi as KpiAreas | undefined)?.[areaKey];
+                            const entry = area ? Object.values(area).find(e => e.label === kpiLabel) : undefined;
+                            if (!entry || entry.valore === null) return <td key={id} className="py-1.5 px-3 text-slate-300">—</td>;
+                            return (
+                              <td key={id} className="py-1.5 px-3">
+                                <span className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border font-medium ${SEMAFORO_STYLE[entry.semaforo] ?? SEMAFORO_STYLE.nd}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${SEMAFORO_DOT[entry.semaforo] ?? SEMAFORO_DOT.nd}`} />
+                                  {entry.formatted}
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCompareOpen(false)}>Chiudi</Button>
+            <Button variant="outline" onClick={() => { setCompareIds([]); setCompareOpen(false); }} className="text-slate-500">
+              Deseleziona tutto
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog conferma richiesta */}
       <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>

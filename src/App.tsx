@@ -17,6 +17,7 @@ import MieiAgentiPage from "@/pages/admin/MieiAgentiPage";
 import MieiSegnalPage from "@/pages/admin/MieiSegnalPage";
 import StatistichePage from "@/pages/admin/StatistichePage";
 import ImpostazioniPage from "@/pages/admin/ImpostazioniPage";
+import SegnalatoreDashboardPage from "@/pages/admin/SegnalatoreDashboardPage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
@@ -83,8 +84,9 @@ const App = () => (
             <Route path="profilo" element={<ProfiloPage />} />
             <Route path="statistiche" element={<StatistichePage />} />
             <Route path="impostazioni" element={<ImpostazioniPage />} />
-            <Route path="miei-agenti"       element={<MieiAgentiPage />} />
-            <Route path="miei-segnalatori"  element={<MieiSegnalPage />} />
+            <Route path="miei-agenti"              element={<MieiAgentiPage />} />
+            <Route path="miei-segnalatori"          element={<MieiSegnalPage />} />
+            <Route path="segnalatore-dashboard"     element={<SegnalatoreDashboardPage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />

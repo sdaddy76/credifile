@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
-  UserCircle, UsersRound, BarChart3, Settings
+  UserCircle, UsersRound, BarChart3, Settings, TrendingUp,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -46,8 +46,9 @@ const NAV_AGENTE = [
 ];
 
 const NAV_SEGNALATORE = [
-  { to: '/admin/clienti',  icon: Users,       label: 'Clienti' },
-  { to: '/admin/profilo',  icon: UserCircle,  label: 'Profilo' },
+  { to: '/admin/segnalatore-dashboard', icon: TrendingUp,    label: 'Le Mie Statistiche' },
+  { to: '/admin/clienti',               icon: Users,         label: 'Clienti' },
+  { to: '/admin/profilo',               icon: UserCircle,    label: 'Profilo' },
 ];
 
 const ROLE_LABEL: Record<string, string> = {

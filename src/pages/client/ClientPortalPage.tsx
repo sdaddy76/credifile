@@ -9,12 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import {
   FileText, Upload, CheckCircle2, Clock, XCircle, AlertCircle,
-  LogOut, Download, Eye, ChevronDown, ChevronUp, PlusCircle, Trash2, Save, FileDown, Loader2
+  LogOut, Download, Eye, ChevronDown, ChevronUp, PlusCircle, Trash2, Save, FileDown, Loader2,
+  Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   STATUS_LABELS, STATUS_COLORS, DOC_STATUS_LABELS, DOC_STATUS_COLORS,
-  type Practice, type PracticeDocument
+  type Practice, type PracticeDocument, type PracticeStatusLog, type PracticeStatus,
 } from '@/lib/types';
 
 interface ClientSession {
@@ -34,6 +35,13 @@ export default function ClientPortalPage() {
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // ── Storico stati pratica ────────────────────────────────────────────────
+  const [statusLogs, setStatusLogs] = useState<PracticeStatusLog[]>([]);
+
+  // ── Upload autonomo (free-form, non legato a un practice_document) ────────
+  const [uploadingFreeDoc, setUploadingFreeDoc] = useState(false);
+  const freeUploadRef = useRef<HTMLInputElement | null>(null);
 
   // ── Moduli banca ─────────────────────────────────────────────────────────
   interface BankModulo { id: string; bank_id: string; nome: string; descrizione: string | null; file_path: string }
@@ -146,13 +154,15 @@ export default function ClientPortalPage() {
 
   const load = async () => {
     if (!practiceId) return;
-    const [p, docs, pbRes] = await Promise.all([
+    const [p, docs, pbRes, logsRes] = await Promise.all([
       supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)').eq('id', practiceId).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', practiceId).order('tipo').order('created_at'),
       supabase.from('practice_banks').select('bank_id').eq('practice_id', practiceId),
+      supabase.from('practice_status_log').select('*').eq('practice_id', practiceId).order('created_at', { ascending: true }),
     ]);
     setPractice(p.data as Practice);
     setDocuments((docs.data ?? []) as PracticeDocument[]);
+    setStatusLogs((logsRes.data ?? []) as PracticeStatusLog[]);
     const bankIds = (pbRes.data ?? []).map((r: { bank_id: string }) => r.bank_id);
     if (bankIds.length > 0) {
       const [modRes, compRes] = await Promise.all([
@@ -247,6 +257,54 @@ export default function ClientPortalPage() {
   const handleLogout = () => {
     sessionStorage.removeItem('docflow_client');
     navigate('/accesso');
+  };
+
+  // ── Upload documento libero (non legato a practice_document) ─────────────
+  const handleFreeDocUpload = async (file: File) => {
+    if (!practiceId) return;
+    if (file.size > 30 * 1024 * 1024) {
+      toast.error('File troppo grande. Massimo 30 MB.');
+      return;
+    }
+    setUploadingFreeDoc(true);
+    try {
+      const storagePath = `cliente/${practiceId}/${Date.now()}_${file.name}`;
+
+      const { error: upErr } = await supabase.storage
+        .from('practice-files')
+        .upload(storagePath, file, { cacheControl: '3600', upsert: false });
+
+      if (upErr) {
+        console.warn('Storage upload warning:', upErr.message);
+      }
+
+      const { error: dbErr } = await supabase.from('uploaded_files').insert({
+        practice_id: practiceId,
+        nome_file: file.name,
+        storage_path: storagePath,
+        uploaded_by: 'cliente',
+      } as Record<string, unknown>);
+
+      if (dbErr) {
+        // Se uploaded_by non esiste come colonna, riprova senza
+        if (dbErr.message?.includes('uploaded_by')) {
+          await supabase.from('uploaded_files').insert({
+            practice_id: practiceId,
+            nome_file: file.name,
+            storage_path: storagePath,
+          });
+        } else {
+          throw dbErr;
+        }
+      }
+
+      toast.success(`"${file.name}" caricato con successo!`);
+      load();
+    } catch (e) {
+      toast.error('Errore caricamento: ' + String(e));
+    } finally {
+      setUploadingFreeDoc(false);
+    }
   };
 
   if (loading || !session) return (
@@ -462,6 +520,113 @@ export default function ClientPortalPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* ── Stepper stati pratica ───────────────────────────────────────── */}
+        {(() => {
+          const STEPS: { key: PracticeStatus; label: string }[] = [
+            { key: 'bozza',                  label: 'Bozza' },
+            { key: 'raccolta_documenti',      label: 'Raccolta Documenti' },
+            { key: 'inviata_banca',           label: 'Inviata Banca' },
+            { key: 'integrazioni_richieste',  label: 'In Valutazione' },
+            { key: 'approvata',               label: 'Approvata / Declinata' },
+          ];
+
+          const STATUS_MESSAGES: Partial<Record<PracticeStatus, string>> = {
+            bozza:               '📝 La pratica è in fase di configurazione da parte del tuo agente.',
+            raccolta_documenti:  '📂 Stiamo raccogliendo la documentazione necessaria. Carica i documenti richiesti qui sotto.',
+            inviata_banca:       '🏦 La pratica è stata inviata alla banca. Attendiamo una risposta.',
+            integrazioni_richieste: '🔍 La banca sta valutando la tua richiesta. Ti aggiorneremo appena disponibile.',
+            approvata:           '✅ Complimenti! La tua pratica è stata approvata.',
+            declinata:           '❌ Purtroppo la pratica è stata declinata. Contatta il tuo agente per ulteriori informazioni.',
+          };
+
+          // Trova l'indice dello stato corrente nell'array STEPS
+          const currentKey = practice.status;
+          const currentIdx = STEPS.findIndex(s => s.key === currentKey);
+          // Se lo stato non è in STEPS (es. declinata/integrazioni) mostra l'ultimo step evidenziato
+          const displayIdx = currentIdx === -1 ? STEPS.length - 1 : currentIdx;
+
+          return (
+            <Card className="border-border">
+              <CardContent className="pt-5 pb-5">
+                <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">
+                  Avanzamento Pratica
+                </p>
+
+                {/* Stepper orizzontale su md, verticale su mobile */}
+                <div className="flex flex-col gap-0">
+                  {STEPS.map((step, idx) => {
+                    const log = statusLogs.find(l => l.new_status === step.key);
+                    const isCurrent = idx === displayIdx;
+                    const isPast    = idx < displayIdx;
+                    const isFuture  = idx > displayIdx;
+
+                    return (
+                      <div key={step.key} className="flex items-start gap-3">
+                        {/* Icona + linea verticale */}
+                        <div className="flex flex-col items-center">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold transition-colors ${
+                            isCurrent
+                              ? 'bg-blue-600 text-white shadow-md'
+                              : isPast
+                              ? 'bg-green-500 text-white'
+                              : 'bg-muted text-muted-foreground'
+                          }`}>
+                            {isPast
+                              ? <Check className="w-4 h-4" />
+                              : <span>{idx + 1}</span>
+                            }
+                          </div>
+                          {/* Connettore verticale (non sull'ultimo) */}
+                          {idx < STEPS.length - 1 && (
+                            <div className={`w-0.5 h-6 mt-0.5 ${isPast ? 'bg-green-400' : 'bg-border'}`} />
+                          )}
+                        </div>
+
+                        {/* Testo */}
+                        <div className="pb-4 flex-1 min-w-0">
+                          <p className={`text-sm font-semibold leading-tight ${
+                            isCurrent ? 'text-blue-700' : isPast ? 'text-green-700' : 'text-muted-foreground'
+                          }`}>
+                            {step.label}
+                            {isCurrent && (
+                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                                Corrente
+                              </span>
+                            )}
+                          </p>
+                          {log?.created_at && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {new Date(log.created_at).toLocaleString('it-IT', {
+                                day: '2-digit', month: '2-digit', year: 'numeric',
+                                hour: '2-digit', minute: '2-digit',
+                              })}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Messaggio contestuale */}
+                {STATUS_MESSAGES[currentKey] && (
+                  <div className={`mt-1 rounded-lg px-4 py-3 text-sm ${
+                    currentKey === 'approvata'
+                      ? 'bg-green-50 border border-green-200 text-green-800'
+                      : currentKey === 'declinata'
+                      ? 'bg-red-50 border border-red-200 text-red-800'
+                      : currentKey === 'integrazioni_richieste'
+                      ? 'bg-amber-50 border border-amber-200 text-amber-800'
+                      : 'bg-blue-50 border border-blue-200 text-blue-800'
+                  }`}>
+                    {STATUS_MESSAGES[currentKey]}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Documenti */}
         <div className="space-y-6">
@@ -689,6 +854,117 @@ export default function ClientPortalPage() {
                 <><Save className="w-4 h-4" /> Salva Finanziamenti</>
               )}
             </Button>
+          </CardContent>
+        </Card>
+
+        {/* ── Carica i tuoi Documenti ─────────────────────────────────────── */}
+        <Card className="border-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Upload className="w-4 h-4 text-primary" />
+              Carica i tuoi Documenti
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Carica i file richiesti per ogni voce oppure aggiungi un documento libero.
+            </p>
+          </CardHeader>
+          <CardContent className="pb-4 space-y-3">
+            {documents.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                Nessun documento richiesto al momento.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {documents.map(doc => {
+                  const isLoading = uploadingDoc === doc.id;
+                  const isUploaded = doc.status === 'caricato' || doc.status === 'approvato';
+                  return (
+                    <div
+                      key={doc.id}
+                      className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5"
+                    >
+                      {/* Nome documento */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {doc.nome}
+                          {doc.obbligatorio && (
+                            <span className="ml-1 text-red-500 text-xs">*</span>
+                          )}
+                        </p>
+                      </div>
+
+                      {/* Badge stato */}
+                      {isUploaded ? (
+                        <Badge className="bg-green-100 text-green-700 border-green-200 text-xs shrink-0">
+                          <CheckCircle2 className="w-3 h-3 mr-1" /> Caricato
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0">
+                          <Clock className="w-3 h-3 mr-1" /> In attesa
+                        </Badge>
+                      )}
+
+                      {/* Pulsante Carica */}
+                      <div className="shrink-0">
+                        <input
+                          type="file"
+                          ref={el => { fileInputRefs.current[`quick_${doc.id}`] = el; }}
+                          className="hidden"
+                          accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                          onChange={e => handleFileSelect(doc.id, e)}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          disabled={isLoading}
+                          onClick={() => fileInputRefs.current[`quick_${doc.id}`]?.click()}
+                        >
+                          {isLoading ? (
+                            <><Loader2 className="w-3 h-3 animate-spin" /> Carico...</>
+                          ) : (
+                            <><Upload className="w-3 h-3" /> Carica</>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Separatore */}
+            <div className="border-t border-border pt-3 mt-1">
+              <p className="text-xs text-muted-foreground mb-2">
+                Hai altri documenti rilevanti? Caricali liberamente:
+              </p>
+              <input
+                type="file"
+                ref={freeUploadRef}
+                className="hidden"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip"
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFreeDocUpload(f);
+                  e.target.value = '';
+                }}
+              />
+              <Button
+                variant="outline"
+                className="w-full gap-2 border-dashed"
+                disabled={uploadingFreeDoc}
+                onClick={() => freeUploadRef.current?.click()}
+              >
+                {uploadingFreeDoc ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Caricamento in corso...</>
+                ) : (
+                  <><PlusCircle className="w-4 h-4" /> Carica documento libero</>
+                )}
+              </Button>
+              <p className="text-xs text-muted-foreground text-center mt-1">
+                PDF, Word, Excel, immagini, ZIP — max 30 MB
+              </p>
+            </div>
           </CardContent>
         </Card>
 
