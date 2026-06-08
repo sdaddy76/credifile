@@ -189,7 +189,7 @@ export default function BancaPortalPage() {
     try {
       const { data: pData, error: pErr } = await supabase
         .from('practices')
-        .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(indirizzo, data_costituzione)')
+        .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at')
         .in('status', VISIBLE_STATUSES)
         .order('created_at', { ascending: false });
 
@@ -423,7 +423,6 @@ export default function BancaPortalPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {practices.map(p => {
                 const ateco = p.codice_ateco;
-                const indirizzo = p.clients?.indirizzo;
                 const hasKpi = !!p.kpi;
                 const alreadyRequested = !!p.myRequest;
 
@@ -449,11 +448,6 @@ export default function BancaPortalPage() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex flex-wrap gap-2">
-                        {indirizzo && (
-                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
-                            <MapPin className="w-3 h-3" /> {indirizzo}
-                          </span>
-                        )}
                         {ateco && (
                           <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
                             🏭 ATECO {ateco}
