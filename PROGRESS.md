@@ -95,3 +95,5 @@
 [2026-06-07 19:05] Inizio implementazione tab Pratiche Ricevute nel portale banche
 [2026-06-08 10:58] Fix protezione ruoli super_admin (commit 53a78db): Lock icon, no Trash, handleDelete guard. Fix RLS ricorsiva admin_profiles (policy banca). SQL roles corretti. Fix loading bug BancaPortalPage in corso.
 [2026-06-08 11:06] Diagnosticato: bank_user_id=info@fiw.it su tutte e 5 le banche causa .maybeSingle() fail. Vercel non auto-deploya. Fix in corso.
+[2026-06-08 15:49] Fix codice_ateco (commit 6694142) pushato su GitHub. Diagnosi: 400 su practices per colonna inesistente. In corso: crea utenti test banche + diagnosi visibilità pratiche.
+[2026-06-08 17:43] Deploy Vercel completato (commit 6694142). URL: credifile-eosin.vercel.app. Token Vercel salvato. Fix: codice_ateco non in practices (causa 400), maybeSingle→limit(1), loading bug.

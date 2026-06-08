@@ -51,22 +51,17 @@ interface AnonymousPractice {
   importo_richiesto?: number;
   motivazione?: string;
   status: string;
+  codice_ateco?: string;
   created_at: string;
   clients?: {
-    citta?: string;
-    cap?: string;
-    codice_ateco?: string;
-    settore?: string;
-    forma_giuridica?: string;
-    anno_costituzione?: string;
+    indirizzo?: string;
+    data_costituzione?: string;
   };
   kpi?: {
-    anno?: number;
-    fatturato?: number;
-    dscr?: number;
-    pfn?: number;
-    ebitda?: number;
-    patrimonio_netto?: number;
+    anno_esercizio?: number;
+    ricavi_vendite?: number;
+    totale_patrimonio_netto?: number;
+    kpi?: Record<string, number>;
   };
   myRequest?: { status: string; id: string };
 }
@@ -90,23 +85,15 @@ interface ReceivedPractice {
       piva?: string;
       codice_fiscale?: string;
       indirizzo?: string;
-      citta?: string;
-      cap?: string;
-      provincia?: string;
-      codice_ateco?: string;
-      settore?: string;
-      forma_giuridica?: string;
-      anno_costituzione?: string;
       telefono?: string;
       email?: string;
+      data_costituzione?: string;
     };
     kpi?: {
-      anno?: number;
-      fatturato?: number;
-      dscr?: number;
-      pfn?: number;
-      ebitda?: number;
-      patrimonio_netto?: number;
+      anno_esercizio?: number;
+      ricavi_vendite?: number;
+      totale_patrimonio_netto?: number;
+      kpi?: Record<string, number>;
     };
   };
 }
@@ -190,7 +177,7 @@ export default function BancaPortalPage() {
     try {
       const { data: pData, error: pErr } = await supabase
         .from('practices')
-        .select('id, numero_pratica, importo_richiesto, motivazione, status, created_at, clients(citta, cap, codice_ateco, settore, forma_giuridica, anno_costituzione)')
+        .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(indirizzo, data_costituzione)')
         .in('status', VISIBLE_STATUSES)
         .order('created_at', { ascending: false });
 
@@ -200,9 +187,9 @@ export default function BancaPortalPage() {
 
       const { data: kpiData, error: kpiErr } = await supabase
         .from('bilanci_kpi')
-        .select('practice_id, anno, fatturato, dscr, pfn, ebitda, patrimonio_netto')
+        .select('practice_id, anno_esercizio, ricavi_vendite, totale_patrimonio_netto, kpi')
         .in('practice_id', pList.length ? pList.map(p => p.id) : ['00000000-0000-0000-0000-000000000000'])
-        .order('anno', { ascending: false });
+        .order('anno_esercizio', { ascending: false });
 
       if (kpiErr) console.error('Errore bilanci_kpi:', kpiErr);
 
@@ -246,15 +233,15 @@ export default function BancaPortalPage() {
       // 2. Pratiche con dati completi
       const { data: pData } = await supabase
         .from('practices')
-        .select('id, numero_pratica, importo_richiesto, motivazione, status, created_at, clients(ragione_sociale, piva, codice_fiscale, indirizzo, citta, cap, provincia, codice_ateco, settore, forma_giuridica, anno_costituzione, telefono, email)')
+        .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(ragione_sociale, piva, codice_fiscale, indirizzo, telefono, email, data_costituzione)')
         .in('id', practiceIds);
 
       // 3. KPI (anno più recente per pratica)
       const { data: kpiData } = await supabase
         .from('bilanci_kpi')
-        .select('practice_id, anno, fatturato, dscr, pfn, ebitda, patrimonio_netto')
+        .select('practice_id, anno_esercizio, ricavi_vendite, totale_patrimonio_netto, kpi')
         .in('practice_id', practiceIds)
-        .order('anno', { ascending: false });
+        .order('anno_esercizio', { ascending: false });
 
       // 4. Profili segreteria
       const segMap: Record<string, { nome?: string; email?: string }> = {};
@@ -423,8 +410,8 @@ export default function BancaPortalPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {practices.map(p => {
-                const ateco = p.clients?.codice_ateco;
-                const citta = p.clients?.citta;
+                const ateco = p.codice_ateco;
+                const indirizzo = p.clients?.indirizzo;
                 const hasKpi = !!p.kpi;
                 const alreadyRequested = !!p.myRequest;
 
@@ -450,19 +437,14 @@ export default function BancaPortalPage() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex flex-wrap gap-2">
-                        {citta && (
+                        {indirizzo && (
                           <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
-                            <MapPin className="w-3 h-3" /> {citta}
+                            <MapPin className="w-3 h-3" /> {indirizzo}
                           </span>
                         )}
                         {ateco && (
                           <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
                             🏭 ATECO {ateco}
-                          </span>
-                        )}
-                        {p.clients?.forma_giuridica && (
-                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
-                            {p.clients.forma_giuridica}
                           </span>
                         )}
                       </div>
@@ -479,29 +461,29 @@ export default function BancaPortalPage() {
 
                       {hasKpi && (
                         <div className="grid grid-cols-2 gap-2">
-                          {p.kpi?.fatturato != null && (
+                          {p.kpi?.ricavi_vendite != null && (
                             <div className="bg-green-50 rounded-md px-3 py-2">
                               <p className="text-xs text-green-600">Fatturato</p>
-                              <p className="text-sm font-bold text-green-800">{fmt(p.kpi.fatturato)}</p>
-                              {p.kpi.anno && <p className="text-xs text-green-500">Anno {p.kpi.anno}</p>}
+                              <p className="text-sm font-bold text-green-800">{fmt(p.kpi.ricavi_vendite)}</p>
+                              {p.kpi.anno_esercizio && <p className="text-xs text-green-500">Anno {p.kpi.anno_esercizio}</p>}
                             </div>
                           )}
-                          {p.kpi?.ebitda != null && (
+                          {p.kpi?.totale_patrimonio_netto != null && (
                             <div className="bg-emerald-50 rounded-md px-3 py-2">
-                              <p className="text-xs text-emerald-600">EBITDA</p>
-                              <p className="text-sm font-bold text-emerald-800">{fmt(p.kpi.ebitda)}</p>
+                              <p className="text-xs text-emerald-600">Patrimonio Netto</p>
+                              <p className="text-sm font-bold text-emerald-800">{fmt(p.kpi.totale_patrimonio_netto)}</p>
                             </div>
                           )}
-                          {p.kpi?.dscr != null && (
+                          {p.kpi?.kpi?.redditivita != null && (
                             <div className="bg-purple-50 rounded-md px-3 py-2">
-                              <p className="text-xs text-purple-600">DSCR</p>
-                              <p className="text-sm font-bold text-purple-800">{fmtN(p.kpi.dscr)}</p>
+                              <p className="text-xs text-purple-600">Redditività</p>
+                              <p className="text-sm font-bold text-purple-800">{fmtN(p.kpi.kpi.redditivita)}%</p>
                             </div>
                           )}
-                          {p.kpi?.pfn != null && (
+                          {p.kpi?.kpi?.indebitamento != null && (
                             <div className="bg-orange-50 rounded-md px-3 py-2">
-                              <p className="text-xs text-orange-600">PFN</p>
-                              <p className="text-sm font-bold text-orange-800">{fmt(p.kpi.pfn)}</p>
+                              <p className="text-xs text-orange-600">Indebitamento</p>
+                              <p className="text-sm font-bold text-orange-800">{fmtN(p.kpi.kpi.indebitamento)}</p>
                             </div>
                           )}
                         </div>
@@ -620,46 +602,23 @@ export default function BancaPortalPage() {
                               <p className="text-sm font-medium text-slate-700">{c.codice_fiscale}</p>
                             </div>
                           )}
-                          {c?.forma_giuridica && (
+                          {c?.data_costituzione && (
                             <div>
-                              <p className="text-xs text-slate-400">Forma Giuridica</p>
-                              <p className="text-sm font-medium text-slate-700">{c.forma_giuridica}</p>
-                            </div>
-                          )}
-                          {c?.codice_ateco && (
-                            <div>
-                              <p className="text-xs text-slate-400">ATECO</p>
-                              <p className="text-sm font-medium text-slate-700">{c.codice_ateco}</p>
-                            </div>
-                          )}
-                          {c?.anno_costituzione && (
-                            <div>
-                              <p className="text-xs text-slate-400">Anno Costituzione</p>
-                              <p className="text-sm font-medium text-slate-700">{c.anno_costituzione}</p>
-                            </div>
-                          )}
-                          {c?.settore && (
-                            <div>
-                              <p className="text-xs text-slate-400">Settore</p>
-                              <p className="text-sm font-medium text-slate-700">{c.settore}</p>
+                              <p className="text-xs text-slate-400">Data Costituzione</p>
+                              <p className="text-sm font-medium text-slate-700">{new Date(c.data_costituzione).toLocaleDateString('it-IT')}</p>
                             </div>
                           )}
                         </div>
                       </div>
 
                       {/* Sede */}
-                      {(c?.indirizzo || c?.citta) && (
+                      {c?.indirizzo && (
                         <div>
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
                             <MapPin className="w-3.5 h-3.5" /> Sede
                           </p>
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-700">
                             {c?.indirizzo && <span>{c.indirizzo}</span>}
-                            {(c?.citta || c?.cap || c?.provincia) && (
-                              <span>
-                                {[c.cap, c.citta, c.provincia && `(${c.provincia})`].filter(Boolean).join(' ')}
-                              </span>
-                            )}
                           </div>
                         </div>
                       )}
