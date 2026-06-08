@@ -51,7 +51,6 @@ interface AnonymousPractice {
   importo_richiesto?: number;
   motivazione?: string;
   status: string;
-  codice_ateco?: string;
   created_at: string;
   clients?: {
     citta?: string;
@@ -191,7 +190,7 @@ export default function BancaPortalPage() {
     try {
       const { data: pData, error: pErr } = await supabase
         .from('practices')
-        .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(citta, cap, codice_ateco, settore, forma_giuridica, anno_costituzione)')
+        .select('id, numero_pratica, importo_richiesto, motivazione, status, created_at, clients(citta, cap, codice_ateco, settore, forma_giuridica, anno_costituzione)')
         .in('status', VISIBLE_STATUSES)
         .order('created_at', { ascending: false });
 
@@ -424,7 +423,7 @@ export default function BancaPortalPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {practices.map(p => {
-                const ateco = p.clients?.codice_ateco || p.codice_ateco;
+                const ateco = p.clients?.codice_ateco;
                 const citta = p.clients?.citta;
                 const hasKpi = !!p.kpi;
                 const alreadyRequested = !!p.myRequest;
