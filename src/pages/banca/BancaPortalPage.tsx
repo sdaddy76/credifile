@@ -126,8 +126,10 @@ const STATUS_COLOR: Record<string, string> = {
 const fmt = (n?: number | null) =>
   n != null ? new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : '—';
 
-const fmtN = (n?: number | null, decimals = 2) =>
-  n != null ? n.toFixed(decimals) : '—';
+const fmtN = (n?: unknown, decimals = 2) => {
+  const num = Number(n);
+  return n != null && !isNaN(num) ? num.toFixed(decimals) : '—';
+};
 
 /* ─── Component ─── */
 export default function BancaPortalPage() {
