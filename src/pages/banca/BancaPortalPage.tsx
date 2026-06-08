@@ -45,6 +45,16 @@ function BancaLayout({ children }: { children: React.ReactNode }) {
 }
 
 /* ─── Types ─── */
+interface KpiEntry { valore: number | null; formatted: string; semaforo: string; label: string }
+interface KpiAreas {
+  liquidita?:     Record<string, KpiEntry>;
+  solidita?:      Record<string, KpiEntry>;
+  redditivita?:   Record<string, KpiEntry>;
+  indebitamento?: Record<string, KpiEntry>;
+  efficienza?:    Record<string, KpiEntry>;
+  copertura?:     Record<string, KpiEntry>;
+}
+
 interface AnonymousPractice {
   id: string;
   numero_pratica: string;
@@ -53,20 +63,12 @@ interface AnonymousPractice {
   status: string;
   codice_ateco?: string;
   created_at: string;
-  clients?: {
-    indirizzo?: string;
-    data_costituzione?: string;
-  };
+  clients?: { indirizzo?: string };
   kpi?: {
     anno_esercizio?: number;
     ricavi_vendite?: number;
     totale_patrimonio_netto?: number;
-    fatturato?: number;
-    ebitda?: number;
-    dscr?: number;
-    pfn?: number;
-    patrimonio_netto?: number;
-    kpi?: Record<string, number>;
+    kpi?: KpiAreas;
   };
   myRequest?: { status: string; id: string };
 }
@@ -110,6 +112,33 @@ interface ReceivedPractice {
 
 /* ─── Helpers ─── */
 const VISIBLE_STATUSES = ['raccolta_documenti', 'inviata_banca', 'integrazioni_richieste', 'completata', 'approvata'];
+
+/** Estrae solo la città dall'indirizzo (formato visura: "...00000 CITTÀ (RM)") */
+function extractCity(indirizzo?: string): string | null {
+  if (!indirizzo) return null;
+  // Pattern: CAP a 5 cifre seguito da nome città
+  const m = indirizzo.match(/\b\d{5}\s+([A-ZÀÈÉÌÒÙA-Za-zàèéìòù][A-Za-zÀÈÉÌÒÙàèéìòùA-Z\s\-']{1,30}?)(?:\s*\(|\s*,|\s*\n|$)/);
+  if (m?.[1]) return m[1].trim().replace(/\s+/g, ' ');
+  return null;
+}
+
+const SEMAFORO_STYLE: Record<string, string> = {
+  verde:  'bg-green-50 text-green-800 border-green-200',
+  giallo: 'bg-amber-50 text-amber-800 border-amber-200',
+  rosso:  'bg-red-50 text-red-800 border-red-200',
+  nd:     'bg-slate-50 text-slate-500 border-slate-200',
+};
+const SEMAFORO_DOT: Record<string, string> = {
+  verde: 'bg-green-500', giallo: 'bg-amber-400', rosso: 'bg-red-500', nd: 'bg-slate-300',
+};
+const AREA_LABEL: Record<string, string> = {
+  liquidita:     '💧 Liquidità',
+  solidita:      '🏛️ Solidità',
+  redditivita:   '📈 Redditività',
+  indebitamento: '💳 Indebitamento',
+  efficienza:    '⚙️ Efficienza',
+  copertura:     '🛡️ Copertura',
+};
 
 const STATUS_LABEL: Record<string, string> = {
   raccolta_documenti: 'Raccolta Documenti',
@@ -189,7 +218,7 @@ export default function BancaPortalPage() {
     try {
       const { data: pData, error: pErr } = await supabase
         .from('practices')
-        .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at')
+        .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(indirizzo)')
         .in('status', VISIBLE_STATUSES)
         .order('created_at', { ascending: false });
 
@@ -423,6 +452,7 @@ export default function BancaPortalPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {practices.map(p => {
                 const ateco = p.codice_ateco;
+                const city  = extractCity(p.clients?.indirizzo);
                 const hasKpi = !!p.kpi;
                 const alreadyRequested = !!p.myRequest;
 
@@ -447,7 +477,13 @@ export default function BancaPortalPage() {
                       )}
                     </CardHeader>
                     <CardContent className="space-y-3">
+                      {/* Città + ATECO + Importo */}
                       <div className="flex flex-wrap gap-2">
+                        {city && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
+                            <MapPin className="w-3 h-3" /> {city}
+                          </span>
+                        )}
                         {ateco && (
                           <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
                             🏭 ATECO {ateco}
@@ -465,35 +501,59 @@ export default function BancaPortalPage() {
                         </div>
                       )}
 
-                      {hasKpi && (
+                      {/* KPI sintetici (fatturato + patrimonio) */}
+                      {hasKpi && (p.kpi?.ricavi_vendite != null || p.kpi?.totale_patrimonio_netto != null) && (
                         <div className="grid grid-cols-2 gap-2">
                           {p.kpi?.ricavi_vendite != null && (
-                            <div className="bg-green-50 rounded-md px-3 py-2">
-                              <p className="text-xs text-green-600">Fatturato</p>
-                              <p className="text-sm font-bold text-green-800">{fmt(p.kpi.ricavi_vendite)}</p>
-                              {p.kpi.anno_esercizio && <p className="text-xs text-green-500">Anno {p.kpi.anno_esercizio}</p>}
+                            <div className="bg-blue-50 rounded-md px-3 py-2">
+                              <p className="text-xs text-blue-600">Fatturato</p>
+                              <p className="text-sm font-bold text-blue-800">{fmt(p.kpi.ricavi_vendite)}</p>
+                              {p.kpi.anno_esercizio && <p className="text-[10px] text-blue-400">Anno {p.kpi.anno_esercizio}</p>}
                             </div>
                           )}
                           {p.kpi?.totale_patrimonio_netto != null && (
-                            <div className="bg-emerald-50 rounded-md px-3 py-2">
-                              <p className="text-xs text-emerald-600">Patrimonio Netto</p>
-                              <p className="text-sm font-bold text-emerald-800">{fmt(p.kpi.totale_patrimonio_netto)}</p>
-                            </div>
-                          )}
-                          {p.kpi?.kpi?.redditivita != null && (
-                            <div className="bg-purple-50 rounded-md px-3 py-2">
-                              <p className="text-xs text-purple-600">Redditività</p>
-                              <p className="text-sm font-bold text-purple-800">{fmtN(p.kpi.kpi.redditivita)}%</p>
-                            </div>
-                          )}
-                          {p.kpi?.kpi?.indebitamento != null && (
-                            <div className="bg-orange-50 rounded-md px-3 py-2">
-                              <p className="text-xs text-orange-600">Indebitamento</p>
-                              <p className="text-sm font-bold text-orange-800">{fmtN(p.kpi.kpi.indebitamento)}</p>
+                            <div className="bg-slate-50 rounded-md px-3 py-2">
+                              <p className="text-xs text-slate-600">Patrimonio Netto</p>
+                              <p className="text-sm font-bold text-slate-800">{fmt(p.kpi.totale_patrimonio_netto)}</p>
                             </div>
                           )}
                         </div>
                       )}
+
+                      {/* Tutti i KPI per area con semaforo */}
+                      {hasKpi && p.kpi?.kpi && (() => {
+                        const areas = p.kpi.kpi as KpiAreas;
+                        const areaKeys = (Object.keys(AREA_LABEL) as (keyof KpiAreas)[]).filter(k => {
+                          const area = areas[k];
+                          return area && Object.values(area).some(e => e.valore !== null);
+                        });
+                        if (!areaKeys.length) return null;
+                        return (
+                          <div className="space-y-2 border-t border-slate-100 pt-2">
+                            {areaKeys.map(areaKey => {
+                              const area = areas[areaKey]!;
+                              const entries = Object.values(area).filter(e => e.valore !== null);
+                              return (
+                                <div key={areaKey}>
+                                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                                    {AREA_LABEL[areaKey]}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {entries.map((e, i) => (
+                                      <span key={i}
+                                        className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border font-medium ${SEMAFORO_STYLE[e.semaforo] ?? SEMAFORO_STYLE.nd}`}
+                                        title={e.label}>
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${SEMAFORO_DOT[e.semaforo] ?? SEMAFORO_DOT.nd}`} />
+                                        {e.label}: {e.formatted}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
 
                       {!hasKpi && (
                         <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-50 rounded-md px-3 py-2">
