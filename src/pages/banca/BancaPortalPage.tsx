@@ -61,6 +61,11 @@ interface AnonymousPractice {
     anno_esercizio?: number;
     ricavi_vendite?: number;
     totale_patrimonio_netto?: number;
+    fatturato?: number;
+    ebitda?: number;
+    dscr?: number;
+    pfn?: number;
+    patrimonio_netto?: number;
     kpi?: Record<string, number>;
   };
   myRequest?: { status: string; id: string };
@@ -93,6 +98,11 @@ interface ReceivedPractice {
       anno_esercizio?: number;
       ricavi_vendite?: number;
       totale_patrimonio_netto?: number;
+      fatturato?: number;
+      ebitda?: number;
+      dscr?: number;
+      pfn?: number;
+      patrimonio_netto?: number;
       kpi?: Record<string, number>;
     };
   };
@@ -677,7 +687,7 @@ export default function BancaPortalPage() {
                         <div>
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
                             <Landmark className="w-3.5 h-3.5" /> KPI Finanziari
-                            {kpi.anno && <span className="text-slate-400 font-normal ml-1">(Anno {kpi.anno})</span>}
+                            {kpi.anno_esercizio && <span className="text-slate-400 font-normal ml-1">(Anno {kpi.anno_esercizio})</span>}
                           </p>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             {kpi.fatturato != null && (
