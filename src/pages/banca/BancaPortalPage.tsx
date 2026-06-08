@@ -165,11 +165,12 @@ export default function BancaPortalPage() {
       .from('banks')
       .select('id, nome')
       .eq('bank_user_id', user.id)
-      .maybeSingle()
+      .limit(1)
       .then(({ data, error }) => {
-        if (data) {
-          setBankId(data.id);
-          setBankNome(data.nome);
+        const record = data?.[0] ?? null;
+        if (record) {
+          setBankId(record.id);
+          setBankNome(record.nome);
         } else {
           // Nessuna banca trovata per questo utente — ferma lo spinner
           setLoading(false);
