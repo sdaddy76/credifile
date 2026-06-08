@@ -93,3 +93,4 @@
 [2026-06-07 18:16] Avvio implementazione portale banche anonimo: bank_interest_requests, BancaPortalPage, flusso richiesta/approvazione documenti
 [2026-06-07 18:30] Portale banche completato: BancaPortalPage (lista anonima KPI/ATECO/città), ruolo 'banca', creazione account da BanchePage, richieste pendenti in Dashboard con approvazione/rifiuto. Commit 4235903 su GitHub/Vercel. SQL migration da eseguire manualmente.
 [2026-06-07 19:05] Inizio implementazione tab Pratiche Ricevute nel portale banche
+[2026-06-08 10:58] Fix protezione ruoli super_admin (commit 53a78db): Lock icon, no Trash, handleDelete guard. Fix RLS ricorsiva admin_profiles (policy banca). SQL roles corretti. Fix loading bug BancaPortalPage in corso.

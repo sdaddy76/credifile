@@ -156,6 +156,7 @@ export default function BancaPortalPage() {
   const [selected, setSelected] = useState<AnonymousPractice | null>(null);
   const [notaBanca, setNotaBanca] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string | null>(null);
 
   /* Carica bank_id dalla tabella banks */
   useEffect(() => {
@@ -165,34 +166,52 @@ export default function BancaPortalPage() {
       .select('id, nome')
       .eq('bank_user_id', user.id)
       .maybeSingle()
-      .then(({ data }) => {
-        if (data) { setBankId(data.id); setBankNome(data.nome); }
+      .then(({ data, error }) => {
+        if (data) {
+          setBankId(data.id);
+          setBankNome(data.nome);
+        } else {
+          // Nessuna banca trovata per questo utente — ferma lo spinner
+          setLoading(false);
+          if (error) {
+            console.error('Errore caricamento banca:', error);
+            setDebugInfo('Errore banca: ' + error.message);
+          } else {
+            setDebugInfo('Nessuna banca associata a user.id=' + user.id);
+          }
+        }
       });
   }, [user]);
 
   /* Pratiche disponibili (anonime) */
   const loadDisponibili = async () => {
-    if (!bankId) return;
+    if (!bankId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const { data: pData } = await supabase
+      const { data: pData, error: pErr } = await supabase
         .from('practices')
         .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(citta, cap, codice_ateco, settore, forma_giuridica, anno_costituzione)')
         .in('status', VISIBLE_STATUSES)
         .order('created_at', { ascending: false });
 
+      if (pErr) { console.error('Errore practices:', pErr); setDebugInfo('Errore practices: ' + pErr.message); }
+
       const pList = (pData ?? []) as AnonymousPractice[];
 
-      const { data: kpiData } = await supabase
+      const { data: kpiData, error: kpiErr } = await supabase
         .from('bilanci_kpi')
         .select('practice_id, anno, fatturato, dscr, pfn, ebitda, patrimonio_netto')
-        .in('practice_id', pList.map(p => p.id))
+        .in('practice_id', pList.length ? pList.map(p => p.id) : ['00000000-0000-0000-0000-000000000000'])
         .order('anno', { ascending: false });
 
-      const { data: reqData } = await supabase
+      if (kpiErr) console.error('Errore bilanci_kpi:', kpiErr);
+
+      const { data: reqData, error: reqErr } = await supabase
         .from('bank_interest_requests')
         .select('id, practice_id, status')
         .eq('bank_id', bankId);
+
+      if (reqErr) console.error('Errore bank_interest_requests:', reqErr);
 
       const kpiMap: Record<string, AnonymousPractice['kpi']> = {};
       (kpiData ?? []).forEach(k => { if (!kpiMap[k.practice_id]) kpiMap[k.practice_id] = k; });
@@ -321,6 +340,11 @@ export default function BancaPortalPage() {
           <Building className="w-12 h-12 text-slate-300" />
           <h2 className="text-xl font-semibold text-slate-700">Account non configurato</h2>
           <p className="text-slate-500 max-w-sm">Questo account non è ancora associato a nessuna banca. Contatta l'amministratore.</p>
+          {debugInfo && (
+            <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded px-3 py-2 max-w-sm font-mono break-all">
+              {debugInfo}
+            </p>
+          )}
         </div>
       </BancaLayout>
     );
