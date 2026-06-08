@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck, Download } from 'lucide-react';
+import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck, Download, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { jsPDF } from 'jspdf';
@@ -618,6 +618,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const [codiceAteco, setCodiceAteco] = useState<string | null>(null);
   const [bancabilita, setBancabilita] = useState<BancaCheck[]>([]);
   const [loadingBanca, setLoadingBanca] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loadBancabilita = useCallback(async (latestKpi: KpiResult | null) => {
     setLoadingBanca(true);
@@ -705,6 +706,23 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   };
 
   useEffect(() => { loadData(); }, [practiceId]);
+
+  const handleDeleteBilancio = async (id: string, anno: number) => {
+    if (!window.confirm(`Eliminare il bilancio ${anno}? L'operazione è irreversibile.`)) return;
+    setDeletingId(id);
+    try {
+      const { error } = await supabase.from('bilanci_kpi').delete().eq('id', id);
+      if (error) throw error;
+      const updated = bilanci.filter(b => b.id !== id);
+      setBilanci(updated);
+      if (selectedBilancio?.id === id) setSelectedBilancio(updated[0] ?? null);
+      toast.success(`Bilancio ${anno} eliminato`);
+    } catch (e: unknown) {
+      toast.error('Errore eliminazione: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   // Ricarica bancabilità ogni volta che cambia il set di bilanci analizzati
   useEffect(() => {
@@ -890,18 +908,33 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             {bilanci.map(b => {
               const s = countSemafori(b);
               const isSelected = selectedBilancio?.id === b.id;
+              const isDeleting = deletingId === b.id;
               return (
-                <button key={b.id} onClick={() => setSelectedBilancio(b)}
-                  className={`w-full text-left p-3 rounded-lg border transition-colors ${isSelected ? 'bg-primary/5 border-primary' : 'bg-card border-border hover:border-muted-foreground/50'}`}>
-                  <div className="font-semibold text-sm">{b.anno_esercizio ?? '—'}</div>
-                  <div className="text-xs text-muted-foreground truncate mt-0.5">{b.ragione_sociale}</div>
-                  {b.is_holding && <Badge variant="outline" className="text-xs mt-1.5 py-0">Holding</Badge>}
-                  <div className="flex gap-2 mt-2 text-xs">
-                    <span className="text-green-700">🟢 {s.verde}</span>
-                    <span className="text-amber-600">🟡 {s.giallo}</span>
-                    <span className="text-red-600">🔴 {s.rosso}</span>
-                  </div>
-                </button>
+                <div key={b.id}
+                  className={`relative w-full text-left p-3 rounded-lg border transition-colors ${isSelected ? 'bg-primary/5 border-primary' : 'bg-card border-border hover:border-muted-foreground/50'}`}>
+                  {/* area cliccabile per selezione */}
+                  <button className="w-full text-left" onClick={() => setSelectedBilancio(b)}>
+                    <div className="font-semibold text-sm">{b.anno_esercizio ?? '—'}</div>
+                    <div className="text-xs text-muted-foreground truncate mt-0.5">{b.ragione_sociale}</div>
+                    {b.is_holding && <Badge variant="outline" className="text-xs mt-1.5 py-0">Holding</Badge>}
+                    <div className="flex gap-2 mt-2 text-xs">
+                      <span className="text-green-700">🟢 {s.verde}</span>
+                      <span className="text-amber-600">🟡 {s.giallo}</span>
+                      <span className="text-red-600">🔴 {s.rosso}</span>
+                    </div>
+                  </button>
+                  {/* pulsante elimina */}
+                  <button
+                    onClick={e => { e.stopPropagation(); handleDeleteBilancio(b.id, b.anno_esercizio); }}
+                    disabled={isDeleting}
+                    title="Elimina bilancio"
+                    className="absolute top-2 right-2 p-1 rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
+                  >
+                    {isDeleting
+                      ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               );
             })}
           </div>
