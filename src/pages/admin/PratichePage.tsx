@@ -507,16 +507,16 @@ export default function PratichePage() {
                         <code className="text-xs text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">{p.numero_pratica}</code>
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
-                        {assignedAgent && !isAgente && <span>👤 {assignedAgent.nome || assignedAgent.email}</span>}
-                        {/* Provenienza: visibile solo a super_admin e segreteria */}
-                        {(isSuperAdmin || isSegreteria) && createdByAgent && (
-                          <span className="flex items-center gap-1 text-blue-600">
-                            <span className="font-medium">Agente:</span> {createdByAgent.nome || createdByAgent.email}
+                        {/* 1. Segreteria di competenza (solo super_admin) */}
+                        {isSuperAdmin && assignedAgent?.id && segreteriaMap[assignedAgent.id] && (
+                          <span className="flex items-center gap-1 text-purple-600 font-medium">
+                            🏢 {segreteriaMap[assignedAgent.id]}
                           </span>
                         )}
-                        {isSuperAdmin && assignedAgent?.id && segreteriaMap[assignedAgent.id] && (
-                          <span className="flex items-center gap-1 text-purple-600">
-                            <span className="font-medium">Segreteria:</span> {segreteriaMap[assignedAgent.id]}
+                        {/* 2. Agente assegnato */}
+                        {assignedAgent && !isAgente && (
+                          <span className="flex items-center gap-1">
+                            👤 {assignedAgent.nome || assignedAgent.email}
                           </span>
                         )}
                         {(isSuperAdmin || isSegreteria) && segnalatorePratica && (
