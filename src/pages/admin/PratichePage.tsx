@@ -121,8 +121,8 @@ export default function PratichePage() {
     let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)');
 
     if (isAgente && user?.id) {
-      // Agente: vede le proprie E quelle assegnate a lui
-      query = query.or(`created_by.eq.${user.id},assigned_to.eq.${user.id}`);
+      // Agente: vede SOLO le pratiche assegnate a lui
+      query = query.eq('assigned_to', user.id);
     } else if (isSegreteria && user?.id) {
       // Segreteria: vede le pratiche degli agenti assegnati
       const { data: assignments } = await supabase
@@ -131,7 +131,7 @@ export default function PratichePage() {
         .eq('segreteria_user_id', user.id);
       if (assignments && assignments.length > 0) {
         const agentIds = assignments.map((a: { agent_user_id: string }) => a.agent_user_id);
-        query = query.in('created_by', agentIds);
+        query = query.in('assigned_to', agentIds);
       } else {
         setPractices([]);
         setLoading(false);
