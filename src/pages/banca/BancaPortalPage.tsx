@@ -18,7 +18,7 @@ import {
   FileText, User, Phone, Mail, Calendar, Hash, Landmark, Heart,
   SlidersHorizontal, GitCompare, X as XIcon, Settings, Save, Loader2,
 } from 'lucide-react';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 
 /* ─── Layout ─── */
 function BancaLayout({ children }: { children: React.ReactNode }) {
@@ -184,6 +184,15 @@ const fmtN = (n?: unknown, decimals = 2) => {
   return n != null && !isNaN(num) ? num.toFixed(decimals) : '—';
 };
 
+/* ─── NotifSettings interface (fuori dal componente per evitare problemi Vite) ─── */
+interface NotifSettings {
+  notifica_nuove: boolean;
+  email: string;
+  importo_min: string;
+  importo_max: string;
+  ateco_filter: string;
+}
+
 /* ─── Component ─── */
 export default function BancaPortalPage() {
   const { user } = useAuth();
@@ -200,13 +209,6 @@ export default function BancaPortalPage() {
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
 
   /* ── Impostazioni Notifiche ── */
-  interface NotifSettings {
-    notifica_nuove: boolean;
-    email: string;
-    importo_min: string;
-    importo_max: string;
-    ateco_filter: string;
-  }
   const [notifSettings, setNotifSettings] = useState<NotifSettings>({
     notifica_nuove: true,
     email: '',
@@ -370,23 +372,31 @@ export default function BancaPortalPage() {
   /* ── Carica impostazioni notifiche ── */
   const loadNotifSettings = async () => {
     if (!bankId) return;
-    const { data } = await supabase
-      .from('bank_notification_settings')
-      .select('*')
-      .eq('bank_id', bankId)
-      .maybeSingle();
-    if (data) {
-      setNotifSettingsId(data.id);
-      setNotifSettings({
-        notifica_nuove: data.notifica_nuove ?? true,
-        email: data.email ?? user?.email ?? '',
-        importo_min: data.importo_min != null ? String(data.importo_min) : '',
-        importo_max: data.importo_max != null ? String(data.importo_max) : '',
-        ateco_filter: Array.isArray(data.ateco_filter) ? data.ateco_filter.join(', ') : (data.ateco_filter ?? ''),
-      });
-    } else {
-      // Nessuna impostazione: pre-popola email utente
-      setNotifSettings(prev => ({ ...prev, email: user?.email ?? '' }));
+    try {
+      const { data, error } = await supabase
+        .from('bank_notification_settings')
+        .select('*')
+        .eq('bank_id', bankId)
+        .maybeSingle();
+      if (error) {
+        console.error('Errore caricamento impostazioni notifiche:', error);
+        return;
+      }
+      if (data) {
+        setNotifSettingsId(data.id);
+        setNotifSettings({
+          notifica_nuove: data.notifica_nuove ?? true,
+          email: data.email ?? user?.email ?? '',
+          importo_min: data.importo_min != null ? String(data.importo_min) : '',
+          importo_max: data.importo_max != null ? String(data.importo_max) : '',
+          ateco_filter: Array.isArray(data.ateco_filter) ? data.ateco_filter.join(', ') : (data.ateco_filter ?? ''),
+        });
+      } else {
+        // Nessuna impostazione: pre-popola email utente
+        setNotifSettings(prev => ({ ...prev, email: user?.email ?? '' }));
+      }
+    } catch (err) {
+      console.error('Eccezione in loadNotifSettings:', err);
     }
   };
 

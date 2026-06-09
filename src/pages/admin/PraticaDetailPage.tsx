@@ -25,7 +25,7 @@ import {
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
 import { parseCentraleRischi, categoriaToTipologia, type CRRiga } from '@/lib/parseCentraleRischi';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -242,11 +242,15 @@ export default function PraticaDetailPage() {
 
   const loadDocTemplates = async () => {
     setLoadingDocTemplates(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('document_templates')
       .select('id, nome, categoria, contenuto, variabili')
       .eq('attivo', true)
       .order('categoria');
+    if (error) {
+      console.error('Errore template:', error);
+      toast.error('Errore caricamento template');
+    }
     setDocTemplates((data ?? []) as ContentTemplate[]);
     setLoadingDocTemplates(false);
   };
@@ -273,7 +277,11 @@ export default function PraticaDetailPage() {
       // Rimuovi eventuale CAP (5 cifre) iniziale
       return last.replace(/^\d{5}\s*/, '').trim();
     })();
-    const codiceAteco = practice?.codice_ateco ?? '';
+    // Estrai codice ATECO: usa campo diretto se presente, altrimenti lo cerca nell'indirizzo visura
+    const codiceAteco = practice?.codice_ateco ?? (() => {
+      const m = indirizzo.match(/(?:ATECO|Codice)[^\d]*(\d{2}[.\-]\d{2}(?:[.\-]\d{1,2})?)/i);
+      return m?.[1] ?? '';
+    })();
 
     const map: Record<string, string> = {
       ragione_sociale:   ragioneSociale,
@@ -531,6 +539,7 @@ export default function PraticaDetailPage() {
     loadActivityLogs();
     loadScores();
     loadDeadlines();
+    loadDocTemplates();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -1106,7 +1115,6 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="documenti">Documenti ({documents.length})</TabsTrigger>
               <TabsTrigger value="banche">Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
               <TabsTrigger value="finanziamenti">Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
-              <TabsTrigger value="scheda">Scheda Rischio</TabsTrigger>
               <TabsTrigger value="analisi">Analisi Finanziaria</TabsTrigger>
               <TabsTrigger value="bancabilita">Bancabilità</TabsTrigger>
               <TabsTrigger value="reputazione">Reputazione</TabsTrigger>
@@ -1634,10 +1642,6 @@ export default function PraticaDetailPage() {
                   )}
                 </div>
               )}
-            </TabsContent>
-
-            <TabsContent value="scheda" className="mt-3">
-              <SchedaValutazioneRischio practiceId={id!} />
             </TabsContent>
 
             <TabsContent value="analisi" className="mt-3">
