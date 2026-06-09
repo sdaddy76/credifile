@@ -332,7 +332,7 @@ const EMPTY: FormState = {
 // ═══════════════════════════════════════════════════════════
 
 export default function ClientiPage() {
-  const { user, loading: authLoading, isSegnalatore } = useAuth();
+  const { user, loading: authLoading, isSegnalatore, isAgente, isSegreteria } = useAuth();
   const [clients,     setClients]     = useState<Client[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [search,      setSearch]      = useState('');
@@ -355,6 +355,23 @@ export default function ClientiPage() {
     if (!user?.id) return;
     if (isSegnalatore) {
       const { data: pratt } = await supabase.from('practices').select('client_id').eq('segnalatore_id', user.id);
+      const ids = [...new Set((pratt ?? []).map((p: {client_id:string}) => p.client_id).filter(Boolean))];
+      if (ids.length === 0) { setClients([]); setLoading(false); return; }
+      const { data } = await supabase.from('clients').select('*').in('id', ids).order('ragione_sociale');
+      setClients(data ?? []);
+    } else if (isAgente) {
+      // Agente: vede solo i clienti con pratiche assegnate a lui
+      const { data: pratt } = await supabase.from('practices').select('client_id').eq('assigned_to', user.id);
+      const ids = [...new Set((pratt ?? []).map((p: {client_id:string}) => p.client_id).filter(Boolean))];
+      if (ids.length === 0) { setClients([]); setLoading(false); return; }
+      const { data } = await supabase.from('clients').select('*').in('id', ids).order('ragione_sociale');
+      setClients(data ?? []);
+    } else if (isSegreteria) {
+      // Segreteria: vede solo i clienti con pratiche assegnate ai suoi agenti
+      const { data: assignments } = await supabase.from('segreteria_agent_assignments').select('agent_user_id').eq('segreteria_user_id', user.id);
+      const agentIds = (assignments ?? []).map((a: {agent_user_id:string}) => a.agent_user_id);
+      if (agentIds.length === 0) { setClients([]); setLoading(false); return; }
+      const { data: pratt } = await supabase.from('practices').select('client_id').in('assigned_to', agentIds);
       const ids = [...new Set((pratt ?? []).map((p: {client_id:string}) => p.client_id).filter(Boolean))];
       if (ids.length === 0) { setClients([]); setLoading(false); return; }
       const { data } = await supabase.from('clients').select('*').in('id', ids).order('ragione_sociale');
@@ -392,7 +409,7 @@ export default function ClientiPage() {
     setSegDocs((docs ?? []) as {id:string;nome:string;status:string}[]);
   }
 
-  useEffect(() => { if (!authLoading && user?.id) load(); }, [authLoading, user?.id, isSegnalatore]);
+  useEffect(() => { if (!authLoading && user?.id) load(); }, [authLoading, user?.id, isSegnalatore, isAgente, isSegreteria]);
 
   const toForm = (c: Client): FormState => ({
     ragione_sociale:   c.ragione_sociale,
