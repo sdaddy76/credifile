@@ -83,13 +83,15 @@ const CF_PF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
 
 /** Estrae lista soci dalla sezione 4 */
 function parseSoci(raw: string): Socio[] {
+  // Tenta isolamento sezione IV — fallback al testo completo
   const s4 = isolaSezione(raw,
-    /(?:sezione\s+(?:IV|4)\b|\b4\s+Soci\s+e\s+titolari|soci\s+e\s+titolari|quote\s+sociali)/i,
-    /(?:sezione\s+(?:V|5)\b|\b5\s+Amministrat|organi\s+sociali|rappresentanza)/i,
+    /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|soci\s+e\s+titolari|quote\s+sociali|TITOLARI\s+DI\s+QUOTE)/i,
+    /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|rappresentanza|persone\s+che\s+esercitano)/i,
   ) || raw;
 
   const results: Socio[] = [];
   const seen = new Set<string>();
+  const STOPWORDS = /\b(?:SOCIO|SOCIA|QUOTA|VALORE|NOMINATIVO|COGNOME|NOME|DENOMINAZIONE|TIPO|NATURA|TITOLO|SEZIONE|IV|SOCI|E|DI|SU|CODICE|FISCALE|C\.F\.?)\b/g;
 
   // ── Soci persona fisica (CF 16 char alfanumerico) ─────────────────────────
   CF_PF_RE.lastIndex = 0;
@@ -99,35 +101,38 @@ function parseSoci(raw: string): Socio[] {
     if (seen.has(cf)) continue;
     seen.add(cf);
 
-    const before = s4.substring(Math.max(0, m.index - 120), m.index);
-    const after  = s4.substring(m.index + cf.length, m.index + cf.length + 200);
+    const before = s4.substring(Math.max(0, m.index - 200), m.index);
+    const after  = s4.substring(m.index + cf.length, m.index + cf.length + 300);
 
-    const nameRaw = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60})\s*$/)?.[1] ?? '';
-    const nome = nameRaw
-      .replace(/\b(?:SOCIO|SOCIA|QUOTA|VALORE|NOMINATIVO|COGNOME|NOME|DENOMINAZIONE|TIPO|NATURA|TITOLO|SEZIONE|IV|SOCI|E|DI|SU)\b/g, '')
-      .replace(/\s{2,}/g, ' ').trim();
+    // Prova nome PRIMA del CF (formato più comune)
+    const nameFromBefore = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60})\s*(?:Codice\s+[Ff]iscale|C\.F\.?)?\s*$/)?.[1]?.trim() ?? '';
+    // Prova nome DOPO il CF (alcuni layout mettono CF prima del nome)
+    const nameFromAfter  = after.match(/^\s*[,\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60}?)(?=\s+(?:nato|nata|resid|domicil|carica|quota|€|%|\d{2}[\/\-]\d{2}))/i)?.[1]?.trim() ?? '';
+
+    const rawName = nameFromBefore.length >= 3 ? nameFromBefore : nameFromAfter;
+    const nome = rawName.replace(STOPWORDS, '').replace(/\s{2,}/g, ' ').trim();
     if (!nome || nome.length < 3) continue;
 
     const valMatch = after.match(/(?:€|[Ee]uro)\s*([\d.,]+)/)
+                  ?? after.match(/quota\s+in\s+euro\s+([\d.,]+)/i)
                   ?? after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/);
     const valore = valMatch?.[1] ?? '';
+
     const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/)
                    ?? before.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/);
-    const percentuale = percMatch?.[1] ? percMatch[1] + '%' : '';
+    const percentuale = percMatch?.[1] ? percMatch[1].replace(/%$/, '') + '%' : '';
     results.push({ nome, codice_fiscale: cf, valore, percentuale });
   }
 
   // ── Soci azienda (CF/PIVA 11 cifre) ───────────────────────────────────────
-  // Pattern: NOME AZIENDA <CF11> <valore> <percentuale> %
-  // Es: "30 FEBBRAIO SRL 05178400262 40.000,00 80 % proprieta'"
   const COMP_RE = /([A-Z0-9][A-Z0-9\s\.\'\-]{2,60}?(?:SRL|S\.R\.L\.|SPA|S\.P\.A\.|SNC|SAS|S\.S\.|SCARL|SCRL|COOP)\.?)\s+(\d{11})\s+([\d.,]+)\s+([\d,]+(?:[.,]\d+)?)\s*%/gi;
   let mc: RegExpExecArray | null;
   while ((mc = COMP_RE.exec(s4)) !== null) {
     const cf = mc[2];
     if (seen.has(cf)) continue;
     seen.add(cf);
-    const nome       = mc[1].replace(/\s{2,}/g, ' ').trim();
-    const valore     = mc[3];
+    const nome        = mc[1].replace(/\s{2,}/g, ' ').trim();
+    const valore      = mc[3];
     const percentuale = mc[4] + '%';
     if (nome.length >= 3) results.push({ nome, codice_fiscale: cf, valore, percentuale });
   }
@@ -137,40 +142,54 @@ function parseSoci(raw: string): Socio[] {
 
 /** Estrae lista amministratori dalla sezione 5 */
 function parseAmministratori(raw: string): Amministratore[] {
+  // Tenta isolamento sezione V — fallback al testo completo (non ritornare mai vuoto per mancanza sezione)
   const s5 = isolaSezione(raw,
-    /(?:sezione\s+(?:V|5)\b|\b5\s+Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i,
-    /(?:sezione\s+(?:VI|6)\b|\b6\s+Sindaci|$)/i,
-  );
-  if (!s5) return [];
+    /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i,
+    /(?:sezione\s+(?:VI|6)\b|\b6[\s\.\)]\s*Sindac|$)/i,
+  ) || raw;
 
-  const CARICA_RE = /(Amministratore\s+(?:Unico|[Dd]elegato)|Presidente(?:\s+del\s+C(?:onsiglio|\.?D\.?A\.?))?|Consigliere(?:\s+[Dd]elegato)?|Liquidatore(?:\s+[Uu]nico)?|Direttore\s+[Gg]enerale)/gi;
+  // Gestisce abbreviazioni comuni: AMM. UNICO, AMM.RE UNICO, AMM.RE DELEGATO ecc.
+  const CARICA_RE = /(Amministratore\s+(?:Unico|[Dd]elegato)|AMM(?:\.RE?|INISTRATORE)?\s*(?:UNICO|[Uu]nico|DELEGATO|[Dd]elegato)|Presidente(?:\s+(?:del\s+)?C(?:onsiglio|\.?D\.?A\.?))?|Consigliere(?:\s+[Dd]elegato)?|Liquidatore(?:\s+[Uu]nico)?|Direttore\s+[Gg]enerale)/gi;
 
   const results: Amministratore[] = [];
+  const seenCFs   = new Set<string>();
   const seenNames = new Set<string>();
   let m: RegExpExecArray | null;
 
   while ((m = CARICA_RE.exec(s5)) !== null) {
     const carica = m[1].trim();
-    const after  = s5.substring(m.index + m[0].length, m.index + m[0].length + 300);
+    const after  = s5.substring(m.index + m[0].length, m.index + m[0].length + 400);
+    const before = s5.substring(Math.max(0, m.index - 150), m.index);
 
-    // CF persona fisica (opzionale — può trovarsi anche dopo "Rappresentante")
+    // CF persona fisica (opzionale)
     const cfMatch = after.match(/\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/);
     const cf = cfMatch?.[1];
+    if (cf && seenCFs.has(cf)) continue;
+    if (cf) seenCFs.add(cf);
 
-    // Nome: blocco MAIUSCOLO subito dopo la carica
-    // Si ferma a: CF, "Rappresentante", "Nato", "Codice", numeri data
-    const nameMatch = after.match(
-      /^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d|Rappresentante|Nato\s+a|Codice|domicilio|\d{1,2}\/\d{1,2}))/i
-    );
-    if (!nameMatch?.[1]?.trim()) continue;
+    // Prova 1: nome DOPO la carica con lookahead a CF/parole chiave (pattern stretto)
+    const nameStrict = after.match(
+      /^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d|Rappresentante|Nato\s+[aA]|Codice|domicilio|\d{1,2}[\/\-]\d{1,2}))/i
+    )?.[1]?.trim();
 
-    const nome = nameMatch[1]
-      .replace(/\b(?:CODICE|FISCALE|NATO|NATA|IN|DEL|DELLA|CARICA|RAPPRESENTANTE)\b/gi, '')
+    // Prova 2: blocco MAIUSCOLO (2+ parole) dopo la carica — meno restrittivo
+    const nameLoose = !nameStrict
+      ? after.match(/^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20})?)/)?.[1]?.trim()
+      : undefined;
+
+    // Prova 3: nome PRIMA della carica ("MARIO ROSSI Amministratore Unico")
+    const nameBefore = (!nameStrict && !nameLoose)
+      ? before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20})?)\s*$/)?.[1]?.trim()
+      : undefined;
+
+    const rawNome = nameStrict ?? nameLoose ?? nameBefore ?? '';
+    const nome = rawNome
+      .replace(/\b(?:CODICE|FISCALE|NATO|NATA|IN|DEL|DELLA|CARICA|RAPPRESENTANTE|UNICO|DELEGATO)\b/gi, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
+
     if (!nome || nome.length < 3 || seenNames.has(nome)) continue;
     seenNames.add(nome);
-
     results.push({ nome, codice_fiscale: cf, carica });
   }
   return results;
@@ -222,9 +241,15 @@ function parseVisura(text: string): VisuraData {
   const codice_fiscale_raw = get([
     /Codice\s+[Ff]iscale\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
     /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
+    /\bCF\b\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
   ]);
-  // Evita di duplicare il dato se CF === P.IVA (ditta individuale)
-  const codice_fiscale = codice_fiscale_raw === piva ? undefined : codice_fiscale_raw;
+  // Se CF === PIVA (ditta individuale) cerca un CF persona fisica nel testo
+  const codice_fiscale = (() => {
+    if (codice_fiscale_raw && codice_fiscale_raw !== piva) return codice_fiscale_raw;
+    // Fallback: cerca CF alfanumerico 16 char (persona fisica) se non già trovato
+    const cfPF = flat.match(/\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/)?.[1];
+    return cfPF ?? (codice_fiscale_raw !== piva ? codice_fiscale_raw : undefined);
+  })();
 
   // ── Sede Legale ───────────────────────────────────────────────────────────
   const ADDR_B = String.raw`(?=\s+(?:Partita\s+IVA|P\.?\s*IVA|Codice\s+[Ff]iscale|Pec\b|PEC\b|REA\s|Registro|Telefono|Tel\b|Email|Attivit|Stato\s+dell))`;
