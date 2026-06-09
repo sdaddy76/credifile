@@ -151,6 +151,7 @@ export default function PraticaDetailPage() {
   // ── 2. SCORE COMBINATO ───────────────────────────────────────────────────
   const [scoreBancabilita, setScoreBancabilita] = useState<number | null>(null);
   const [scoreReputazione, setScoreReputazione] = useState<number | null>(null);
+  const [segreteriaDiCompetenza, setSegreteriaDiCompetenza] = useState<{nome?: string; email: string} | null>(null);
 
   const loadScores = async () => {
     if (!id) return;
@@ -500,6 +501,20 @@ export default function PraticaDetailPage() {
       supabase.from('practice_access_codes').select('*').eq('practice_id', id).maybeSingle(),
     ]);
     setPractice(p.data as Practice);
+    // Carica segreteria di competenza (solo super_admin)
+    if (isSuperAdmin && (p.data as Practice & { assigned_to?: string })?.assigned_to) {
+      const agentId = (p.data as Practice & { assigned_to?: string }).assigned_to!;
+      supabase
+        .from('segreteria_agent_assignments')
+        .select('segreteria:admin_profiles!segreteria_agent_assignments_segreteria_user_id_fkey(nome,email)')
+        .eq('agent_user_id', agentId)
+        .limit(1)
+        .then(({ data: sData }) => {
+          const raw = (sData as unknown as Array<{ agent_user_id: string; segreteria: Array<{ nome?: string; email?: string }> }>);
+          const first = raw?.[0]?.segreteria?.[0] ?? null;
+          setSegreteriaDiCompetenza(first as { nome?: string; email: string } | null);
+        });
+    }
     setDocuments(docs.data as PracticeDocument[] ?? []);
     setLogs(l.data ?? []);
     setAccessCode(ac.data);
@@ -526,7 +541,7 @@ export default function PraticaDetailPage() {
     const { data: pb } = await supabase.from('practice_banks').select('*, banks(nome,email,email_invio_banca)').eq('practice_id', id).order('created_at');
     setPracticeBanks(pb ?? []);
     setLoading(false);
-  }, [id]);
+  }, [id, isSuperAdmin]);
 
   useEffect(() => {
     load();
@@ -854,6 +869,24 @@ export default function PraticaDetailPage() {
             Creata il {new Date(practice.created_at).toLocaleDateString('it-IT')}
             {bank && ` · ${bank.nome}`}{assignedAgent && ` · 👤 ${assignedAgent.nome || assignedAgent.email}`}
           </p>
+          {isSuperAdmin && (assignedAgent || segreteriaDiCompetenza) && (
+            <div className="flex items-center gap-4 mt-1.5 text-xs">
+              {assignedAgent && (
+                <span className="flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5">
+                  <span>👤</span>
+                  <span className="font-medium">Caricata da:</span>
+                  <span>{assignedAgent.nome || assignedAgent.email}</span>
+                </span>
+              )}
+              {segreteriaDiCompetenza && (
+                <span className="flex items-center gap-1 bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">
+                  <span>🏢</span>
+                  <span className="font-medium">Segreteria:</span>
+                  <span>{segreteriaDiCompetenza.nome || segreteriaDiCompetenza.email}</span>
+                </span>
+              )}
+            </div>
+          )}
           {practice.status === 'declinata' && (practice as Practice & { note_declino?: string }).note_declino && (
             <div className="mt-2 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700 max-w-xl">
               <span className="shrink-0 mt-0.5">🚫</span>

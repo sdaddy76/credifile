@@ -28,6 +28,7 @@ export default function PratichePage() {
     client_id: '', importo_richiesto: '', motivazione: '', note_admin: '', assigned_to: '', segnalatore_id: ''
   });
   const [agents, setAgents] = useState<{ id: string; nome?: string; email: string }[]>([]);
+  const [segreteriaMap, setSegreteriaMap] = useState<Record<string, string>>({});
   const [segnalatori, setSegnalatori] = useState<{ id: string; nome?: string; email: string }[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [showAssignBank, setShowAssignBank] = useState<Practice | null>(null);
@@ -164,6 +165,23 @@ export default function PratichePage() {
     } else if (isSuperAdmin || isSegreteria) {
       supabase.from('admin_profiles').select('id,nome,email').eq('ruolo','segnalatore').order('nome')
         .then(r => setSegnalatori(r.data ?? []));
+    }
+    // Mappa agente → segreteria per super_admin
+    if (isSuperAdmin) {
+      supabase
+        .from('segreteria_agent_assignments')
+        .select('agent_user_id, segreteria:admin_profiles!segreteria_agent_assignments_segreteria_user_id_fkey(nome,email)')
+        .then(({ data: sData }) => {
+          const map: Record<string, string> = {};
+          (sData as unknown as Array<{ agent_user_id: string; segreteria: Array<{ nome?: string; email?: string }> }>)
+            ?.forEach((row) => {
+              const seg = row.segreteria?.[0];
+              if (seg) {
+                map[row.agent_user_id] = seg.nome || seg.email || '';
+              }
+            });
+          setSegreteriaMap(map);
+        });
     }
   }, [authLoading, isAgente, isSegreteria, isSuperAdmin, isSegnalatore, user?.id]);
 
@@ -494,6 +512,11 @@ export default function PratichePage() {
                         {(isSuperAdmin || isSegreteria) && createdByAgent && (
                           <span className="flex items-center gap-1 text-blue-600">
                             <span className="font-medium">Agente:</span> {createdByAgent.nome || createdByAgent.email}
+                          </span>
+                        )}
+                        {isSuperAdmin && assignedAgent?.id && segreteriaMap[assignedAgent.id] && (
+                          <span className="flex items-center gap-1 text-purple-600">
+                            <span className="font-medium">Segreteria:</span> {segreteriaMap[assignedAgent.id]}
                           </span>
                         )}
                         {(isSuperAdmin || isSegreteria) && segnalatorePratica && (
