@@ -42,13 +42,12 @@ interface Lead {
   citta: string | null;
   created_at: string;
   updated_at: string;
-  admin_profiles?: { nome: string | null; cognome: string | null } | null;
+  admin_profiles?: { nome: string | null } | null;
 }
 
 interface AgentProfile {
   id: string;
   nome: string | null;
-  cognome: string | null;
   email: string;
 }
 
@@ -91,9 +90,9 @@ const STATO_BADGE: Record<LeadStato, string> = {
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
-function nomeAgente(ap: { nome: string | null; cognome: string | null } | null | undefined): string {
+function nomeAgente(ap: { nome: string | null } | null | undefined): string {
   if (!ap) return '—';
-  return [ap.nome, ap.cognome].filter(Boolean).join(' ') || '—';
+  return ap.nome || '—';
 }
 
 function formatEuro(val: number | null): string {
@@ -128,7 +127,7 @@ export default function RubricaPage() {
   async function loadAgents() {
     const { data } = await supabase
       .from('admin_profiles')
-      .select('id, nome, cognome, email')
+      .select('id, nome, email')
       .eq('ruolo', 'agente')
       .order('nome');
     setAgents((data ?? []) as AgentProfile[]);
@@ -138,7 +137,7 @@ export default function RubricaPage() {
     if (!user?.id) return;
     let query = supabase
       .from('leads')
-      .select('*, admin_profiles(nome, cognome)')
+      .select('*, admin_profiles(nome)')
       .order('created_at', { ascending: false });
 
     // Gli agenti vedono solo i propri lead
@@ -412,7 +411,7 @@ export default function RubricaPage() {
               <SelectItem value="tutti">Tutti gli agenti</SelectItem>
               {agents.map(a => (
                 <SelectItem key={a.id} value={a.id}>
-                  {[a.nome, a.cognome].filter(Boolean).join(' ') || a.email}
+                  {a.nome || a.email}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -663,7 +662,7 @@ export default function RubricaPage() {
                     <SelectItem value="__none__">— Nessun agente —</SelectItem>
                     {agents.map(a => (
                       <SelectItem key={a.id} value={a.id}>
-                        {[a.nome, a.cognome].filter(Boolean).join(' ') || a.email}
+                        {a.nome || a.email}
                       </SelectItem>
                     ))}
                   </SelectContent>

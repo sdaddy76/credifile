@@ -167,14 +167,16 @@ function parseAmministratori(raw: string): Amministratore[] {
     if (cf && seenCFs.has(cf)) continue;
     if (cf) seenCFs.add(cf);
 
-    // Prova 1: nome DOPO la carica con lookahead a CF/parole chiave (pattern stretto)
-    const nameStrict = after.match(
-      /^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d|Rappresentante|Nato\s+[aA]|Codice|domicilio|\d{1,2}[\/\-]\d{1,2}))/i
+    // Prova 1: nome DOPO la carica con lookahead a CF/parole chiave (nei primi 300 char)
+    const nameStrict = after.slice(0, 300).match(
+      /([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d{2}|Rappresentante|Nato\s+[aA]|Codice|domicilio|\d{1,2}[\/\-]\d{1,2}))/
     )?.[1]?.trim();
 
-    // Prova 2: blocco MAIUSCOLO (2+ parole) dopo la carica — meno restrittivo
+    // Prova 2: blocco di 2-3 parole ALL-CAPS consecutive (nessuno spazio interno)
     const nameLoose = !nameStrict
-      ? after.match(/^\s*[:\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20})?)/)?.[1]?.trim()
+      ? after.slice(0, 200).match(
+          /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,24}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,24})?)\b/
+        )?.[1]?.trim()
       : undefined;
 
     // Prova 3: nome PRIMA della carica ("MARIO ROSSI Amministratore Unico")
