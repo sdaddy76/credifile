@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
@@ -15,7 +16,7 @@ import {
   MapPin, BarChart2, Euro, TrendingUp, Clock, CheckCircle, XCircle,
   Send, Building, RefreshCw, LogOut, Building2, Inbox, Search,
   FileText, User, Phone, Mail, Calendar, Hash, Landmark, Heart,
-  SlidersHorizontal, GitCompare, X as XIcon,
+  SlidersHorizontal, GitCompare, X as XIcon, Settings, Save, Loader2,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 
@@ -198,6 +199,25 @@ export default function BancaPortalPage() {
   const [submitting, setSubmitting] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
 
+  /* ── Impostazioni Notifiche ── */
+  interface NotifSettings {
+    notifica_nuove: boolean;
+    email: string;
+    importo_min: string;
+    importo_max: string;
+    ateco_filter: string;
+  }
+  const [notifSettings, setNotifSettings] = useState<NotifSettings>({
+    notifica_nuove: true,
+    email: '',
+    importo_min: '',
+    importo_max: '',
+    ateco_filter: '',
+  });
+  const [notifSettingsId, setNotifSettingsId] = useState<string | null>(null);
+  const [savingNotif, setSavingNotif] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+
   /* ── Filtri ── */
   const [filters, setFilters] = useState({ city: '', ateco: '', importoMin: 0, soloConKpi: '' });
 
@@ -346,6 +366,69 @@ export default function BancaPortalPage() {
 
   useEffect(() => { loadDisponibili(); }, [bankId]);
   useEffect(() => { if (activeTab === 'ricevute') loadRicevute(); }, [activeTab, bankId]);
+
+  /* ── Carica impostazioni notifiche ── */
+  const loadNotifSettings = async () => {
+    if (!bankId) return;
+    const { data } = await supabase
+      .from('bank_notification_settings')
+      .select('*')
+      .eq('bank_id', bankId)
+      .maybeSingle();
+    if (data) {
+      setNotifSettingsId(data.id);
+      setNotifSettings({
+        notifica_nuove: data.notifica_nuove ?? true,
+        email: data.email ?? user?.email ?? '',
+        importo_min: data.importo_min != null ? String(data.importo_min) : '',
+        importo_max: data.importo_max != null ? String(data.importo_max) : '',
+        ateco_filter: Array.isArray(data.ateco_filter) ? data.ateco_filter.join(', ') : (data.ateco_filter ?? ''),
+      });
+    } else {
+      // Nessuna impostazione: pre-popola email utente
+      setNotifSettings(prev => ({ ...prev, email: user?.email ?? '' }));
+    }
+  };
+
+  useEffect(() => { if (bankId) loadNotifSettings(); }, [bankId]);
+
+  const saveNotifSettings = async () => {
+    if (!bankId) return;
+    setSavingNotif(true);
+    try {
+      const atecoArr = notifSettings.ateco_filter
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      const payload = {
+        bank_id: bankId,
+        notifica_nuove: notifSettings.notifica_nuove,
+        email: notifSettings.email.trim() || null,
+        importo_min: notifSettings.importo_min !== '' ? Number(notifSettings.importo_min) : null,
+        importo_max: notifSettings.importo_max !== '' ? Number(notifSettings.importo_max) : null,
+        ateco_filter: atecoArr.length > 0 ? atecoArr : null,
+      };
+      let error;
+      if (notifSettingsId) {
+        ({ error } = await supabase
+          .from('bank_notification_settings')
+          .update(payload)
+          .eq('id', notifSettingsId));
+      } else {
+        const { data: inserted, error: insertErr } = await supabase
+          .from('bank_notification_settings')
+          .insert(payload)
+          .select('id')
+          .single();
+        error = insertErr;
+        if (inserted?.id) setNotifSettingsId(inserted.id);
+      }
+      if (error) { toast.error('Errore salvataggio: ' + error.message); return; }
+      toast.success('Impostazioni notifiche salvate');
+    } finally {
+      setSavingNotif(false);
+    }
+  };
 
   /* ── Carica watchlist al mount ── */
   useEffect(() => {
@@ -1320,6 +1403,125 @@ export default function BancaPortalPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Sezione Impostazioni Notifiche (solo banca loggata) ── */}
+      {bankId && (
+        <div className="mt-8 border-t border-slate-200 pt-6">
+          <button
+            type="button"
+            onClick={() => setNotifOpen(prev => !prev)}
+            className="flex items-center gap-2 text-slate-700 hover:text-slate-900 font-semibold text-base mb-3 group"
+          >
+            <Settings className="w-5 h-5 text-slate-500 group-hover:text-slate-700 transition-colors" />
+            ⚙️ Impostazioni Notifiche
+            <span className={`ml-2 text-xs text-slate-400 font-normal transition-transform ${notifOpen ? 'rotate-180' : ''}`}>▼</span>
+          </button>
+
+          {notifOpen && (
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <Mail className="w-4 h-4 text-blue-500" />
+                  Preferenze ricezione notifiche email
+                </CardTitle>
+                <p className="text-xs text-slate-500 mt-1">
+                  Le notifiche vengono inviate all'email indicata quando arriva una nuova pratica compatibile con i tuoi criteri.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {/* Toggle notifica_nuove */}
+                <div className="flex items-center justify-between gap-4 py-1">
+                  <div>
+                    <Label className="text-sm font-medium text-slate-700">Ricevi notifiche nuove pratiche</Label>
+                    <p className="text-xs text-slate-400 mt-0.5">Attiva per ricevere email quando arriva una pratica compatibile</p>
+                  </div>
+                  <Switch
+                    checked={notifSettings.notifica_nuove}
+                    onCheckedChange={v => setNotifSettings(prev => ({ ...prev, notifica_nuove: v }))}
+                  />
+                </div>
+
+                <div className={`space-y-4 transition-opacity ${notifSettings.notifica_nuove ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                  {/* Email */}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="notif-email" className="text-sm font-medium text-slate-700">
+                      Email per notifiche
+                    </Label>
+                    <Input
+                      id="notif-email"
+                      type="email"
+                      placeholder={user?.email ?? 'es. nome@banca.it'}
+                      value={notifSettings.email}
+                      onChange={e => setNotifSettings(prev => ({ ...prev, email: e.target.value }))}
+                      className="max-w-sm"
+                    />
+                  </div>
+
+                  {/* Importo min / max */}
+                  <div className="grid grid-cols-2 gap-4 max-w-sm">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="notif-importo-min" className="text-sm font-medium text-slate-700">
+                        Importo minimo (€)
+                      </Label>
+                      <Input
+                        id="notif-importo-min"
+                        type="number"
+                        min={0}
+                        placeholder="es. 50000"
+                        value={notifSettings.importo_min}
+                        onChange={e => setNotifSettings(prev => ({ ...prev, importo_min: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="notif-importo-max" className="text-sm font-medium text-slate-700">
+                        Importo massimo (€) <span className="text-slate-400 font-normal">– opz.</span>
+                      </Label>
+                      <Input
+                        id="notif-importo-max"
+                        type="number"
+                        min={0}
+                        placeholder="es. 500000"
+                        value={notifSettings.importo_max}
+                        onChange={e => setNotifSettings(prev => ({ ...prev, importo_max: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  {/* ATECO filter */}
+                  <div className="space-y-1.5 max-w-sm">
+                    <Label htmlFor="notif-ateco" className="text-sm font-medium text-slate-700">
+                      Filtro ATECO
+                    </Label>
+                    <Input
+                      id="notif-ateco"
+                      placeholder="es. 68, 47.1, 10.1"
+                      value={notifSettings.ateco_filter}
+                      onChange={e => setNotifSettings(prev => ({ ...prev, ateco_filter: e.target.value }))}
+                    />
+                    <p className="text-xs text-slate-400">Codici ATECO separati da virgola. Lascia vuoto per ricevere tutte le pratiche.</p>
+                  </div>
+                </div>
+
+                {/* Salva */}
+                <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
+                  <Button
+                    onClick={saveNotifSettings}
+                    disabled={savingNotif}
+                    className="gap-2 bg-blue-600 hover:bg-blue-700"
+                    size="sm"
+                  >
+                    {savingNotif
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio…</>
+                      : <><Save className="w-3.5 h-3.5" /> Salva Impostazioni</>
+                    }
+                  </Button>
+                  <p className="text-xs text-slate-400">Le modifiche hanno effetto immediato</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
     </BancaLayout>
   );
 }

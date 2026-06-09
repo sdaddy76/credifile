@@ -16,14 +16,16 @@ import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import AnalisiFinanziariaTab from '@/components/AnalisiFinanziariaTab';
 import BancabilitaTab from '@/components/BancabilitaTab';
 import ReputazioneTab from '@/components/ReputazioneTab';
+import AmlReportTab from '@/components/AmlReportTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
-  PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar
+  PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar, FileDown, ClipboardCopy, Layout
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
 import { parseCentraleRischi, categoriaToTipologia, type CRRiga } from '@/lib/parseCentraleRischi';
+import jsPDF from 'jspdf';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -119,6 +121,7 @@ export default function PraticaDetailPage() {
   const [sendingEmail, setSendingEmail] = useState(false);
   const [showSollecita, setShowSollecita] = useState(false);
   const [sollecitando, setSollecitando] = useState(false);
+  const [sendingNotif, setSendingNotif] = useState(false);
 
   // ── 1. TIMELINE ATTIVITÀ ──────────────────────────────────────────────────
   interface ActivityLog {
@@ -223,6 +226,145 @@ export default function PraticaDetailPage() {
   const [newDeadlineNote, setNewDeadlineNote] = useState('');
   const [savingDeadline, setSavingDeadline] = useState(false);
 
+  // ── 5. GENERA DOCUMENTO ───────────────────────────────────────────────────
+  interface ContentTemplate {
+    id: string;
+    nome: string;
+    categoria: string;
+    contenuto: string;
+    variabili: string[];
+  }
+  const [docTemplates, setDocTemplates]         = useState<ContentTemplate[]>([]);
+  const [loadingDocTemplates, setLoadingDocTemplates] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId]   = useState('');
+  const [generatedText, setGeneratedText]       = useState('');
+  const [loadingTemplate, setLoadingTemplate]   = useState(false);
+
+  const loadDocTemplates = async () => {
+    setLoadingDocTemplates(true);
+    const { data } = await supabase
+      .from('document_templates')
+      .select('id, nome, categoria, contenuto, variabili')
+      .eq('attivo', true)
+      .order('categoria');
+    setDocTemplates((data ?? []) as ContentTemplate[]);
+    setLoadingDocTemplates(false);
+  };
+
+  /** Sostituisce le variabili note con i dati reali della pratica */
+  function compileTemplate(contenuto: string): string {
+    const clientData = (practice as Practice & {
+      clients?: { ragione_sociale?: string; indirizzo?: string };
+      assigned_agent?: { nome?: string; email: string };
+    });
+    const ragioneSociale   = clientData.clients?.ragione_sociale ?? '';
+    const numeroPratica    = practice?.numero_pratica ?? '';
+    const importoRichiesto = practice?.importo_richiesto
+      ? practice.importo_richiesto.toLocaleString('it-IT') : '';
+    const agenteNome = clientData.assigned_agent?.nome
+      || clientData.assigned_agent?.email || '';
+    const dataOggi   = new Date().toLocaleDateString('it-IT');
+    const indirizzo  = clientData.clients?.indirizzo ?? '';
+    // Estrai città dall'indirizzo (ultimo segmento dopo virgola o spazio, euristica)
+    const citta = (() => {
+      if (!indirizzo) return '';
+      const parts = indirizzo.split(',');
+      const last = parts[parts.length - 1].trim();
+      // Rimuovi eventuale CAP (5 cifre) iniziale
+      return last.replace(/^\d{5}\s*/, '').trim();
+    })();
+    const codiceAteco = practice?.codice_ateco ?? '';
+
+    const map: Record<string, string> = {
+      ragione_sociale:   ragioneSociale,
+      numero_pratica:    numeroPratica,
+      importo_richiesto: importoRichiesto,
+      agente_nome:       agenteNome,
+      data:              dataOggi,
+      citta:             citta,
+      codice_ateco:      codiceAteco,
+    };
+
+    return contenuto.replace(/\{\{(\w+)\}\}/g, (_match, varName: string) => {
+      return map[varName] !== undefined ? map[varName] : `{{${varName}}}`;
+    });
+  }
+
+  const handleLoadTemplate = async () => {
+    if (!selectedTemplateId) return;
+    setLoadingTemplate(true);
+    const { data, error } = await supabase
+      .from('document_templates')
+      .select('contenuto')
+      .eq('id', selectedTemplateId)
+      .single();
+    setLoadingTemplate(false);
+    if (error || !data) { toast.error('Errore caricamento template'); return; }
+    setGeneratedText(compileTemplate(data.contenuto));
+  };
+
+  const handleExportPdf = () => {
+    if (!generatedText.trim()) { toast.error('Genera prima il documento'); return; }
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const margin = 20;
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const contentW = pageW - margin * 2;
+
+    // Intestazione
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 64, 175); // blu Credifile
+    doc.text('CREDIFILE', margin, margin);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100);
+    doc.text('Consulenza Finanziaria Professionale', margin, margin + 6);
+
+    // Linea separatrice
+    doc.setDrawColor(200);
+    doc.line(margin, margin + 10, pageW - margin, margin + 10);
+
+    // Numero pratica e data
+    doc.setFontSize(8);
+    doc.setTextColor(120);
+    doc.text(`Pratica: ${practice?.numero_pratica ?? ''}`, margin, margin + 16);
+    doc.text(`Data: ${new Date().toLocaleDateString('it-IT')}`, pageW - margin, margin + 16, { align: 'right' });
+
+    // Testo documento
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(30);
+    const lines = doc.splitTextToSize(generatedText, contentW);
+    let y = margin + 24;
+    for (const line of lines) {
+      if (y > pageH - margin - 15) {
+        doc.addPage();
+        y = margin;
+      }
+      doc.text(line, margin, y);
+      y += 6;
+    }
+
+    // Footer
+    const footerY = pageH - 10;
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    doc.setDrawColor(200);
+    doc.line(margin, footerY - 4, pageW - margin, footerY - 4);
+    doc.text(`Pratica n. ${practice?.numero_pratica ?? ''} — Generato il ${new Date().toLocaleDateString('it-IT')}`, margin, footerY);
+    doc.text('Credifile', pageW - margin, footerY, { align: 'right' });
+
+    doc.save(`documento_${practice?.numero_pratica ?? 'pratica'}.pdf`);
+    toast.success('PDF esportato');
+  };
+
+  const handleCopyText = () => {
+    if (!generatedText.trim()) { toast.error('Genera prima il documento'); return; }
+    navigator.clipboard.writeText(generatedText);
+    toast.success('Testo copiato negli appunti');
+  };
+
   const loadDeadlines = async () => {
     if (!id) return;
     const { data } = await supabase
@@ -308,6 +450,36 @@ export default function PraticaDetailPage() {
       toast.error('Errore invio email: ' + msg);
     } else {
       toast.success(`Email inviata a ${client.email}!`);
+    }
+  };
+
+  // ── Notifica Banche ──────────────────────────────────────────────────────
+  const sendNotificaBanche = async () => {
+    if (!practice) return;
+    setSendingNotif(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('notifica-banche-nuova-pratica', {
+        body: { practice_id: practice.id },
+      });
+      if (error) {
+        toast.error('Errore invio notifica: ' + error.message);
+        return;
+      }
+      const sent: number = data?.sent ?? data?.count ?? 0;
+      toast.success(`Notifica inviata a ${sent} banche`);
+      // Log attività
+      await supabase.from('practice_activity_log').insert({
+        practice_id: practice.id,
+        action: 'notifica_banche_inviata',
+        actor_nome: user?.email ?? 'Admin',
+        actor_ruolo: 'admin',
+        metadata: { sent },
+      });
+      loadActivityLogs();
+    } catch (e) {
+      toast.error('Errore: ' + String(e));
+    } finally {
+      setSendingNotif(false);
     }
   };
 
@@ -710,6 +882,19 @@ export default function PraticaDetailPage() {
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
           </Button>
         )}
+        {(isSuperAdmin || isSegreteria) && practice.status === 'raccolta_documenti' && (
+          <Button
+            variant="outline" size="sm"
+            className="gap-1.5 text-indigo-700 border-indigo-300 hover:bg-indigo-50"
+            onClick={sendNotificaBanche}
+            disabled={sendingNotif}
+          >
+            {sendingNotif
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Invio notifica…</>
+              : <><Mail className="w-3.5 h-3.5" /> Notifica Banche</>
+            }
+          </Button>
+        )}
         {!isAgente && (
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setReassignTo(practice.assigned_to ?? ''); setShowReassign(true); }}>
             👤 Riassegna Agente
@@ -925,8 +1110,12 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="analisi">Analisi Finanziaria</TabsTrigger>
               <TabsTrigger value="bancabilita">Bancabilità</TabsTrigger>
               <TabsTrigger value="reputazione">Reputazione</TabsTrigger>
+              {(isSuperAdmin || isSegreteria || isAgente) && (
+                <TabsTrigger value="aml">🛡️ AML</TabsTrigger>
+              )}
               <TabsTrigger value="banche-ai">🤖 Banche AI</TabsTrigger>
               <TabsTrigger value="scadenze">📅 Scadenze {deadlines.length > 0 ? `(${deadlines.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="genera-doc" onClick={loadDocTemplates}>📝 Genera Doc</TabsTrigger>
               <TabsTrigger value="timeline" onClick={loadActivityLogs}>📋 Timeline</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
             </TabsList>
@@ -1463,6 +1652,10 @@ export default function PraticaDetailPage() {
               {id && practice?.client_id && <ReputazioneTab practiceId={id} clientId={practice.client_id} />}
             </TabsContent>
 
+            <TabsContent value="aml" className="mt-3">
+              {id && <AmlReportTab practiceId={id} />}
+            </TabsContent>
+
             <TabsContent value="log" className="mt-3">
               <div className="space-y-2">
                 {logs.map(log => (
@@ -1666,6 +1859,114 @@ export default function PraticaDetailPage() {
                       </Card>
                     );
                   })}
+                </div>
+              )}
+            </TabsContent>
+
+            {/* ── Tab Genera Documento ── */}
+            <TabsContent value="genera-doc" className="mt-3 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Layout className="w-4 h-4 text-primary" /> Genera Documento da Template
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Scegli un template, caricalo con i dati della pratica, modifica il testo e scarica il PDF.
+                </p>
+              </div>
+
+              {/* Selezione template */}
+              <div className="flex gap-2 flex-wrap items-end">
+                <div className="flex-1 min-w-[200px] space-y-1.5">
+                  <Label className="text-xs">Template</Label>
+                  <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={loadingDocTemplates ? 'Caricamento...' : 'Seleziona un template...'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {docTemplates.length === 0 && (
+                        <SelectItem value="__none__" disabled>
+                          Nessun template disponibile — creane uno in "Template Documenti"
+                        </SelectItem>
+                      )}
+                      {docTemplates.map(t => (
+                        <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  disabled={!selectedTemplateId || loadingTemplate}
+                  onClick={handleLoadTemplate}
+                  className="gap-2 shrink-0"
+                >
+                  {loadingTemplate
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Caricamento...</>
+                    : <><FileText className="w-3.5 h-3.5" />Carica Template</>}
+                </Button>
+              </div>
+
+              {/* Variabili usate */}
+              {generatedText && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
+                  <strong>Dati compilati automaticamente:</strong> ragione sociale, numero pratica, importo, agente, data, città, codice ATECO.
+                  Le variabili non riconosciute restano nel formato <code className="bg-blue-100 px-1 rounded font-mono">{'{{variabile}}'}</code>.
+                </div>
+              )}
+
+              {/* Textarea documento */}
+              {generatedText !== '' || selectedTemplateId ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Testo documento (modificabile)</Label>
+                  <Textarea
+                    rows={16}
+                    className="font-mono text-sm leading-relaxed"
+                    placeholder="Il documento generato apparirà qui..."
+                    value={generatedText}
+                    onChange={e => setGeneratedText(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="py-12 text-center text-muted-foreground text-sm">
+                    <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                    Seleziona un template e clicca "Carica Template" per generare il documento.
+                    {docTemplates.length === 0 && (
+                      <p className="mt-2 text-xs">
+                        Nessun template disponibile.{' '}
+                        <a href="#/admin/template-documenti" className="text-primary underline">
+                          Crea il primo template →
+                        </a>
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Azioni export */}
+              {generatedText && (
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="default"
+                    className="gap-2"
+                    onClick={handleExportPdf}
+                  >
+                    <FileDown className="w-4 h-4" /> Esporta PDF
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={handleCopyText}
+                  >
+                    <ClipboardCopy className="w-4 h-4" /> Copia testo
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1.5 text-muted-foreground text-xs ml-auto"
+                    onClick={() => { setGeneratedText(''); setSelectedTemplateId(''); }}
+                  >
+                    Azzera
+                  </Button>
                 </div>
               )}
             </TabsContent>
