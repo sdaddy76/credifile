@@ -221,7 +221,7 @@ export default function BancaPortalPage() {
   const [notifOpen, setNotifOpen] = useState(false);
 
   /* ── Filtri ── */
-  const [filters, setFilters] = useState({ city: '', ateco: '', importoMin: 0, soloConKpi: '' });
+  const [filters, setFilters] = useState({ city: '', ateco: '', importoMin: 0, soloConKpi: 'tutti' });
 
   /* ── Watchlist ── */
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
@@ -742,7 +742,7 @@ export default function BancaPortalPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Tutti</SelectItem>
+                  <SelectItem value="tutti">Tutti</SelectItem>
                   <SelectItem value="con">Solo con KPI</SelectItem>
                   <SelectItem value="senza">Solo senza KPI</SelectItem>
                 </SelectContent>
@@ -750,7 +750,7 @@ export default function BancaPortalPage() {
             </div>
             <Button
               variant="outline" size="sm"
-              onClick={() => setFilters({ city: '', ateco: '', importoMin: 0, soloConKpi: '' })}
+              onClick={() => setFilters({ city: '', ateco: '', importoMin: 0, soloConKpi: 'tutti' })}
               className="h-8 gap-1.5">
               <XIcon className="w-3.5 h-3.5" /> Reset filtri
             </Button>
