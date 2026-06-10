@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send, CheckCircle2, Clock, LayoutList, Columns, Download } from 'lucide-react';
+import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send, CheckCircle2, Clock, LayoutList, Columns, Download, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -46,6 +46,11 @@ export default function PratichePage() {
   const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
   const [viewMode, setViewMode] = useState<'lista' | 'kanban'>('lista');
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  // Duplicazione pratica (solo super_admin)
+  const [showDuplica, setShowDuplica] = useState<Practice | null>(null);
+  const [duplicaAgentId, setDuplicaAgentId] = useState('');
+  const [duplicaNote, setDuplicaNote] = useState('');
+  const [savingDuplica, setSavingDuplica] = useState(false);
 
   async function openBankDialog(practice: Practice) {
     setShowAssignBank(practice);
@@ -207,6 +212,60 @@ export default function PratichePage() {
     if (error) { toast.error('Errore eliminazione: ' + error.message); return; }
     toast.success(`Pratica ${numero} eliminata`);
     load();
+  };
+
+  const handleDuplica = async () => {
+    if (!showDuplica) return;
+    setSavingDuplica(true);
+    const numero_pratica = generateNumeroPratica();
+    const { data: newPractice, error } = await supabase.from('practices').insert({
+      client_id:        showDuplica.client_id,
+      numero_pratica,
+      importo_richiesto: showDuplica.importo_richiesto ?? null,
+      motivazione:      showDuplica.motivazione ?? null,
+      codice_ateco:     showDuplica.codice_ateco ?? null,
+      segnalatore_id:   showDuplica.segnalatore_id ?? null,
+      note_admin:       duplicaNote || null,
+      status:           'bozza',
+      created_by:       user?.id ?? null,
+      assigned_to:      duplicaAgentId || null,
+    }).select().single();
+
+    if (error || !newPractice) {
+      toast.error('Errore nella duplicazione: ' + (error?.message ?? 'sconosciuto'));
+      setSavingDuplica(false);
+      return;
+    }
+
+    // Copia i documenti standard obbligatori
+    const { data: templates } = await supabase
+      .from('document_templates').select('*').eq('obbligatorio', true);
+    if (templates && templates.length > 0) {
+      await supabase.from('practice_documents').insert(
+        templates.map((t: { id: string; nome: string; descrizione?: string }) => ({
+          practice_id:  newPractice.id,
+          template_id:  t.id,
+          nome:         t.nome,
+          descrizione:  t.descrizione,
+          tipo:         'standard',
+          obbligatorio: true,
+          status:       'richiesto',
+        }))
+      );
+    }
+
+    // Log stato iniziale
+    await supabase.from('practice_status_log').insert({
+      practice_id: newPractice.id, new_status: 'bozza', created_by: 'admin',
+    });
+
+    toast.success(`Pratica ${numero_pratica} creata come duplicato di ${showDuplica.numero_pratica}`);
+    setSavingDuplica(false);
+    setShowDuplica(null);
+    setDuplicaAgentId('');
+    setDuplicaNote('');
+    load();
+    navigate(`/admin/pratiche/${newPractice.id}`);
   };
 
   const handleCreate = async () => {
@@ -541,6 +600,16 @@ export default function PratichePage() {
                           <Building2 className="w-4 h-4" />
                         </Button>
                       )}
+                      {isSuperAdmin && (
+                        <Button
+                          variant="ghost" size="sm"
+                          className="h-8 w-8 p-0 text-amber-600 hover:bg-amber-50"
+                          title="Duplica pratica e assegna ad altro agente"
+                          onClick={e => { e.stopPropagation(); setShowDuplica(p); setDuplicaAgentId(''); setDuplicaNote(''); }}
+                        >
+                          <Copy className="w-4 h-4" />
+                        </Button>
+                      )}
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                         <Eye className="w-4 h-4" />
                       </Button>
@@ -775,6 +844,77 @@ export default function PratichePage() {
             <Button variant="outline" onClick={closeBankDialog}>Chiudi</Button>
             <Button onClick={handleAssignBank} disabled={savingBank || !assignBankId}>
               {savingBank ? 'Salvataggio...' : sendBankEmail ? 'Assegna e Invia Email' : 'Assegna Banca'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog duplicazione pratica — solo super_admin */}
+      <Dialog open={!!showDuplica} onOpenChange={(open) => { if (!open) { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Copy className="w-5 h-5 text-amber-600" /> Duplica Pratica
+            </DialogTitle>
+          </DialogHeader>
+          {showDuplica && (
+            <div className="space-y-4 py-2">
+              {/* Info pratica originale */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm space-y-1">
+                <p className="text-xs text-amber-700 font-semibold uppercase tracking-wide">Pratica originale</p>
+                <p className="font-semibold text-foreground">
+                  {(showDuplica as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? '—'}
+                </p>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <code className="font-mono bg-white border rounded px-1">{showDuplica.numero_pratica}</code>
+                  <Badge className={`text-[10px] ${STATUS_COLORS[showDuplica.status]}`}>{STATUS_LABELS[showDuplica.status]}</Badge>
+                  {showDuplica.importo_richiesto && (
+                    <span>€ {Number(showDuplica.importo_richiesto).toLocaleString('it-IT')}</span>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-sm text-muted-foreground">
+                Verrà creata una nuova pratica in stato <strong>Bozza</strong> con gli stessi dati (cliente, importo, motivazione, ATECO, segnalatore) e i documenti standard obbligatori.
+              </p>
+
+              {/* Selezione agente */}
+              <div className="space-y-2">
+                <Label>Assegna a Agente <span className="text-muted-foreground font-normal">(opzionale)</span></Label>
+                <Select value={duplicaAgentId} onValueChange={v => setDuplicaAgentId(v === 'nessuno' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="Seleziona agente..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="nessuno">— Nessuna assegnazione —</SelectItem>
+                    {agents.map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.nome || a.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Note interne per il duplicato */}
+              <div className="space-y-2">
+                <Label>Note interne per il duplicato <span className="text-muted-foreground font-normal">(opzionale)</span></Label>
+                <Textarea
+                  placeholder="es. Pratica duplicata per secondo istituto..."
+                  rows={2}
+                  value={duplicaNote}
+                  onChange={e => setDuplicaNote(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); }}>
+              Annulla
+            </Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 gap-2"
+              onClick={handleDuplica}
+              disabled={savingDuplica}
+            >
+              <Copy className="w-4 h-4" />
+              {savingDuplica ? 'Duplicazione...' : 'Duplica Pratica'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -107,3 +107,5 @@
 [2026-06-10 17:32] Inizio fix box viola/blu AI Banche: rimozione condizioni && su analisi_societa/suggerimento_ai nel frontend + fallback testo API
 [2026-06-10 17:34] Fix completato: frontend box viola/blu sempre visibili (placeholder se vuoti) + API fallback testi quando Groq vuoto/non disponibile. Avvio build.
 [2026-06-10 17:37] Deploy OK: commit 90d42c8 — box viola/blu AI Banche sempre visibili con fallback testo. Vercel: credifile-eosin.vercel.app
+[2026-06-10 18:08] Inizio implementazione duplicazione pratiche super_admin in PratichePage.tsx
+[2026-06-10 18:10] Implementazione duplicazione pratiche: import Copy, 4 stati, handleDuplica (clona pratica+documenti+log), pulsante arancione lista, dialog con selezione agente+note. Avvio build.
