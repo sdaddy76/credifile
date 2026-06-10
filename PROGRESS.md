@@ -113,3 +113,5 @@
 [2026-06-10 18:12] Deploy OK commit 13fb57f: duplicazione pratiche per super_admin completata (pulsante Copy, dialog agente+note, handler clona pratica+documenti+log)
 [2026-06-10 18:28] Fix KPI banca: aggiunta utile_netto al catalogo, dropdown raggruppato per area, fallback colonne dirette nel matching
 [2026-06-10 18:29] Fix KPI banca completati: utile_netto aggiunto al catalogo, dropdown raggruppato per area con emoji, fallback colonne dirette ricavi_vendite/utile_netto nel matching. Avvio build.
+[2026-06-10 18:32] Deploy OK commit 4941555: KPI banca — utile_netto aggiunto, dropdown raggruppato per area, fallback matching colonne dirette.
+[2026-06-10 18:32] Deploy OK commit 4941555: KPI banca utile_netto aggiunto, dropdown raggruppato per area, fallback matching colonne dirette bilanci_kpi.

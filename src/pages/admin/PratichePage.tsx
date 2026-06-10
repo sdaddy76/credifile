@@ -50,6 +50,7 @@ export default function PratichePage() {
   const [showDuplica, setShowDuplica] = useState<Practice | null>(null);
   const [duplicaAgentId, setDuplicaAgentId] = useState('');
   const [duplicaNote, setDuplicaNote] = useState('');
+  const [duplicaDocumenti, setDuplicaDocumenti] = useState(false);
   const [savingDuplica, setSavingDuplica] = useState(false);
 
   async function openBankDialog(practice: Practice) {
@@ -237,21 +238,44 @@ export default function PratichePage() {
       return;
     }
 
-    // Copia i documenti standard obbligatori
-    const { data: templates } = await supabase
-      .from('document_templates').select('*').eq('obbligatorio', true);
-    if (templates && templates.length > 0) {
-      await supabase.from('practice_documents').insert(
-        templates.map((t: { id: string; nome: string; descrizione?: string }) => ({
-          practice_id:  newPractice.id,
-          template_id:  t.id,
-          nome:         t.nome,
-          descrizione:  t.descrizione,
-          tipo:         'standard',
-          obbligatorio: true,
-          status:       'richiesto',
-        }))
-      );
+    // Documenti: copia dall'originale OPPURE usa i template standard
+    if (duplicaDocumenti) {
+      // Copia TUTTI i documenti dalla pratica originale (status reset a 'richiesto')
+      const { data: origDocs } = await supabase
+        .from('practice_documents')
+        .select('template_id, bank_requirement_id, nome, descrizione, tipo, obbligatorio')
+        .eq('practice_id', showDuplica.id);
+      if (origDocs && origDocs.length > 0) {
+        await supabase.from('practice_documents').insert(
+          origDocs.map((d: { template_id: string | null; bank_requirement_id: string | null; nome: string; descrizione?: string; tipo: string; obbligatorio: boolean }) => ({
+            practice_id:         newPractice.id,
+            template_id:         d.template_id,
+            bank_requirement_id: d.bank_requirement_id,
+            nome:                d.nome,
+            descrizione:         d.descrizione,
+            tipo:                d.tipo,
+            obbligatorio:        d.obbligatorio,
+            status:              'richiesto',
+          }))
+        );
+      }
+    } else {
+      // Copia solo i documenti standard obbligatori da template
+      const { data: templates } = await supabase
+        .from('document_templates').select('*').eq('obbligatorio', true);
+      if (templates && templates.length > 0) {
+        await supabase.from('practice_documents').insert(
+          templates.map((t: { id: string; nome: string; descrizione?: string }) => ({
+            practice_id:  newPractice.id,
+            template_id:  t.id,
+            nome:         t.nome,
+            descrizione:  t.descrizione,
+            tipo:         'standard',
+            obbligatorio: true,
+            status:       'richiesto',
+          }))
+        );
+      }
     }
 
     // Log stato iniziale
@@ -264,6 +288,7 @@ export default function PratichePage() {
     setShowDuplica(null);
     setDuplicaAgentId('');
     setDuplicaNote('');
+    setDuplicaDocumenti(false);
     load();
     navigate(`/admin/pratiche/${newPractice.id}`);
   };
@@ -605,7 +630,7 @@ export default function PratichePage() {
                           variant="ghost" size="sm"
                           className="h-8 w-8 p-0 text-amber-600 hover:bg-amber-50"
                           title="Duplica pratica e assegna ad altro agente"
-                          onClick={e => { e.stopPropagation(); setShowDuplica(p); setDuplicaAgentId(''); setDuplicaNote(''); }}
+                          onClick={e => { e.stopPropagation(); setShowDuplica(p); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); }}
                         >
                           <Copy className="w-4 h-4" />
                         </Button>
@@ -850,7 +875,7 @@ export default function PratichePage() {
       </Dialog>
 
       {/* Dialog duplicazione pratica — solo super_admin */}
-      <Dialog open={!!showDuplica} onOpenChange={(open) => { if (!open) { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); } }}>
+      <Dialog open={!!showDuplica} onOpenChange={(open) => { if (!open) { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -902,10 +927,31 @@ export default function PratichePage() {
                   onChange={e => setDuplicaNote(e.target.value)}
                 />
               </div>
+
+              {/* Checkbox copia documenti */}
+              <div className="flex items-start gap-3 p-3 bg-muted/40 rounded-lg border border-border">
+                <input
+                  type="checkbox"
+                  id="duplicaDocumentiCheck"
+                  checked={duplicaDocumenti}
+                  onChange={e => setDuplicaDocumenti(e.target.checked)}
+                  className="h-4 w-4 mt-0.5 accent-amber-600 cursor-pointer"
+                />
+                <div>
+                  <label htmlFor="duplicaDocumentiCheck" className="text-sm font-medium cursor-pointer select-none">
+                    Copia anche la lista documenti della pratica originale
+                  </label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {duplicaDocumenti
+                      ? 'Verranno copiati tutti i documenti (standard e personalizzati) con stato reset a "Richiesto". I file caricati devono essere ricaricati.'
+                      : 'Verranno creati solo i documenti standard obbligatori dal template.'}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); }}>
+            <Button variant="outline" onClick={() => { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); }}>
               Annulla
             </Button>
             <Button
