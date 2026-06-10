@@ -1,0 +1,295 @@
+// Vercel Serverless Function — Invia pratica alla banca via Resend
+// Sostituisce la Supabase Edge Function send-to-bank (BOOT_ERROR sul progetto fhieppjqlefdlanvrpik)
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://fhieppjqlefdlanvrpik.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const RESEND_KEY   = process.env.RESEND_API_KEY;
+const FROM         = process.env.FROM_EMAIL   || 'Credifile <docflow@stedasrls.it>';
+const APP          = process.env.APP_URL      || 'https://credifile-eosin.vercel.app';
+
+const CORS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, apikey, x-client-info',
+  'Content-Type': 'application/json',
+};
+
+// ── helper colore score ────────────────────────────────────────────────────
+function scoreColor(s) {
+  if (s == null) return '#888';
+  if (s >= 70) return '#16a34a';
+  if (s >= 40) return '#d97706';
+  return '#dc2626';
+}
+function scoreLabel(s) {
+  if (s == null) return 'N/D';
+  if (s >= 70) return 'Buono';
+  if (s >= 40) return 'Medio';
+  return 'Basso';
+}
+
+// ── helper: estrae KPI "piatti" dal JSON annidato ──────────────────────────
+function flattenKpi(kpiJson) {
+  if (!kpiJson) return [];
+  const rows = [];
+  for (const area of Object.values(kpiJson)) {
+    if (typeof area !== 'object' || !area) continue;
+    for (const [label, entry] of Object.entries(area)) {
+      const val = entry?.value;
+      if (val != null) {
+        const formatted = typeof val === 'number'
+          ? (Number.isInteger(val) ? String(val) : val.toFixed(2))
+          : String(val);
+        rows.push({ label, value: formatted });
+      }
+    }
+  }
+  return rows.slice(0, 14);
+}
+
+export const config = { maxDuration: 60 };
+
+export default async function handler(req, res) {
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).set(CORS).end();
+  }
+  if (req.method !== 'POST') {
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
+  }
+
+  try {
+    const { practice_id, bank_id, note } = req.body;
+    if (!practice_id || !bank_id) {
+      return res.status(400).set(CORS).json({ success: false, error: 'practice_id e bank_id obbligatori' });
+    }
+
+    const H = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Prefer': 'return=representation',
+    };
+
+    // 1. Pratica + cliente + agente
+    const praticaArr = await fetch(
+      `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
+      { headers: H },
+    ).then(r => r.json());
+    const pratica = praticaArr?.[0];
+    if (!pratica) return res.status(404).set(CORS).json({ success: false, error: 'Pratica non trovata' });
+
+    const clientId   = pratica.clients?.id;
+    const agentEmail = pratica.agent?.email ?? null;
+    const agentNome  = pratica.agent?.nome  ?? null;
+
+    // 2. Banca
+    const pbArr = await fetch(
+      `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca)&limit=1`,
+      { headers: H },
+    ).then(r => r.json());
+    const pb = pbArr?.[0];
+    if (!pb) return res.status(404).set(CORS).json({ success: false, error: 'Assegnazione banca non trovata' });
+
+    const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
+    if (!bankEmail) return res.status(422).set(CORS).json({ success: false, error: 'Email banca non configurata' });
+
+    // 3. File + signed URL (7 giorni)
+    const files = await fetch(
+      `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`,
+      { headers: H },
+    ).then(r => r.json()).catch(() => []) ?? [];
+
+    const docLinks = [];
+    for (const f of files) {
+      if (!f.storage_path) continue;
+      const encodedPath = f.storage_path.split('/').map(s => encodeURIComponent(s)).join('/');
+      const signRes = await fetch(
+        `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
+        { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
+      );
+      if (signRes.ok) {
+        const signData = await signRes.json();
+        let url = signData?.signedUrl ?? null;
+        if (!url && signData?.signedURL) url = `${SUPABASE_URL}/storage/v1${signData.signedURL}`;
+        if (url) docLinks.push({ nomeDoc: f.practice_documents?.nome ?? f.nome_file, nomeFile: f.nome_file, url });
+      }
+    }
+
+    // 4. KPI finanziari (bilancio più recente)
+    let kpiRows = [];
+    let annoBilancio = null;
+    if (clientId) {
+      const kpiArr = await fetch(
+        `${SUPABASE_URL}/rest/v1/bilanci_kpi?client_id=eq.${encodeURIComponent(clientId)}&select=anno_bilancio,kpi&order=anno_bilancio.desc&limit=1`,
+        { headers: H },
+      ).then(r => r.json()).catch(() => []);
+      if (kpiArr?.[0]) {
+        annoBilancio = kpiArr[0].anno_bilancio;
+        kpiRows = flattenKpi(kpiArr[0].kpi);
+      }
+    }
+
+    // 5. Score reputazione (analisi più recente)
+    let rep = null;
+    if (clientId) {
+      const repArr = await fetch(
+        `${SUPABASE_URL}/rest/v1/reputational_analyses?client_id=eq.${encodeURIComponent(clientId)}&select=score_globale,score_societa,score_amm,score_soci&order=created_at.desc&limit=1`,
+        { headers: H },
+      ).then(r => r.json()).catch(() => []);
+      if (repArr?.[0]) rep = repArr[0];
+    }
+
+    // 6. Indice bancabilità
+    let bancabScore = null;
+    if (clientId) {
+      const bpArr = await fetch(
+        `${SUPABASE_URL}/rest/v1/bancabilita_pesi?client_id=eq.${encodeURIComponent(clientId)}&select=score_globale&order=updated_at.desc&limit=1`,
+        { headers: H },
+      ).then(r => r.json()).catch(() => []);
+      if (bpArr?.[0]?.score_globale != null) bancabScore = bpArr[0].score_globale;
+    }
+
+    // ── 7. Componi HTML email ─────────────────────────────────────────────
+    const cliente  = pratica.clients?.ragione_sociale ?? pratica.clients?.codice_fiscale ?? 'N/D';
+    const notaHtml = note ? `<p style="color:#555;margin-top:12px;"><strong>Note:</strong> ${note}</p>` : '';
+
+    const docsHtml = docLinks.length > 0
+      ? docLinks.map(d =>
+          `<li style="margin:8px 0;">` +
+          `<a href="${d.url}" style="color:#2563eb;font-weight:600;">${d.nomeDoc}</a>` +
+          ` <span style="color:#888;font-size:11px;">(${d.nomeFile} — link valido 7 giorni)</span>` +
+          `</li>`,
+        ).join('')
+      : '<li style="color:#888;">Nessun documento disponibile al momento</li>';
+
+    const kpiSection = kpiRows.length > 0 ? `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  📊 KPI Finanziari${annoBilancio ? ` — Bilancio ${annoBilancio}` : ''}
+</h3>
+<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
+  <thead>
+    <tr style="background:#f1f5f9;">
+      <th style="text-align:left;padding:7px 10px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Indicatore</th>
+      <th style="text-align:right;padding:7px 10px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Valore</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${kpiRows.map((k, i) =>
+      `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
+      `<td style="padding:6px 10px;color:#374151;">${k.label}</td>` +
+      `<td style="padding:6px 10px;text-align:right;font-weight:600;color:#1e3a5f;">${k.value}</td>` +
+      `</tr>`,
+    ).join('')}
+  </tbody>
+</table>` : '';
+
+    const bancabSection = `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  🏦 Indice di Bancabilità
+</h3>
+<div style="display:inline-block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 24px;margin-top:8px;text-align:center;">
+  ${bancabScore != null
+    ? `<div style="font-size:36px;font-weight:800;color:${scoreColor(bancabScore)};">${bancabScore.toFixed(0)}<span style="font-size:16px;color:#64748b;">/100</span></div>
+       <div style="font-size:13px;font-weight:600;color:${scoreColor(bancabScore)};margin-top:2px;">${scoreLabel(bancabScore)}</div>`
+    : `<div style="font-size:18px;color:#94a3b8;font-weight:500;">Non calcolato</div>`
+  }
+</div>`;
+
+    const repSection = rep ? `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  🔎 Score Reputazione
+</h3>
+<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
+  <thead>
+    <tr style="background:#f1f5f9;">
+      <th style="text-align:left;padding:7px 10px;color:#475569;border-bottom:1px solid #e2e8f0;">Dimensione</th>
+      <th style="text-align:center;padding:7px 10px;color:#475569;border-bottom:1px solid #e2e8f0;">Score</th>
+      <th style="text-align:center;padding:7px 10px;color:#475569;border-bottom:1px solid #e2e8f0;">Giudizio</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${[
+      { label: 'Score Globale',  s: rep.score_globale },
+      { label: 'Società',        s: rep.score_societa },
+      { label: 'Amministratori', s: rep.score_amm },
+      { label: 'Soci',           s: rep.score_soci },
+    ].map((r, i) =>
+      `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
+      `<td style="padding:6px 10px;color:#374151;">${r.label}</td>` +
+      `<td style="padding:6px 10px;text-align:center;font-weight:700;color:${scoreColor(r.s)};">${r.s != null ? Number(r.s).toFixed(0) + '/100' : 'N/D'}</td>` +
+      `<td style="padding:6px 10px;text-align:center;font-size:12px;color:${scoreColor(r.s)};">${scoreLabel(r.s)}</td>` +
+      `</tr>`,
+    ).join('')}
+  </tbody>
+</table>` : '';
+
+    const htmlBody = `<!DOCTYPE html>
+<html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
+<div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
+  <h2 style="color:#1e3a5f;margin:0;">Credifile — Pratica inviata</h2>
+</div>
+<p>Gentile <strong>${pb.banks?.nome}</strong>,</p>
+<p>Le trasmettiamo la documentazione relativa alla pratica di <strong>${cliente}</strong>
+(rif. <code>${pratica.numero_pratica}</code>).</p>
+${notaHtml}
+<h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  📎 Documenti allegati (${docLinks.length})
+</h3>
+<ul style="padding-left:20px;">${docsHtml}</ul>
+${kpiSection}
+${bancabSection}
+${repSection}
+<div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #1e3a5f;">
+  ${agentNome ? `Pratica gestita da: <strong>${agentNome}</strong>${agentEmail ? ` — <a href="mailto:${agentEmail}" style="color:#2563eb;">${agentEmail}</a>` : ''}<br>` : ''}
+  Per rispondere a questa comunicazione utilizzare il pulsante "Rispondi" — la risposta verrà recapitata direttamente al referente della pratica.
+</div>
+<p style="margin-top:16px;font-size:11px;color:#94a3b8;">
+  Questo messaggio è stato inviato automaticamente da <a href="${APP}" style="color:#64748b;">Credifile</a>.
+</p>
+</body></html>`;
+
+    // 8. Invia via Resend
+    const emailPayload = {
+      from: FROM,
+      to: [bankEmail],
+      subject: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
+      html: htmlBody,
+    };
+    if (agentEmail) emailPayload.reply_to = agentEmail;
+
+    const emailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(emailPayload),
+    });
+    const emailBody = await emailRes.json();
+    if (!emailRes.ok) {
+      return res.status(502).set(CORS).json({ success: false, error: emailBody?.message ?? 'Errore Resend' });
+    }
+
+    // 9. Aggiorna practice_banks → status 'inviata'
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}`,
+      {
+        method: 'PATCH',
+        headers: H,
+        body: JSON.stringify({ status: 'inviata', data_invio: new Date().toISOString(), note: note ?? null }),
+      },
+    );
+
+    return res.status(200).set(CORS).json({
+      success: true,
+      sent_to: bankEmail,
+      reply_to: agentEmail ?? null,
+      docs_sent: docLinks.length,
+      kpi_rows: kpiRows.length,
+      has_rep: !!rep,
+    });
+
+  } catch (e) {
+    console.error('send-to-bank error:', e);
+    return res.status(500).set(CORS).json({ success: false, error: String(e) });
+  }
+}

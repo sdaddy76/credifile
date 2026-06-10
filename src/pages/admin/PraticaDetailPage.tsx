@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { invokeSendToBank } from '@/lib/sendToBank';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1439,9 +1440,7 @@ export default function PraticaDetailPage() {
                         <Button className="bg-blue-600 hover:bg-blue-700 gap-2" disabled={sendingBankId === pb.id}
                           onClick={async () => {
                             setSendingBankId(pb.id);
-                            const { data, error } = await supabase.functions.invoke('send-to-bank', {
-                              body: { practice_id: practice!.id, bank_id: pb.bank_id, note: bankNote || null }
-                            });
+                            const { data, error } = await invokeSendToBank({ practice_id: practice!.id, bank_id: pb.bank_id, note: bankNote || null });
                             setSendingBankId(null);
                             if (error || !data?.success) { toast.error('Errore: ' + (error?.message ?? data?.error)); return; }
                             toast.success(`Pratica inviata a ${data.sent_to}!`);

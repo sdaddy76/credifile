@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { invokeSendToBank } from '@/lib/sendToBank';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -84,8 +85,8 @@ export default function PratichePage() {
   async function handleSendExisting(bankId: string) {
     if (!showAssignBank) return;
     setSendingBankId(bankId);
-    const { data, error } = await supabase.functions.invoke('send-to-bank', {
-      body: { practice_id: showAssignBank.id, bank_id: bankId, note: sendNoteFor[bankId] || null },
+    const { data, error } = await invokeSendToBank({
+      practice_id: showAssignBank.id, bank_id: bankId, note: sendNoteFor[bankId] || null,
     });
     if (error || data?.error) {
       toast.error('Errore invio: ' + (error?.message ?? data?.error));
@@ -285,8 +286,8 @@ export default function PratichePage() {
     }
     // Invia email alla banca se richiesto
     if (sendBankEmail) {
-      const { data: fnData, error: fnError } = await supabase.functions.invoke('send-to-bank', {
-        body: { practice_id: showAssignBank.id, bank_id: assignBankId, note: assignBankNote || null },
+      const { data: fnData, error: fnError } = await invokeSendToBank({
+        practice_id: showAssignBank.id, bank_id: assignBankId, note: assignBankNote || null,
       });
       if (fnError || fnData?.error) {
         toast.warning('Banca assegnata ma errore invio email: ' + (fnError?.message ?? fnData?.error));

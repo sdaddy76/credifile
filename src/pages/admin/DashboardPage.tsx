@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { invokeSendToBank } from '@/lib/sendToBank';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -92,8 +93,8 @@ export default function DashboardPage() {
       }
 
       // 2. Invia email via send-to-bank
-      const { data: sendResult, error: sendError } = await supabase.functions.invoke('send-to-bank', {
-        body: { practice_id: req.practice_id, bank_id: req.bank_id, note: req.note_banca || null },
+      const { data: sendResult, error: sendError } = await invokeSendToBank({
+        practice_id: req.practice_id, bank_id: req.bank_id, note: req.note_banca || null,
       });
 
       if (sendError || (sendResult && !sendResult.success)) {
