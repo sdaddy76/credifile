@@ -104,3 +104,5 @@
 [2026-06-10 13:02] Supabase edge function BOOT_ERROR irrecuperabile su tutti i deploy. Cambio strategia: Vercel serverless function /api/dropbox-backup.js
 [2026-06-10 13:03] Creata api/dropbox-backup.js (Vercel serverless). Supabase edge function irrecuperabile (BOOT_ERROR su tutti i deploy incluso hello-world). Aggiungo env vars Vercel e aggiorno frontend.
 [2026-06-10 13:06] Fix backup Dropbox completato: Vercel serverless /api/dropbox-backup.js funziona (test: ok=true, 66KB). Supabase edge function abbandonata (BOOT_ERROR irrecuperabile su tutti i deploy). Commit d0aec08 su GitHub + Vercel prod.
+[2026-06-10 17:32] Inizio fix box viola/blu AI Banche: rimozione condizioni && su analisi_societa/suggerimento_ai nel frontend + fallback testo API
+[2026-06-10 17:34] Fix completato: frontend box viola/blu sempre visibili (placeholder se vuoti) + API fallback testi quando Groq vuoto/non disponibile. Avvio build.

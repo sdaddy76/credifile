@@ -101,28 +101,36 @@ export default async function handler(req, res) {
     }).sort((a, b) => b.score - a.score);
 
     // 5. Groq AI — due prompt separati: analisi società + suggerimento banche
+    const ragioneSociale = p.clients?.ragione_sociale || 'Società N/D';
+    const kpiSummary = kpiData
+      ? `Fatturato: ${kpiData.ricavi_vendite || 'N/D'}€ | Patrimonio Netto: ${kpiData.totale_patrimonio_netto || 'N/D'}€ | Totale Debiti: ${kpiData.totale_debiti || 'N/D'}€ | Utile Netto: ${kpiData.utile_netto || 'N/D'}€`
+      : 'KPI finanziari non ancora caricati';
+    const topBanks = matchResults.slice(0, 3)
+      .map(b => `${b.bankName} (${b.score}% — ${b.passCount} OK, ${b.failCount} NOK)`)
+      .join('; ') || 'Nessuna banca configurata';
+
+    // Testi di fallback (quando Groq non disponibile o KPI mancanti)
+    const fallbackAnalisi = `${ragioneSociale} opera nel settore ATECO ${p.codice_ateco || 'N/D'} e ha richiesto un finanziamento di ${p.importo_richiesto ? Number(p.importo_richiesto).toLocaleString('it-IT') + '€' : 'importo N/D'}. ${kpiData ? 'I KPI finanziari sono disponibili e sono stati analizzati nel matching.' : 'I KPI finanziari non sono ancora stati caricati: si consiglia di completare l\'analisi finanziaria per ottenere un\'analisi AI più accurata.'}`;
+    const fallbackSuggerimento = matchResults.length > 0
+      ? `Si raccomanda di privilegiare ${matchResults[0].bankName} (${matchResults[0].score}% di compatibilità stimata). Per una raccomandazione AI più precisa, configurare i criteri KPI specifici per ogni banca e caricare i bilanci aziendali.`
+      : 'Nessuna banca attiva trovata. Aggiungere banche al sistema e configurarne i criteri KPI per ottenere suggerimenti personalizzati.';
+
     let aiSuggerimento = '';
     let analisiSocieta = '';
-    if (GROQ_API_KEY) {
-      const kpiSummary = kpiData
-        ? `Fatturato: ${kpiData.ricavi_vendite || 'N/D'}€ | Patrimonio Netto: ${kpiData.totale_patrimonio_netto || 'N/D'}€ | Totale Debiti: ${kpiData.totale_debiti || 'N/D'}€ | Utile Netto: ${kpiData.utile_netto || 'N/D'}€`
-        : 'KPI finanziari non disponibili';
-      const topBanks = matchResults.slice(0, 3)
-        .map(b => `${b.bankName} (${b.score}% — ${b.passCount} OK, ${b.failCount} NOK)`)
-        .join('; ');
 
+    if (GROQ_API_KEY) {
       // Prompt 1: analisi situazione societaria
       const prompt1 = `Sei un analista creditizio italiano. Analizza la situazione finanziaria di questa società in modo sintetico (3-4 frasi).
-Società: ${p.clients?.ragione_sociale || 'N/D'} | ATECO: ${p.codice_ateco || 'N/D'}
+Società: ${ragioneSociale} | ATECO: ${p.codice_ateco || 'N/D'}
 Finanziamento richiesto: ${p.importo_richiesto || 'N/D'}€ — Motivazione: ${p.motivazione || 'N/D'}
 ${kpiSummary}
-Commenta i punti di forza e le criticità principali in italiano, in modo diretto e professionale.`;
+Commenta i punti di forza e le criticità principali in italiano, in modo diretto e professionale. Anche se i KPI non sono disponibili, fornisci comunque una valutazione sul settore e sull'operazione.`;
 
       // Prompt 2: raccomandazione operativa sulle banche
       const prompt2 = `Sei un consulente finanziario italiano. In 2-3 frasi fornisci una raccomandazione operativa su quale banca privilegiare e perché.
 Banche più compatibili: ${topBanks}
 Importo richiesto: ${p.importo_richiesto || 'N/D'}€ | ATECO: ${p.codice_ateco || 'N/D'}
-Sii diretto e pratico. Rispondi solo in italiano.`;
+Sii diretto e pratico. Rispondi solo in italiano. Fornisci comunque una raccomandazione anche se i dati sono parziali.`;
 
       try {
         const [res1, res2] = await Promise.all([
@@ -137,9 +145,17 @@ Sii diretto e pratico. Rispondi solo in italiano.`;
             body: JSON.stringify({ model: 'llama3-8b-8192', messages: [{ role: 'user', content: prompt2 }], max_tokens: 200 }),
           }).then(r => r.json()),
         ]);
-        analisiSocieta = res1.choices?.[0]?.message?.content || '';
-        aiSuggerimento = res2.choices?.[0]?.message?.content || '';
-      } catch { /* ignora errori AI */ }
+        analisiSocieta = res1.choices?.[0]?.message?.content?.trim() || fallbackAnalisi;
+        aiSuggerimento = res2.choices?.[0]?.message?.content?.trim() || fallbackSuggerimento;
+      } catch {
+        // Groq non raggiungibile — uso i testi di fallback
+        analisiSocieta = fallbackAnalisi;
+        aiSuggerimento = fallbackSuggerimento;
+      }
+    } else {
+      // GROQ_API_KEY non configurata — uso i testi di fallback
+      analisiSocieta = fallbackAnalisi;
+      aiSuggerimento = fallbackSuggerimento;
     }
 
     return res.status(200).json({

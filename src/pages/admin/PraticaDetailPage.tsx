@@ -1796,24 +1796,28 @@ export default function PraticaDetailPage() {
                 const bancheList = matchingResult.matching ?? matchingResult.banche ?? [];
                 return (
                 <div className="space-y-4">
-                  {/* Analisi situazione societaria */}
-                  {matchingResult.analisi_societa && (
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 space-y-1">
-                      <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5">
-                        <span>📊</span> Analisi Situazione Societaria (AI)
-                      </p>
-                      <p className="text-sm text-indigo-900 leading-relaxed">{matchingResult.analisi_societa}</p>
-                    </div>
-                  )}
-                  {/* Suggerimento operativo AI */}
-                  {matchingResult.suggerimento_ai && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-1">
-                      <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
-                        <span>🤖</span> Raccomandazione Operativa
-                      </p>
-                      <p className="text-sm text-blue-900 leading-relaxed">{matchingResult.suggerimento_ai}</p>
-                    </div>
-                  )}
+                  {/* Analisi situazione societaria — sempre visibile */}
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 space-y-1">
+                    <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5">
+                      <span>📊</span> Analisi Situazione Societaria (AI)
+                    </p>
+                    <p className="text-sm text-indigo-900 leading-relaxed">
+                      {matchingResult.analisi_societa
+                        ? matchingResult.analisi_societa
+                        : 'Analisi AI non disponibile — dati KPI insufficienti o bilancio non ancora caricato per questa pratica.'}
+                    </p>
+                  </div>
+                  {/* Suggerimento operativo AI — sempre visibile */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-1">
+                    <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+                      <span>🤖</span> Raccomandazione Operativa
+                    </p>
+                    <p className="text-sm text-blue-900 leading-relaxed">
+                      {matchingResult.suggerimento_ai
+                        ? matchingResult.suggerimento_ai
+                        : 'Raccomandazione non disponibile — configurare i criteri KPI delle banche per ottenere suggerimenti personalizzati.'}
+                    </p>
+                  </div>
                   {/* Legenda */}
                   <div className="flex gap-4 text-xs text-muted-foreground px-1">
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500 inline-block"/>≥70% Compatibile</span>
