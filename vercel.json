@@ -11,6 +11,9 @@
     },
     "api/send-to-bank.js": {
       "maxDuration": 60
+    },
+    "api/ai-matching-banche.js": {
+      "maxDuration": 30
     }
   },
   "rewrites": [

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { invokeSendToBank } from '@/lib/sendToBank';
+import { invokeAiMatching } from '@/lib/aiMatching';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -201,11 +202,9 @@ export default function PraticaDetailPage() {
     if (!id) return;
     setLoadingMatching(true);
     try {
-      const { data, error } = await supabase.functions.invoke('ai-matching-banche', {
-        body: { practice_id: id },
-      });
-      if (error) { toast.error('Errore matching: ' + error.message); return; }
-      setMatchingResult(data as MatchingResult);
+      const result = await invokeAiMatching({ practice_id: id! });
+      if (result.error) { toast.error('Errore matching: ' + result.error.message); return; }
+      setMatchingResult(result.data as unknown as MatchingResult);
     } catch (e) {
       toast.error('Errore: ' + String(e));
     } finally {

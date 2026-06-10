@@ -28,6 +28,23 @@ function scoreLabel(s) {
   return 'Basso';
 }
 
+
+// ── calcolaScore (replica IndiceBancabilita.tsx) ───────────────────────────
+function calcolaScoreNode(valore, ottimo, suff, critica, inverso) {
+  if (ottimo === null || suff === null || critica === null) return 50;
+  if (!inverso) {
+    if (valore >= ottimo) return 100;
+    if (valore <= critica) return 0;
+    if (valore >= suff) return 55 + ((valore - suff) / (ottimo - suff)) * 45;
+    return ((valore - critica) / (suff - critica)) * 55;
+  } else {
+    if (valore <= ottimo) return 100;
+    if (valore >= critica) return 0;
+    if (valore <= suff) return 55 + ((suff - valore) / (suff - ottimo)) * 45;
+    return ((critica - valore) / (critica - suff)) * 55;
+  }
+}
+
 // ── helper: estrae KPI "piatti" dal JSON annidato ──────────────────────────
 function flattenKpi(kpiJson) {
   if (!kpiJson) return [];
@@ -138,14 +155,42 @@ export default async function handler(req, res) {
       if (repArr?.[0]) rep = repArr[0];
     }
 
-    // 6. Indice bancabilità
+    // 6. Indice bancabilità — calcolato dai pesi banca + KPI cliente
+    // bancabilita_pesi ha chiave (banca_id, kpi_key), NON client_id
     let bancabScore = null;
     if (clientId) {
-      const bpArr = await fetch(
-        `${SUPABASE_URL}/rest/v1/bancabilita_pesi?client_id=eq.${encodeURIComponent(clientId)}&select=score_globale&order=updated_at.desc&limit=1`,
+      try {
+        const [pesiArr, kpiLatest] = await Promise.all([
+          fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=eq.${encodeURIComponent(bank_id)}&select=kpi_key,kpi_area,peso,soglia_ottimo,soglia_suff,soglia_critica,inverso,attivo`, { headers: H }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?client_id=eq.${encodeURIComponent(clientId)}&select=kpi&order=anno_bilancio.desc&limit=1`, { headers: H }).then(r => r.json()),
+        ]);
+        const pesi   = (pesiArr  ?? []).filter(p => p.attivo !== false);
+        const kpiObj = kpiLatest?.[0]?.kpi ?? null;
+        if (pesi.length > 0 && kpiObj) {
+          let pesoPonderato = 0, sommaScore = 0;
+          for (const p of pesi) {
+            const area   = kpiObj[p.kpi_area];
+            const entry  = area?.[p.kpi_key];
+            const valore = entry?.value ?? entry?.valore ?? null;
+            if (valore == null) continue;
+            const num    = typeof valore === 'number' ? valore : parseFloat(valore);
+            if (isNaN(num)) continue;
+            const s = calcolaScoreNode(num, p.soglia_ottimo, p.soglia_suff, p.soglia_critica, !!p.inverso);
+            sommaScore   += s * (p.peso ?? 1);
+            pesoPonderato += (p.peso ?? 1);
+          }
+          if (pesoPonderato > 0) bancabScore = Math.round(sommaScore / pesoPonderato);
+        }
+      } catch { /* ignora errori bancabilità */ }
+    }
+
+    // 6b. Finanziamenti in corso
+    let financing = [];
+    if (clientId || practice_id) {
+      financing = await fetch(
+        `${SUPABASE_URL}/rest/v1/client_financing?practice_id=eq.${encodeURIComponent(practice_id)}&select=tipologia,banca_finanziaria,importo_iniziale,rata,durata_mesi,debito_residuo,tipo_garanzia,stato_rapporto&order=ordinamento.asc`,
         { headers: H },
-      ).then(r => r.json()).catch(() => []);
-      if (bpArr?.[0]?.score_globale != null) bancabScore = bpArr[0].score_globale;
+      ).then(r => r.json()).catch(() => []) ?? [];
     }
 
     // ── 7. Componi HTML email ─────────────────────────────────────────────
@@ -178,6 +223,37 @@ export default async function handler(req, res) {
       `<td style="padding:6px 10px;color:#374151;">${k.label}</td>` +
       `<td style="padding:6px 10px;text-align:right;font-weight:600;color:#1e3a5f;">${k.value}</td>` +
       `</tr>`,
+    ).join('')}
+  </tbody>
+</table>` : '';
+
+
+    // Sezione finanziamenti
+    const finSection = financing.length > 0 ? `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  💳 Finanziamenti in Corso (${financing.length})
+</h3>
+<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">
+  <thead>
+    <tr style="background:#f1f5f9;">
+      <th style="text-align:left;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Tipologia</th>
+      <th style="text-align:left;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Banca/Istituto</th>
+      <th style="text-align:right;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Importo €</th>
+      <th style="text-align:right;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Rata €</th>
+      <th style="text-align:right;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Debito Res. €</th>
+      <th style="text-align:left;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Garanzia</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${financing.map((f, i) =>
+      `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
+      `<td style="padding:5px 8px;color:#374151;">${f.tipologia || '—'}</td>` +
+      `<td style="padding:5px 8px;color:#374151;">${f.banca_finanziaria || '—'}</td>` +
+      `<td style="padding:5px 8px;text-align:right;font-weight:600;color:#1e3a5f;">${f.importo_iniziale != null ? Number(f.importo_iniziale).toLocaleString('it-IT') : '—'}</td>` +
+      `<td style="padding:5px 8px;text-align:right;color:#374151;">${f.rata != null ? Number(f.rata).toLocaleString('it-IT') : '—'}</td>` +
+      `<td style="padding:5px 8px;text-align:right;color:#374151;">${f.debito_residuo != null ? Number(f.debito_residuo).toLocaleString('it-IT') : '—'}</td>` +
+      `<td style="padding:5px 8px;color:#374151;">${f.tipo_garanzia || '—'}</td>` +
+      `</tr>`
     ).join('')}
   </tbody>
 </table>` : '';
@@ -236,6 +312,7 @@ ${notaHtml}
 </h3>
 <ul style="padding-left:20px;">${docsHtml}</ul>
 ${kpiSection}
+${finSection}
 ${bancabSection}
 ${repSection}
 <div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #1e3a5f;">
