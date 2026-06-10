@@ -20,6 +20,7 @@ import ImpostazioniPage from "@/pages/admin/ImpostazioniPage";
 import SegnalatoreDashboardPage from "@/pages/admin/SegnalatoreDashboardPage";
 import RubricaPage from "@/pages/admin/RubricaPage";
 import TemplateDocumentiPage from "@/pages/admin/TemplateDocumentiPage";
+import KanbanBanchePage from "@/pages/admin/KanbanBanchePage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
@@ -91,6 +92,7 @@ const App = () => (
             <Route path="segnalatore-dashboard"     element={<SegnalatoreDashboardPage />} />
             <Route path="rubrica-lead"               element={<RubricaPage />} />
             <Route path="template-documenti"         element={<TemplateDocumentiPage />} />
+            <Route path="kanban-banche"              element={<KanbanBanchePage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
