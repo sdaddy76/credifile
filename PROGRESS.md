@@ -98,3 +98,6 @@
 [2026-06-08 15:49] Fix codice_ateco (commit 6694142) pushato su GitHub. Diagnosi: 400 su practices per colonna inesistente. In corso: crea utenti test banche + diagnosi visibilità pratiche.
 [2026-06-08 17:43] Deploy Vercel completato (commit 6694142). URL: credifile-eosin.vercel.app. Token Vercel salvato. Fix: codice_ateco non in practices (causa 400), maybeSingle→limit(1), loading bug.
 [2026-06-10 11:53] Avvio integrazione Dropbox: Chooser frontend + pianificazione Edge Function backup
+[2026-06-10 11:57] Dropbox Chooser deployato (commit b2e2eba): SDK in index.html, handleDropboxChoose in PraticaDetailPage, pulsante Dropbox accanto Upload. In attesa App Secret + auth code per Edge Function backup.
+[2026-06-10 12:15] Dropbox backup OK: Edge Function dropbox-backup attiva, cron domenica 02:00 UTC, refresh token aggiornato (scope files.content.write). File: /Apps/Credifile/backups/backup_YYYY-MM-DD.json
+[2026-06-10 12:15] Dropbox integrazione completa: Chooser frontend live (commit b2e2eba), Edge Function dropbox-backup v3 attiva, refresh token aggiornato con scope files.content.write, cron domenica 02:00 UTC (schedule id 3). Test backup OK: 66 KB su /Apps/Credifile/backups/
