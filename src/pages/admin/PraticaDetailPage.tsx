@@ -182,18 +182,27 @@ export default function PraticaDetailPage() {
   };
 
   // ── 3. AI MATCHING BANCHE ────────────────────────────────────────────────
+  interface KpiDetail {
+    label: string;
+    pass: boolean | null;
+    actual: number | null;
+    min: number | null;
+    max: number | null;
+  }
   interface BancaMatch {
-    bank_id: string;
-    nome: string;
+    bankId: string;
+    bankName: string;
     score: number;
-    kpi_passati: number;
-    kpi_falliti: number;
-    dettagli?: string;
-    criteri?: { nome: string; esito: boolean }[];
+    passCount: number;
+    failCount: number;
+    ndCount: number;
+    details: KpiDetail[];
   }
   interface MatchingResult {
     banche: BancaMatch[];
+    matching: BancaMatch[];
     suggerimento_ai?: string;
+    analisi_societa?: string;
   }
   const [matchingResult, setMatchingResult] = useState<MatchingResult | null>(null);
   const [loadingMatching, setLoadingMatching] = useState(false);
@@ -1783,65 +1792,138 @@ export default function PraticaDetailPage() {
                 </Card>
               )}
 
-              {matchingResult && (
-                <div className="space-y-3">
-                  {/* Suggerimento AI */}
+              {matchingResult && (() => {
+                const bancheList = matchingResult.matching ?? matchingResult.banche ?? [];
+                return (
+                <div className="space-y-4">
+                  {/* Analisi situazione societaria */}
+                  {matchingResult.analisi_societa && (
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 space-y-1">
+                      <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5">
+                        <span>📊</span> Analisi Situazione Societaria (AI)
+                      </p>
+                      <p className="text-sm text-indigo-900 leading-relaxed">{matchingResult.analisi_societa}</p>
+                    </div>
+                  )}
+                  {/* Suggerimento operativo AI */}
                   {matchingResult.suggerimento_ai && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-1">
                       <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
-                        <span>🤖</span> Suggerimento AI
+                        <span>🤖</span> Raccomandazione Operativa
                       </p>
                       <p className="text-sm text-blue-900 leading-relaxed">{matchingResult.suggerimento_ai}</p>
                     </div>
                   )}
-
-                  {/* Lista banche */}
-                  {(matchingResult.banche ?? []).length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-6">Nessuna banca trovata nell'analisi.</p>
+                  {/* Legenda */}
+                  <div className="flex gap-4 text-xs text-muted-foreground px-1">
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500 inline-block"/>≥70% Compatibile</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block"/>40-69% Parziale</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block"/>&lt;40% Non compatibile</span>
+                  </div>
+                  {bancheList.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-6">Nessuna banca con criteri configurati trovata.</p>
                   )}
-                  {(matchingResult.banche ?? []).map((banca) => {
-                    const scoreColor = banca.score >= 70 ? 'bg-green-500' : banca.score >= 40 ? 'bg-amber-500' : 'bg-red-500';
-                    const badgeColor = banca.score >= 70 ? 'bg-green-100 text-green-700' : banca.score >= 40 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700';
+                  {bancheList.map((banca, idx) => {
+                    const sc = banca.score;
+                    const barColor   = sc >= 70 ? 'bg-green-500'      : sc >= 40 ? 'bg-amber-500'      : 'bg-red-500';
+                    const badgeColor = sc >= 70 ? 'bg-green-100 text-green-800 border-green-300' : sc >= 40 ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-red-100 text-red-800 border-red-300';
+                    const cardBorder = sc >= 70 ? 'border-green-200'  : sc >= 40 ? 'border-amber-200'  : 'border-red-200';
+                    const total = banca.passCount + banca.failCount + banca.ndCount;
+                    const [open, setOpen] = [false, () => {}]; // placeholder — usiamo details nativo HTML
                     return (
-                      <Card key={banca.bank_id} className="border-border">
-                        <CardContent className="py-3 px-4 space-y-2">
+                      <Card key={banca.bankId ?? idx} className={`border ${cardBorder}`}>
+                        <CardContent className="py-3 px-4 space-y-3">
+                          {/* Header: rank + nome + badge score */}
                           <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2.5">
+                              <span className="w-6 h-6 rounded-full bg-muted text-xs font-bold flex items-center justify-center text-muted-foreground">
+                                {idx + 1}
+                              </span>
                               <Building2 className="w-4 h-4 text-muted-foreground" />
-                              <p className="font-semibold text-sm">{banca.nome}</p>
+                              <p className="font-semibold text-sm">{banca.bankName ?? 'Banca sconosciuta'}</p>
                             </div>
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>
-                              {banca.score}%
+                            <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${badgeColor}`}>
+                              {sc}%
                             </span>
                           </div>
                           {/* Barra progresso */}
-                          <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full transition-all ${scoreColor}`} style={{ width: `${banca.score}%` }} />
-                          </div>
-                          {/* KPI */}
-                          <div className="flex gap-4 text-xs text-muted-foreground">
-                            <span className="text-green-600">✅ {banca.kpi_passati} KPI passati</span>
-                            <span className="text-red-600">❌ {banca.kpi_falliti} KPI falliti</span>
-                          </div>
-                          {/* Criteri */}
-                          {banca.criteri && banca.criteri.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {banca.criteri.map((c, i) => (
-                                <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded border ${c.esito ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                                  {c.esito ? '✓' : '✗'} {c.nome}
-                                </span>
-                              ))}
+                          <div className="space-y-1">
+                            <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full ${barColor}`} style={{ width: `${sc}%` }} />
                             </div>
+                            <div className="flex justify-between text-[10px] text-muted-foreground">
+                              <span>0%</span>
+                              <span>Compatibilità KPI: {sc}% ({banca.passCount} su {total > 0 ? total : '?'} criteri)</span>
+                              <span>100%</span>
+                            </div>
+                          </div>
+                          {/* Contatori KPI */}
+                          <div className="flex gap-3 text-xs">
+                            <span className="flex items-center gap-1 text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5">
+                              ✅ {banca.passCount} superati
+                            </span>
+                            <span className="flex items-center gap-1 text-red-700 bg-red-50 border border-red-200 rounded px-2 py-0.5">
+                              ❌ {banca.failCount} non superati
+                            </span>
+                            {banca.ndCount > 0 && (
+                              <span className="flex items-center gap-1 text-slate-500 bg-slate-50 border border-slate-200 rounded px-2 py-0.5">
+                                — {banca.ndCount} N/D
+                              </span>
+                            )}
+                          </div>
+                          {/* Dettaglio criteri espandibile */}
+                          {banca.details && banca.details.length > 0 && (
+                            <details className="group">
+                              <summary className="cursor-pointer text-xs text-primary underline decoration-dotted select-none list-none flex items-center gap-1">
+                                <span className="group-open:hidden">▶ Mostra dettaglio criteri ({banca.details.length})</span>
+                                <span className="hidden group-open:inline">▼ Nascondi criteri</span>
+                              </summary>
+                              <div className="mt-2 rounded-lg border border-border overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="bg-muted/60">
+                                      <th className="text-left px-2.5 py-1.5 font-semibold text-muted-foreground">Criterio</th>
+                                      <th className="text-right px-2.5 py-1.5 font-semibold text-muted-foreground">Valore pratica</th>
+                                      <th className="text-right px-2.5 py-1.5 font-semibold text-muted-foreground">Min richiesto</th>
+                                      <th className="text-right px-2.5 py-1.5 font-semibold text-muted-foreground">Max richiesto</th>
+                                      <th className="text-center px-2.5 py-1.5 font-semibold text-muted-foreground">Esito</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {banca.details.map((d, di) => (
+                                      <tr key={di} className={di % 2 === 0 ? 'bg-white' : 'bg-muted/20'}>
+                                        <td className="px-2.5 py-1.5 font-medium">{d.label}</td>
+                                        <td className="px-2.5 py-1.5 text-right font-mono">
+                                          {d.actual != null ? Number(d.actual).toFixed(2) : <span className="text-muted-foreground italic">N/D</span>}
+                                        </td>
+                                        <td className="px-2.5 py-1.5 text-right text-muted-foreground font-mono">
+                                          {d.min != null ? d.min : '—'}
+                                        </td>
+                                        <td className="px-2.5 py-1.5 text-right text-muted-foreground font-mono">
+                                          {d.max != null ? d.max : '—'}
+                                        </td>
+                                        <td className="px-2.5 py-1.5 text-center">
+                                          {d.pass === true  && <span className="text-green-600 font-bold">✓</span>}
+                                          {d.pass === false && <span className="text-red-600 font-bold">✗</span>}
+                                          {d.pass === null  && <span className="text-slate-400">—</span>}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
                           )}
-                          {banca.dettagli && (
-                            <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1">{banca.dettagli}</p>
+                          {(!banca.details || banca.details.length === 0) && (
+                            <p className="text-xs text-muted-foreground italic">Questa banca non ha criteri KPI configurati — compatibilità stimata al 70% di default.</p>
                           )}
                         </CardContent>
                       </Card>
                     );
                   })}
                 </div>
-              )}
+                );
+              })()}
             </TabsContent>
 
             {/* ── Tab Scadenze ── */}

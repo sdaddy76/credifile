@@ -100,34 +100,45 @@ export default async function handler(req, res) {
       return { bankId: bank.id, bankName: bank.nome, score, passCount: pass, failCount: fail, ndCount: nd, details };
     }).sort((a, b) => b.score - a.score);
 
-    // 5. Groq AI suggerimento narrativo
+    // 5. Groq AI — due prompt separati: analisi società + suggerimento banche
     let aiSuggerimento = '';
+    let analisiSocieta = '';
     if (GROQ_API_KEY) {
+      const kpiSummary = kpiData
+        ? `Fatturato: ${kpiData.ricavi_vendite || 'N/D'}€ | Patrimonio Netto: ${kpiData.totale_patrimonio_netto || 'N/D'}€ | Totale Debiti: ${kpiData.totale_debiti || 'N/D'}€ | Utile Netto: ${kpiData.utile_netto || 'N/D'}€`
+        : 'KPI finanziari non disponibili';
+      const topBanks = matchResults.slice(0, 3)
+        .map(b => `${b.bankName} (${b.score}% — ${b.passCount} OK, ${b.failCount} NOK)`)
+        .join('; ');
+
+      // Prompt 1: analisi situazione societaria
+      const prompt1 = `Sei un analista creditizio italiano. Analizza la situazione finanziaria di questa società in modo sintetico (3-4 frasi).
+Società: ${p.clients?.ragione_sociale || 'N/D'} | ATECO: ${p.codice_ateco || 'N/D'}
+Finanziamento richiesto: ${p.importo_richiesto || 'N/D'}€ — Motivazione: ${p.motivazione || 'N/D'}
+${kpiSummary}
+Commenta i punti di forza e le criticità principali in italiano, in modo diretto e professionale.`;
+
+      // Prompt 2: raccomandazione operativa sulle banche
+      const prompt2 = `Sei un consulente finanziario italiano. In 2-3 frasi fornisci una raccomandazione operativa su quale banca privilegiare e perché.
+Banche più compatibili: ${topBanks}
+Importo richiesto: ${p.importo_richiesto || 'N/D'}€ | ATECO: ${p.codice_ateco || 'N/D'}
+Sii diretto e pratico. Rispondi solo in italiano.`;
+
       try {
-        const topBanks = matchResults.slice(0, 3)
-          .map(b => `${b.bankName} (score ${b.score}%, ${b.passCount} criteri OK, ${b.failCount} NOK)`)
-          .join('; ');
-        const kpiSummary = kpiData
-          ? `fatturato ${kpiData.ricavi_vendite || 'ND'}€, patrimonio netto ${kpiData.totale_patrimonio_netto || 'ND'}€, utile ${kpiData.utile_netto || 'ND'}€`
-          : 'KPI non disponibili';
-        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'llama3-8b-8192',
-            messages: [{
-              role: 'user',
-              content: `Sei un consulente finanziario italiano. Analizza questo matching banca-pratica e dai un suggerimento operativo in 2-3 frasi.
-Pratica: importo ${p.importo_richiesto || 'ND'}€, ATECO ${p.codice_ateco || 'ND'}, motivazione: ${p.motivazione || 'ND'}
-KPI: ${kpiSummary}
-Banche migliori: ${topBanks}
-Rispondi in italiano, sii diretto e pratico.`,
-            }],
-            max_tokens: 200,
-          }),
-        });
-        const groqData = await groqRes.json();
-        aiSuggerimento = groqData.choices?.[0]?.message?.content || '';
+        const [res1, res2] = await Promise.all([
+          fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'llama3-8b-8192', messages: [{ role: 'user', content: prompt1 }], max_tokens: 250 }),
+          }).then(r => r.json()),
+          fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'llama3-8b-8192', messages: [{ role: 'user', content: prompt2 }], max_tokens: 200 }),
+          }).then(r => r.json()),
+        ]);
+        analisiSocieta = res1.choices?.[0]?.message?.content || '';
+        aiSuggerimento = res2.choices?.[0]?.message?.content || '';
       } catch { /* ignora errori AI */ }
     }
 
@@ -138,6 +149,7 @@ Rispondi in italiano, sii diretto e pratico.`,
       // Alias per compatibilità con il frontend che usa .banche e .suggerimento_ai
       banche: matchResults,
       suggerimento_ai: aiSuggerimento,
+      analisi_societa: analisiSocieta,
     });
 
   } catch (e) {
