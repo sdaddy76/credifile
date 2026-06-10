@@ -305,6 +305,18 @@ export default function PratichePage() {
       }
     }
 
+    // Copia finanziamenti dalla pratica originale
+    const { data: origFin } = await supabase
+      .from('client_financing')
+      .select('tipologia, banca_finanziaria, importo_iniziale, rata, durata_mesi, debito_residuo, note, ordinamento, accordato, accordato_operativo, utilizzato, saldo_medio, tipo_garanzia, stato_rapporto, data_riferimento, fonte')
+      .eq('practice_id', showDuplica.id)
+      .order('ordinamento');
+    if (origFin && origFin.length > 0) {
+      await supabase.from('client_financing').insert(
+        origFin.map((f) => ({ ...f, practice_id: newPractice.id }))
+      );
+    }
+
     // Log stato iniziale
     await supabase.from('practice_status_log').insert({
       practice_id: newPractice.id, new_status: 'bozza', created_by: 'admin',
