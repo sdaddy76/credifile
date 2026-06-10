@@ -699,6 +699,41 @@ export default function PraticaDetailPage() {
     load();
   };
 
+  // Upload documento da Dropbox (Chooser)
+  const handleDropboxChoose = (docId: string) => {
+    if (!window.Dropbox) { toast.error('Dropbox non disponibile'); return; }
+    window.Dropbox.choose({
+      linkType: 'direct',
+      multiselect: false,
+      extensions: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png'],
+      success: async (files) => {
+        if (!files[0] || !id) return;
+        const { link, name, bytes } = files[0];
+        if (bytes > 30 * 1024 * 1024) { toast.error('File troppo grande (max 30 MB)'); return; }
+        setUploadingAdminDoc(docId);
+        try {
+          const res  = await fetch(link);
+          const blob = await res.blob();
+          const file = new File([blob], name, { type: blob.type });
+          const path = `${id}/${docId}/${Date.now()}_${name}`;
+          await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
+          await supabase.from('uploaded_files').insert({
+            practice_document_id: docId, practice_id: id,
+            nome_file: name, storage_path: path,
+            mime_type: blob.type, dimensione: bytes, uploaded_by: 'admin',
+          });
+          await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
+          toast.success(`"${name}" importato da Dropbox`);
+          load();
+        } catch (e) {
+          toast.error('Errore importazione da Dropbox');
+        } finally {
+          setUploadingAdminDoc(null);
+        }
+      },
+    });
+  };
+
   const copyLink = () => {
     const url = `https://credifile-eosin.vercel.app/#/accesso?p=${id}`;
     navigator.clipboard.writeText(url);
@@ -1258,6 +1293,13 @@ export default function PraticaDetailPage() {
                                     {uploadingAdminDoc === doc.id
                                       ? <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
                                       : <><Upload className="w-3 h-3" /> Upload</>}
+                                  </Button>
+                                  <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
+                                    disabled={uploadingAdminDoc === doc.id}
+                                    onClick={() => handleDropboxChoose(doc.id)}
+                                    title="Importa da Dropbox"
+                                  >
+                                    📦 Dropbox
                                   </Button>
                                   <Button size="sm" variant="ghost"
                                     className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
