@@ -140,60 +140,143 @@ function parseSoci(raw: string): Socio[] {
   return results;
 }
 
+// ── Parole che indicano testo statutario, non nomi di persone ──────────────
+const LEGAL_WORDS_AMM = new Set([
+  'COSTITUISCE','OGGETTO','DELIBERA','DELIBERATO','CONFERITI','CONFERIRE',
+  'VENGONO','VIENE','SOCIETA','RESPONSABILITA','LIMITATA','OGGETTO',
+  'AVENTE','ESERCIZIO','IMPRESA','ATTIVITA','MEDESIMA','STESSA',
+  'QUANTO','QUANDO','OVVERO','NONCHE','FATTO','CASO','SENSI','NORMA',
+  'LEGGE','DECRETO','ARTICOLO','COMMA','LETTERA','PUNTO','NUMERO',
+  'CONTRATTO','STATUTO','ATTO','VERBALE','ASSEMBLEA','RIUNIONE',
+  'CAPITALE','QUOTA','VALORE','IMPORTO','EURO','LIRE','CIASCUN',
+  'SEGUENTE','SEGUENTI','PRESENTE','PRESENTI','PREDETTO','PREDETTI',
+  'SUDDETTO','SUDDETTI','MEDESIMO','ALTRETTANTO','ALTRESI',
+  'POTERI','POTERE','FACOLTA','FIRMA','FIRMARE','RAPPRESENTARE',
+]);
+
+/**
+ * Verifica che una stringa sembri un nome di persona fisica:
+ * 2-4 parole, ognuna 2-25 char, nessuna è una LEGAL_WORD.
+ */
+function isPersonName(s: string): boolean {
+  if (!s || s.length < 4 || s.length > 70) return false;
+  const words = s.trim().split(/\s+/);
+  if (words.length < 2 || words.length > 4) return false;
+  for (const w of words) {
+    if (w.length < 2 || w.length > 25) return false;
+    if (LEGAL_WORDS_AMM.has(w.toUpperCase())) return false;
+    // Ogni parola deve essere solo lettere (e apostrofo/trattino)
+    if (!/^[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙa-zàèéìòùA-Z\'\-]*$/i.test(w)) return false;
+  }
+  return true;
+}
+
+/** Pattern carica (stringa per poterla rieseguire in più contesti) */
+const CARICA_PATTERN = String.raw`(Amministratore\s+(?:Unico|[Dd]elegato)|AMM(?:\.RE?|INISTRATORE)?\s*(?:UNICO|[Uu]nico|DELEGATO|[Dd]elegato)|Presidente(?:\s+(?:del\s+)?C(?:onsiglio|\.?D\.?A\.?))?|Consigliere(?:\s+[Dd]elegato)?|Liquidatore(?:\s+[Uu]nico)?|Direttore\s+[Gg]enerale)`;
+
 /** Estrae lista amministratori dalla sezione 5 */
 function parseAmministratori(raw: string): Amministratore[] {
-  // Tenta isolamento sezione V — fallback al testo completo (non ritornare mai vuoto per mancanza sezione)
+  // Tenta isolamento sezione V — fallback al testo completo
   const s5 = isolaSezione(raw,
     /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i,
     /(?:sezione\s+(?:VI|6)\b|\b6[\s\.\)]\s*Sindac|$)/i,
   ) || raw;
 
-  // Gestisce abbreviazioni comuni: AMM. UNICO, AMM.RE UNICO, AMM.RE DELEGATO ecc.
-  const CARICA_RE = /(Amministratore\s+(?:Unico|[Dd]elegato)|AMM(?:\.RE?|INISTRATORE)?\s*(?:UNICO|[Uu]nico|DELEGATO|[Dd]elegato)|Presidente(?:\s+(?:del\s+)?C(?:onsiglio|\.?D\.?A\.?))?|Consigliere(?:\s+[Dd]elegato)?|Liquidatore(?:\s+[Uu]nico)?|Direttore\s+[Gg]enerale)/gi;
-
   const results: Amministratore[] = [];
   const seenCFs   = new Set<string>();
   const seenNames = new Set<string>();
-  let m: RegExpExecArray | null;
 
-  while ((m = CARICA_RE.exec(s5)) !== null) {
-    const carica = m[1].trim();
-    const after  = s5.substring(m.index + m[0].length, m.index + m[0].length + 400);
-    const before = s5.substring(Math.max(0, m.index - 150), m.index);
+  // ─────────────────────────────────────────────────────────────────────────
+  // STRATEGIA 1 (alta confidenza): ancora sul CODICE FISCALE persona fisica.
+  // Cerca tutti i CF nel testo, verifica se c'è una carica nelle vicinanze,
+  // e ricostruisce il nome nelle 200 char prima/dopo il CF.
+  // ─────────────────────────────────────────────────────────────────────────
+  const cfReCopy = new RegExp(CF_PF_RE.source, 'g');
+  let cfm: RegExpExecArray | null;
+  while ((cfm = cfReCopy.exec(s5)) !== null) {
+    const cf = cfm[1];
+    if (seenCFs.has(cf)) continue;
 
-    // CF persona fisica (opzionale)
-    const cfMatch = after.match(/\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/);
-    const cf = cfMatch?.[1];
-    if (cf && seenCFs.has(cf)) continue;
-    if (cf) seenCFs.add(cf);
+    const winStart = Math.max(0, cfm.index - 350);
+    const winEnd   = Math.min(s5.length, cfm.index + cf.length + 350);
+    const window   = s5.substring(winStart, winEnd);
 
-    // Prova 1: nome DOPO la carica con lookahead a CF/parole chiave (nei primi 300 char)
-    const nameStrict = after.slice(0, 300).match(
-      /([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d{2}|Rappresentante|Nato\s+[aA]|Codice|domicilio|\d{1,2}[\/\-]\d{1,2}))/
-    )?.[1]?.trim();
+    // Se nel window c'è una carica, questo CF è associato a un amministratore
+    const caricaMatch = window.match(new RegExp(CARICA_PATTERN, 'i'));
+    if (!caricaMatch) continue;
 
-    // Prova 2: blocco di 2-3 parole ALL-CAPS consecutive (nessuno spazio interno)
-    const nameLoose = !nameStrict
-      ? after.slice(0, 200).match(
-          /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,24}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,24})?)\b/
-        )?.[1]?.trim()
-      : undefined;
+    seenCFs.add(cf);
+    const carica = caricaMatch[1].trim();
 
-    // Prova 3: nome PRIMA della carica ("MARIO ROSSI Amministratore Unico")
-    const nameBefore = (!nameStrict && !nameLoose)
-      ? before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ]{1,20})?)\s*$/)?.[1]?.trim()
-      : undefined;
+    // Cerca nome nelle 250 char PRIMA del CF (layout più comune: NOME CF carica)
+    const beforeCF = s5.substring(Math.max(0, cfm.index - 250), cfm.index);
+    let nome = beforeCF
+      .match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)\s*(?:C(?:odice)?\s*F(?:iscale)?|CF\.?)?\s*$/)?.[1]
+      ?.trim() ?? '';
 
-    const rawNome = nameStrict ?? nameLoose ?? nameBefore ?? '';
-    const nome = rawNome
-      .replace(/\b(?:CODICE|FISCALE|NATO|NATA|IN|DEL|DELLA|CARICA|RAPPRESENTANTE|UNICO|DELEGATO)\b/gi, '')
+    if (!isPersonName(nome)) {
+      // Prova dopo il CF (layout alternativo: CF NOME carica)
+      const afterCF = s5.substring(cfm.index + cf.length, cfm.index + cf.length + 250);
+      nome = afterCF
+        .match(/^\s*[,\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{4,50}?)(?=\s+(?:nato|nata|\d{2}[\/\-]|\bdi\b|Rap|Carica|Cod))/i)?.[1]
+        ?.trim() ?? '';
+    }
+
+    // Pulizia finale
+    nome = nome
+      .replace(/\b(?:CODICE|FISCALE|NATO|NATA|DEL|DELLA|CARICA|RAPPRESENTANTE|UNICO|DELEGATO|CF)\b/gi, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
 
-    if (!nome || nome.length < 3 || seenNames.has(nome)) continue;
-    seenNames.add(nome);
-    results.push({ nome, codice_fiscale: cf, carica });
+    if (seenNames.has(nome || cf)) continue;
+    seenNames.add(nome || cf);
+    results.push({ nome: nome || 'N/D', codice_fiscale: cf, carica });
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // STRATEGIA 2 (fallback): ancora sulla CARICA, ma con isPersonName() stretta.
+  // Usata solo quando la strategia 1 non trova nulla (visure senza CF esplicito).
+  // ─────────────────────────────────────────────────────────────────────────
+  if (results.length === 0) {
+    const CARICA_RE = new RegExp(CARICA_PATTERN, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = CARICA_RE.exec(s5)) !== null) {
+      const carica = m[1].trim();
+      const after  = s5.substring(m.index + m[0].length, m.index + m[0].length + 400);
+      const before = s5.substring(Math.max(0, m.index - 200), m.index);
+
+      // CF opzionale
+      const cfMatch = after.match(/\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/);
+      const cf = cfMatch?.[1];
+      if (cf && seenCFs.has(cf)) continue;
+      if (cf) seenCFs.add(cf);
+
+      // Nome: prova con lookahead al CF
+      let rawNome = after.slice(0, 300).match(
+        /([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d{2}|Nato\s+[aA]|Codice|domicilio|\d{1,2}[\/\-]\d{1,2}))/
+      )?.[1]?.trim() ?? '';
+
+      // Prova nome prima della carica ("MARIO ROSSI Amministratore Unico")
+      if (!isPersonName(rawNome)) {
+        rawNome = before.match(
+          /([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,20}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,20}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,20})?)\s*$/
+        )?.[1]?.trim() ?? '';
+      }
+
+      // FILTRO CRUCIALE: scarta se non è un nome di persona
+      if (!isPersonName(rawNome)) continue;
+
+      const nome = rawNome
+        .replace(/\b(?:CODICE|FISCALE|NATO|NATA|DEL|DELLA|CARICA|RAPPRESENTANTE|UNICO|DELEGATO)\b/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+      if (!nome || nome.length < 3 || seenNames.has(nome)) continue;
+      seenNames.add(nome);
+      results.push({ nome, codice_fiscale: cf, carica });
+    }
+  }
+
   return results;
 }
 
