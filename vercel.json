@@ -5,7 +5,16 @@
       "VITE_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZoaWVwcGpxbGVmZGxhbnZycGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNTYxOTksImV4cCI6MjA5NTYzMjE5OX0.tM0B5OyxF1-w9ed1-eEX09S_d5gehZnFUZEJCnXMVBQ"
     }
   },
+  "functions": {
+    "api/dropbox-backup.js": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
