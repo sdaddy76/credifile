@@ -51,6 +51,7 @@ export default function PratichePage() {
   const [duplicaAgentId, setDuplicaAgentId] = useState('');
   const [duplicaNote, setDuplicaNote] = useState('');
   const [duplicaDocumenti, setDuplicaDocumenti] = useState(false);
+  const [duplicaFile, setDuplicaFile] = useState(false);
   const [savingDuplica, setSavingDuplica] = useState(false);
 
   async function openBankDialog(practice: Practice) {
@@ -240,14 +241,22 @@ export default function PratichePage() {
 
     // Documenti: copia dall'originale OPPURE usa i template standard
     if (duplicaDocumenti) {
-      // Copia TUTTI i documenti dalla pratica originale (status reset a 'richiesto')
+      // Copia TUTTI i documenti dalla pratica originale
+      // Se duplicaFile=true, fetcha anche uploaded_files per ogni documento
+      const selectFields = duplicaFile
+        ? 'id, template_id, bank_requirement_id, nome, descrizione, tipo, obbligatorio, uploaded_files(id, nome_file, storage_path, mime_type, dimensione)'
+        : 'id, template_id, bank_requirement_id, nome, descrizione, tipo, obbligatorio';
       const { data: origDocs } = await supabase
         .from('practice_documents')
-        .select('template_id, bank_requirement_id, nome, descrizione, tipo, obbligatorio')
+        .select(selectFields)
         .eq('practice_id', showDuplica.id);
+
+      type OrigDoc = { id: string; template_id: string | null; bank_requirement_id: string | null; nome: string; descrizione?: string; tipo: string; obbligatorio: boolean; uploaded_files?: { id: string; nome_file: string; storage_path: string; mime_type: string; dimensione: number }[] };
       if (origDocs && origDocs.length > 0) {
-        await supabase.from('practice_documents').insert(
-          origDocs.map((d: { template_id: string | null; bank_requirement_id: string | null; nome: string; descrizione?: string; tipo: string; obbligatorio: boolean }) => ({
+        const typedDocs = origDocs as unknown as OrigDoc[];
+        for (const d of typedDocs) {
+          // Crea il nuovo documento e ottieni il suo ID
+          const { data: newDoc } = await supabase.from('practice_documents').insert({
             practice_id:         newPractice.id,
             template_id:         d.template_id,
             bank_requirement_id: d.bank_requirement_id,
@@ -256,8 +265,38 @@ export default function PratichePage() {
             tipo:                d.tipo,
             obbligatorio:        d.obbligatorio,
             status:              'richiesto',
-          }))
-        );
+          }).select('id').single();
+
+          if (!newDoc) continue;
+
+          // Copia i file caricati se richiesto
+          if (duplicaFile && d.uploaded_files && d.uploaded_files.length > 0) {
+            let fileCopied = false;
+            for (const f of d.uploaded_files) {
+              const newPath = `${newPractice.id}/${newDoc.id}/${Date.now()}_${f.nome_file}`;
+              const { error: copyErr } = await supabase.storage
+                .from('practice-files').copy(f.storage_path, newPath);
+              if (!copyErr) {
+                await supabase.from('uploaded_files').insert({
+                  practice_document_id: newDoc.id,
+                  practice_id:          newPractice.id,
+                  nome_file:            f.nome_file,
+                  storage_path:         newPath,
+                  mime_type:            f.mime_type,
+                  dimensione:           f.dimensione,
+                  uploaded_by:          'admin',
+                });
+                fileCopied = true;
+              }
+            }
+            // Aggiorna stato documento a 'caricato' se almeno un file è stato copiato
+            if (fileCopied) {
+              await supabase.from('practice_documents')
+                .update({ status: 'caricato', uploaded_at: new Date().toISOString() })
+                .eq('id', newDoc.id);
+            }
+          }
+        }
       }
     } else {
       // Copia solo i documenti standard obbligatori da template
@@ -289,6 +328,7 @@ export default function PratichePage() {
     setDuplicaAgentId('');
     setDuplicaNote('');
     setDuplicaDocumenti(false);
+    setDuplicaFile(false);
     load();
     navigate(`/admin/pratiche/${newPractice.id}`);
   };
@@ -630,7 +670,7 @@ export default function PratichePage() {
                           variant="ghost" size="sm"
                           className="h-8 w-8 p-0 text-amber-600 hover:bg-amber-50"
                           title="Duplica pratica e assegna ad altro agente"
-                          onClick={e => { e.stopPropagation(); setShowDuplica(p); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); }}
+                          onClick={e => { e.stopPropagation(); setShowDuplica(p); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); setDuplicaFile(false); }}
                         >
                           <Copy className="w-4 h-4" />
                         </Button>
@@ -875,7 +915,7 @@ export default function PratichePage() {
       </Dialog>
 
       {/* Dialog duplicazione pratica — solo super_admin */}
-      <Dialog open={!!showDuplica} onOpenChange={(open) => { if (!open) { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); } }}>
+      <Dialog open={!!showDuplica} onOpenChange={(open) => { if (!open) { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); setDuplicaFile(false); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -929,29 +969,52 @@ export default function PratichePage() {
               </div>
 
               {/* Checkbox copia documenti */}
-              <div className="flex items-start gap-3 p-3 bg-muted/40 rounded-lg border border-border">
-                <input
-                  type="checkbox"
-                  id="duplicaDocumentiCheck"
-                  checked={duplicaDocumenti}
-                  onChange={e => setDuplicaDocumenti(e.target.checked)}
-                  className="h-4 w-4 mt-0.5 accent-amber-600 cursor-pointer"
-                />
-                <div>
-                  <label htmlFor="duplicaDocumentiCheck" className="text-sm font-medium cursor-pointer select-none">
-                    Copia anche la lista documenti della pratica originale
-                  </label>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {duplicaDocumenti
-                      ? 'Verranno copiati tutti i documenti (standard e personalizzati) con stato reset a "Richiesto". I file caricati devono essere ricaricati.'
-                      : 'Verranno creati solo i documenti standard obbligatori dal template.'}
-                  </p>
+              <div className="space-y-2">
+                <div className="flex items-start gap-3 p-3 bg-muted/40 rounded-lg border border-border">
+                  <input
+                    type="checkbox"
+                    id="duplicaDocumentiCheck"
+                    checked={duplicaDocumenti}
+                    onChange={e => { setDuplicaDocumenti(e.target.checked); if (!e.target.checked) setDuplicaFile(false); }}
+                    className="h-4 w-4 mt-0.5 accent-amber-600 cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="duplicaDocumentiCheck" className="text-sm font-medium cursor-pointer select-none">
+                      Copia anche la lista documenti della pratica originale
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {duplicaDocumenti
+                        ? 'Verranno copiati tutti i documenti (standard e personalizzati).'
+                        : 'Verranno creati solo i documenti standard obbligatori dal template.'}
+                    </p>
+                  </div>
                 </div>
+
+                {/* Sub-opzione: copia file — visibile solo quando duplicaDocumenti è true */}
+                {duplicaDocumenti && (
+                  <div className="flex items-start gap-3 p-3 ml-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <input
+                      type="checkbox"
+                      id="duplicaFileCheck"
+                      checked={duplicaFile}
+                      onChange={e => setDuplicaFile(e.target.checked)}
+                      className="h-4 w-4 mt-0.5 accent-blue-600 cursor-pointer"
+                    />
+                    <div>
+                      <label htmlFor="duplicaFileCheck" className="text-sm font-medium cursor-pointer select-none text-blue-800">
+                        Includi anche i file già caricati
+                      </label>
+                      <p className="text-xs text-blue-700 mt-0.5">
+                        I file verranno copiati in Storage nella nuova pratica e contrassegnati come "caricati". L'operazione può richiedere qualche secondo.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); }}>
+            <Button variant="outline" onClick={() => { setShowDuplica(null); setDuplicaAgentId(''); setDuplicaNote(''); setDuplicaDocumenti(false); setDuplicaFile(false); }}>
               Annulla
             </Button>
             <Button
