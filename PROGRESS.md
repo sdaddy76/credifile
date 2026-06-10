@@ -109,3 +109,7 @@
 [2026-06-10 17:37] Deploy OK: commit 90d42c8 — box viola/blu AI Banche sempre visibili con fallback testo. Vercel: credifile-eosin.vercel.app
 [2026-06-10 18:08] Inizio implementazione duplicazione pratiche super_admin in PratichePage.tsx
 [2026-06-10 18:10] Implementazione duplicazione pratiche: import Copy, 4 stati, handleDuplica (clona pratica+documenti+log), pulsante arancione lista, dialog con selezione agente+note. Avvio build.
+[2026-06-10 18:12] Deploy OK: commit 13fb57f — duplicazione pratiche super_admin. Vercel: credifile-eosin.vercel.app
+[2026-06-10 18:12] Deploy OK commit 13fb57f: duplicazione pratiche per super_admin completata (pulsante Copy, dialog agente+note, handler clona pratica+documenti+log)
+[2026-06-10 18:28] Fix KPI banca: aggiunta utile_netto al catalogo, dropdown raggruppato per area, fallback colonne dirette nel matching
+[2026-06-10 18:29] Fix KPI banca completati: utile_netto aggiunto al catalogo, dropdown raggruppato per area con emoji, fallback colonne dirette ricavi_vendite/utile_netto nel matching. Avvio build.

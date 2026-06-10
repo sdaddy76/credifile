@@ -82,6 +82,14 @@ export default async function handler(req, res) {
           const area = kpiData.kpi[req.kpi_area];
           actual = area?.[req.kpi_key]?.value ?? area?.[req.kpi_key]?.valore ?? null;
         }
+        // Fallback: colonne dirette in bilanci_kpi (ricavi_vendite → fatturato, utile_netto → utile_netto)
+        if (actual === null && kpiData) {
+          if (req.kpi_key === 'fatturato' || req.kpi_key === 'ricavi_vendite') {
+            actual = kpiData.ricavi_vendite ?? null;
+          } else if (req.kpi_key === 'utile_netto') {
+            actual = kpiData.utile_netto ?? null;
+          }
+        }
         let passed = null;
         if (actual !== null) {
           const num = typeof actual === 'number' ? actual : parseFloat(actual);

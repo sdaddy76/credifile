@@ -29,7 +29,8 @@ const KPI_CATALOG = [
   { key: 'ros',                 area: 'redditivita',   label: 'ROS (%)' },
   { key: 'ebitda_margin',       area: 'redditivita',   label: 'EBITDA Margin (%)' },
   { key: 'ebitda_eur',          area: 'redditivita',   label: 'EBITDA (€)' },
-  { key: 'fatturato',           area: 'redditivita',   label: 'Fatturato (€)' },
+  { key: 'fatturato',           area: 'redditivita',   label: 'Fatturato / Ricavi (€)' },
+  { key: 'utile_netto',         area: 'redditivita',   label: 'Utile Netto (€)' },
   // Indebitamento
   { key: 'pfn_ebitda',          area: 'indebitamento', label: 'PFN / EBITDA' },
   { key: 'pfn_pn',              area: 'indebitamento', label: 'PFN / PN' },
@@ -419,11 +420,33 @@ export default function BanchePage() {
                             <Select value={kpiFormKey} onValueChange={setKpiFormKey}>
                               <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Seleziona KPI..." /></SelectTrigger>
                               <SelectContent>
-                                {KPI_CATALOG.map(k => (
-                                  <SelectItem key={k.key} value={k.key}>
-                                    {k.label} <span className="text-muted-foreground ml-1 text-xs capitalize">({k.area})</span>
-                                  </SelectItem>
-                                ))}
+                                {(() => {
+                                  const AREA_LABELS: Record<string, string> = {
+                                    liquidita: '💧 Liquidità',
+                                    solidita: '🏛️ Solidità Patrimoniale',
+                                    redditivita: '📈 Redditività',
+                                    indebitamento: '⚖️ Indebitamento',
+                                    efficienza: '⚙️ Efficienza Operativa',
+                                    copertura: '🛡️ Copertura',
+                                  };
+                                  const grouped: Record<string, typeof KPI_CATALOG> = {};
+                                  KPI_CATALOG.forEach(k => {
+                                    if (!grouped[k.area]) grouped[k.area] = [];
+                                    grouped[k.area].push(k);
+                                  });
+                                  return Object.entries(grouped).map(([area, items]) => (
+                                    <div key={area}>
+                                      <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/50 select-none">
+                                        {AREA_LABELS[area] ?? area}
+                                      </div>
+                                      {items.map(k => (
+                                        <SelectItem key={k.key} value={k.key} className="pl-4">
+                                          {k.label}
+                                        </SelectItem>
+                                      ))}
+                                    </div>
+                                  ));
+                                })()}
                               </SelectContent>
                             </Select>
                           </div>
