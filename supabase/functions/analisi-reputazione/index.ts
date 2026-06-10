@@ -151,7 +151,8 @@ interface NewsItem {
   title: string; snippet: string; link: string; date: string; source: string
 }
 interface Signal {
-  text: string; category: string; weight: number; articleTitle?: string; articleDate?: string
+  text: string; category: string; weight: number;
+  articleTitle?: string; articleDate?: string; articleLink?: string
 }
 
 function analyzeTextWithNews(news: NewsItem[]): { signals: Signal[]; scoreDelta: number } {
@@ -174,6 +175,7 @@ function analyzeTextWithNews(news: NewsItem[]): { signals: Signal[]; scoreDelta:
         text: k.w, category: k.cat, weight: weightedPenalty,
         articleTitle: item.title.substring(0, 80),
         articleDate: item.date,
+        articleLink: item.link || undefined,
       })
       scoreDelta += weightedPenalty
     }
@@ -188,6 +190,7 @@ function analyzeTextWithNews(news: NewsItem[]): { signals: Signal[]; scoreDelta:
         text: k.w, category: 'Positivo', weight: weightedBonus,
         articleTitle: item.title.substring(0, 80),
         articleDate: item.date,
+        articleLink: item.link || undefined,
       })
       scoreDelta += weightedBonus
     }
@@ -274,17 +277,39 @@ async function fetchDuckDuckGo(query: string): Promise<NewsItem[]> {
 }
 
 // ─── Analisi soggetto ─────────────────────────────────────────────────────────
-async function analyzeSubject(name: string, tipo: string, piva?: string) {
-  // 5 query parallele: generale, legale, finanziaria, fiscale, antimafia
-  const searchName = piva ? `"${name}" "${piva}"` : `"${name}"`
+async function analyzeSubject(name: string, tipo: string, piva?: string, city?: string) {
+  // Per ridurre i falsi positivi da omonimia:
+  // - Se abbiamo la P.IVA, la includiamo nelle query più mirate (identifica univocamente)
+  // - Se abbiamo la città, la aggiungiamo come discriminatore aggiuntivo
+  const hasPiva = !!piva
+  const qualifier = hasPiva
+    ? `"${piva}"`          // P.IVA tra virgolette come discriminatore forte
+    : city ? `"${city}"` : ''
+
+  const nameQ = `"${name}"`
+
   const queries = [
+    // Query base — nome puro (ampio ma necessario)
     fetchGoogleNews(name),
-    fetchGoogleNews(`${name} indagato condanna tribunale arresti`),
-    fetchGoogleNews(`${name} protesto pignoramento insolvenza fallimento`),
+    // Query legale con discriminatore se disponibile
+    fetchGoogleNews(hasPiva || city
+      ? `${nameQ} ${qualifier} indagato condanna tribunale arresti`
+      : `${name} indagato condanna tribunale arresti`),
+    // Query finanziaria con discriminatore
+    fetchGoogleNews(hasPiva || city
+      ? `${nameQ} ${qualifier} protesto pignoramento insolvenza fallimento`
+      : `${name} protesto pignoramento insolvenza fallimento`),
+    // Query fiscale
     fetchGoogleNews(`${name} evasione fiscale cartella esattoriale debiti INPS`),
+    // Query antimafia
     fetchGoogleNews(`${name} antimafia riciclaggio sequestro`),
-    fetchDuckDuckGo(`${searchName} fallimento indagato protesto condanna frode`),
-    fetchDuckDuckGo(`${searchName} sanzione multa violazione`),
+    // DuckDuckGo con P.IVA/city per maggiore precisione
+    fetchDuckDuckGo(hasPiva
+      ? `${nameQ} "${piva}" fallimento indagato protesto condanna frode`
+      : city
+        ? `${nameQ} "${city}" fallimento indagato protesto condanna frode`
+        : `${nameQ} fallimento indagato protesto condanna frode`),
+    fetchDuckDuckGo(`${nameQ} sanzione multa violazione`),
   ]
   const results = await Promise.allSettled(queries)
   const allNewsRaw: NewsItem[] = []
@@ -337,7 +362,7 @@ Deno.serve(async (req) => {
 
     // 1. Dati cliente
     const clientRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/clients?id=eq.${client_id}&select=ragione_sociale,piva,soci,amministratori`,
+      `${SUPABASE_URL}/rest/v1/clients?id=eq.${client_id}&select=ragione_sociale,piva,indirizzo,soci,amministratori`,
       { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
     )
     const clients = await clientRes.json()
@@ -347,15 +372,26 @@ Deno.serve(async (req) => {
       })
     }
     const client = clients[0]
-    const soci: { nome: string }[] = client.soci ?? []
-    const amm:  { nome: string }[] = client.amministratori ?? []
+    const soci: { nome: string; codice_fiscale?: string }[] = client.soci ?? []
+    const amm:  { nome: string; codice_fiscale?: string }[] = client.amministratori ?? []
     const piva: string | undefined = client.piva ?? undefined
+
+    // Estrai la città dall'indirizzo (es. "Via Roma 1, 00100 ROMA (RM)" → "ROMA")
+    const cityMatch = (client.indirizzo ?? '').match(/\b(\d{5})\s+([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\']{2,40?})(?:\s*\([A-Z]{2}\))?\s*$/i)
+    const city: string | undefined = cityMatch?.[2]?.trim() ?? undefined
 
     // 2. Analisi PARALLELA di tutti i soggetti
     const [socRes, ...personResults] = await Promise.all([
-      analyzeSubject(client.ragione_sociale, 'societa', piva),
-      ...amm.slice(0, 3).map(a => analyzeSubject(a.nome, 'amministratore')),
-      ...soci.slice(0, 3).map(s => analyzeSubject(s.nome, 'socio')),
+      analyzeSubject(client.ragione_sociale, 'societa', piva, city),
+      // Per gli amministratori: nessuna P.IVA disponibile (persone fisiche), ma passiamo la città
+      ...amm.slice(0, 3).map(a => analyzeSubject(a.nome, 'amministratore', undefined, city)),
+      // Per i soci: se codice_fiscale è 11 cifre è una P.IVA di società → passarla come discriminatore
+      ...soci.slice(0, 3).map(s => {
+        const socioPiva = s.codice_fiscale && /^\d{11}$/.test(s.codice_fiscale)
+          ? s.codice_fiscale
+          : undefined
+        return analyzeSubject(s.nome, 'socio', socioPiva, city)
+      }),
     ])
 
     const ammResults  = personResults.slice(0, amm.slice(0, 3).length)
