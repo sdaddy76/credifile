@@ -529,9 +529,12 @@ export default function ClientiPage() {
       const { data } = await supabase.from('clients').select('*').in('id', ids).order('ragione_sociale');
       setClients(data ?? []);
     } else if (isAgente) {
-      // Agente: vede solo i clienti con pratiche assegnate a lui
+      // Agente: vede i clienti con pratiche assegnate a lui + i clienti da lui creati direttamente
       const { data: pratt } = await supabase.from('practices').select('client_id').eq('assigned_to', user.id);
-      const ids = [...new Set((pratt ?? []).map((p: {client_id:string}) => p.client_id).filter(Boolean))];
+      const practiceIds = (pratt ?? []).map((p: {client_id:string}) => p.client_id).filter(Boolean);
+      const { data: myClients } = await supabase.from('clients').select('id').eq('created_by', user.id);
+      const myIds = (myClients ?? []).map((c: {id:string}) => c.id);
+      const ids = [...new Set([...practiceIds, ...myIds])];
       if (ids.length === 0) { setClients([]); setLoading(false); return; }
       const { data } = await supabase.from('clients').select('*').in('id', ids).order('ragione_sociale');
       setClients(data ?? []);
