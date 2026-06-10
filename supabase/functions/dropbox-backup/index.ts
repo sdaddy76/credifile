@@ -4,6 +4,12 @@ const DBX_APP_KEY    = Deno.env.get("DROPBOX_APP_KEY")!;
 const DBX_APP_SECRET = Deno.env.get("DROPBOX_APP_SECRET")!;
 const DBX_REFRESH    = Deno.env.get("DROPBOX_REFRESH_TOKEN")!;
 
+const CORS = {
+  "Access-Control-Allow-Origin":  "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+};
+
 async function getDropboxToken(): Promise<string> {
   const r = await fetch("https://api.dropboxapi.com/oauth2/token", {
     method: "POST",
@@ -41,7 +47,12 @@ async function dropboxUpload(token: string, path: string, body: string): Promise
   if (!r.ok) throw new Error("Upload error: " + await r.text());
 }
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  // Gestione preflight CORS (richieste browser)
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS });
+  }
+
   try {
     const now    = new Date().toISOString().split("T")[0];
     const tables = [
@@ -58,11 +69,12 @@ Deno.serve(async () => {
 
     const kb = Math.round(json.length / 1024);
     return new Response(JSON.stringify({ ok: true, date: now, size_kb: kb }), {
-      headers: { "Content-Type": "application/json" },
+      headers: { ...CORS, "Content-Type": "application/json" },
     });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: String(e) }), {
-      status: 500, headers: { "Content-Type": "application/json" },
+      status: 500,
+      headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
 });

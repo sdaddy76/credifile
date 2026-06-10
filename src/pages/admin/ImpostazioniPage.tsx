@@ -88,12 +88,8 @@ export default function ImpostazioniPage() {
   const backupToDropbox = async () => {
     setDropboxLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      const res = await fetch(
-        'https://fhieppjqlefdlanvrpik.supabase.co/functions/v1/dropbox-backup',
-        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
-      );
+      // Chiama la Vercel Serverless Function (stessa origine, niente CORS)
+      const res = await fetch('/api/dropbox-backup', { method: 'POST' });
       const json = await res.json();
       if (json.ok) {
         const now = new Date().toISOString();
@@ -102,8 +98,8 @@ export default function ImpostazioniPage() {
       } else {
         toast.error('Errore backup Dropbox: ' + (json.error ?? 'sconosciuto'));
       }
-    } catch {
-      toast.error('Errore di connessione al servizio Dropbox');
+    } catch (e) {
+      toast.error('Errore di connessione: ' + String(e));
     }
     setDropboxLoading(false);
   };

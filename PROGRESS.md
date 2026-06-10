@@ -101,3 +101,5 @@
 [2026-06-10 11:57] Dropbox Chooser deployato (commit b2e2eba): SDK in index.html, handleDropboxChoose in PraticaDetailPage, pulsante Dropbox accanto Upload. In attesa App Secret + auth code per Edge Function backup.
 [2026-06-10 12:15] Dropbox backup OK: Edge Function dropbox-backup attiva, cron domenica 02:00 UTC, refresh token aggiornato (scope files.content.write). File: /Apps/Credifile/backups/backup_YYYY-MM-DD.json
 [2026-06-10 12:15] Dropbox integrazione completa: Chooser frontend live (commit b2e2eba), Edge Function dropbox-backup v3 attiva, refresh token aggiornato con scope files.content.write, cron domenica 02:00 UTC (schedule id 3). Test backup OK: 66 KB su /Apps/Credifile/backups/
+[2026-06-10 13:02] Supabase edge function BOOT_ERROR irrecuperabile su tutti i deploy. Cambio strategia: Vercel serverless function /api/dropbox-backup.js
+[2026-06-10 13:03] Creata api/dropbox-backup.js (Vercel serverless). Supabase edge function irrecuperabile (BOOT_ERROR su tutti i deploy incluso hello-world). Aggiungo env vars Vercel e aggiorno frontend.
