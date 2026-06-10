@@ -50,18 +50,15 @@ function flattenKpi(kpiJson) {
 export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
-  // CORS preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).set(CORS).end();
-  }
-  if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
-  }
+  // Imposta header CORS su ogni risposta
+  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method not allowed' });
 
   try {
     const { practice_id, bank_id, note } = req.body;
     if (!practice_id || !bank_id) {
-      return res.status(400).set(CORS).json({ success: false, error: 'practice_id e bank_id obbligatori' });
+      return res.status(400).json({ success: false, error: 'practice_id e bank_id obbligatori' });
     }
 
     const H = {
@@ -78,7 +75,7 @@ export default async function handler(req, res) {
       { headers: H },
     ).then(r => r.json());
     const pratica = praticaArr?.[0];
-    if (!pratica) return res.status(404).set(CORS).json({ success: false, error: 'Pratica non trovata' });
+    if (!pratica) return res.status(404).json({ success: false, error: 'Pratica non trovata' });
 
     const clientId   = pratica.clients?.id;
     const agentEmail = pratica.agent?.email ?? null;
@@ -90,10 +87,10 @@ export default async function handler(req, res) {
       { headers: H },
     ).then(r => r.json());
     const pb = pbArr?.[0];
-    if (!pb) return res.status(404).set(CORS).json({ success: false, error: 'Assegnazione banca non trovata' });
+    if (!pb) return res.status(404).json({ success: false, error: 'Assegnazione banca non trovata' });
 
     const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
-    if (!bankEmail) return res.status(422).set(CORS).json({ success: false, error: 'Email banca non configurata' });
+    if (!bankEmail) return res.status(422).json({ success: false, error: 'Email banca non configurata' });
 
     // 3. File + signed URL (7 giorni)
     const files = await fetch(
@@ -266,7 +263,7 @@ ${repSection}
     });
     const emailBody = await emailRes.json();
     if (!emailRes.ok) {
-      return res.status(502).set(CORS).json({ success: false, error: emailBody?.message ?? 'Errore Resend' });
+      return res.status(502).json({ success: false, error: emailBody?.message ?? 'Errore Resend' });
     }
 
     // 9. Aggiorna practice_banks → status 'inviata'
@@ -279,7 +276,7 @@ ${repSection}
       },
     );
 
-    return res.status(200).set(CORS).json({
+    return res.status(200).json({
       success: true,
       sent_to: bankEmail,
       reply_to: agentEmail ?? null,
@@ -290,6 +287,6 @@ ${repSection}
 
   } catch (e) {
     console.error('send-to-bank error:', e);
-    return res.status(500).set(CORS).json({ success: false, error: String(e) });
+    return res.status(500).json({ success: false, error: String(e) });
   }
 }
