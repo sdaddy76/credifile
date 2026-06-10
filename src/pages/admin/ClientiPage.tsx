@@ -91,7 +91,24 @@ function parseSoci(raw: string): Socio[] {
 
   const results: Socio[] = [];
   const seen = new Set<string>();
-  const STOPWORDS = /\b(?:SOCIO|SOCIA|QUOTA|VALORE|NOMINATIVO|COGNOME|NOME|DENOMINAZIONE|TIPO|NATURA|TITOLO|SEZIONE|IV|SOCI|E|DI|SU|CODICE|FISCALE|C\.F\.?)\b/g;
+
+  // NOTA: "DI" è ESCLUSO dalle stopwords perché è parte di cognomi come "DI PAOLO"
+  const STOPWORDS_SOCI = /\b(?:SOCIO|SOCIA|QUOTA|VALORE|NOMINATIVO|COGNOME|NOME|DENOMINAZIONE|TIPO|NATURA|TITOLO|SEZIONE|IV|SOCI|E|SU|CODICE|FISCALE|DIRITTO|DIRITTI|PROPRIETA|AZIONI|CAPITALE|SINTESI|COMPOSIZIONE|SOCIETARIA|ALTRI|TITOLARI|RIFERIMENTO|GRAFICO|TABELLA|SOTTOSTANTE)\b/g;
+
+  /**
+   * Estrae nome da una finestra di 90 char PRIMA del codice.
+   * Rimuove numeri/simboli e prende le ultime parole ALL-CAPS.
+   */
+  const estraiNomePrima = (s4text: string, idx: number): string => {
+    const win = s4text.substring(Math.max(0, idx - 90), idx);
+    // Rimuovi numeri, importi, simboli, percentuali, date dal contesto
+    const clean = win
+      .replace(/\b\d{1,3}(?:\.\d{3})*(?:,\d+)?\b/g, ' ') // numeri con punti/virgole
+      .replace(/[\d€%\/\(\)]+/g, ' ')                      // cifre e simboli residui
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return clean.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,55})\s*$/)?.[1]?.trim() ?? '';
+  };
 
   // ── Soci persona fisica (CF 16 char alfanumerico) ─────────────────────────
   CF_PF_RE.lastIndex = 0;
@@ -101,16 +118,22 @@ function parseSoci(raw: string): Socio[] {
     if (seen.has(cf)) continue;
     seen.add(cf);
 
-    const before = s4.substring(Math.max(0, m.index - 200), m.index);
-    const after  = s4.substring(m.index + cf.length, m.index + cf.length + 300);
+    const after = s4.substring(m.index + cf.length, m.index + cf.length + 300);
 
-    // Prova nome PRIMA del CF (formato più comune)
-    const nameFromBefore = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60})\s*(?:Codice\s+[Ff]iscale|C\.F\.?)?\s*$/)?.[1]?.trim() ?? '';
-    // Prova nome DOPO il CF (alcuni layout mettono CF prima del nome)
-    const nameFromAfter  = after.match(/^\s*[,\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,60}?)(?=\s+(?:nato|nata|resid|domicil|carica|quota|€|%|\d{2}[\/\-]\d{2}))/i)?.[1]?.trim() ?? '';
+    // Prova 1: nome PRIMA del CF (layout più comune nelle visure)
+    let rawName = estraiNomePrima(s4, m.index);
 
-    const rawName = nameFromBefore.length >= 3 ? nameFromBefore : nameFromAfter;
-    const nome = rawName.replace(STOPWORDS, '').replace(/\s{2,}/g, ' ').trim();
+    // Prova 2: nome DOPO il CF (layout alternativo: CF prima del nome)
+    if (!rawName || rawName.length < 3) {
+      rawName = after.match(
+        /^\s*[,\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{2,55}?)(?=\s+(?:nato|nata|resid|domicil|carica|quota|€|%|\d{2}[\/\-]\d{2}))/i
+      )?.[1]?.trim() ?? '';
+    }
+
+    const nome = rawName
+      .replace(STOPWORDS_SOCI, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
     if (!nome || nome.length < 3) continue;
 
     const valMatch = after.match(/(?:€|[Ee]uro)\s*([\d.,]+)/)
@@ -118,23 +141,47 @@ function parseSoci(raw: string): Socio[] {
                   ?? after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/);
     const valore = valMatch?.[1] ?? '';
 
+    const before90 = s4.substring(Math.max(0, m.index - 90), m.index);
     const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/)
-                   ?? before.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/);
+                   ?? before90.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/);
     const percentuale = percMatch?.[1] ? percMatch[1].replace(/%$/, '') + '%' : '';
     results.push({ nome, codice_fiscale: cf, valore, percentuale });
   }
 
-  // ── Soci azienda (CF/PIVA 11 cifre) ───────────────────────────────────────
+  // ── Soci azienda con forma giuridica esplicita (P.IVA 11 cifre) ───────────
   const COMP_RE = /([A-Z0-9][A-Z0-9\s\.\'\-]{2,60}?(?:SRL|S\.R\.L\.|SPA|S\.P\.A\.|SNC|SAS|S\.S\.|SCARL|SCRL|COOP)\.?)\s+(\d{11})\s+([\d.,]+)\s+([\d,]+(?:[.,]\d+)?)\s*%/gi;
   let mc: RegExpExecArray | null;
   while ((mc = COMP_RE.exec(s4)) !== null) {
-    const cf = mc[2];
-    if (seen.has(cf)) continue;
-    seen.add(cf);
+    const piva = mc[2];
+    if (seen.has(piva)) continue;
+    seen.add(piva);
     const nome        = mc[1].replace(/\s{2,}/g, ' ').trim();
     const valore      = mc[3];
     const percentuale = mc[4] + '%';
-    if (nome.length >= 3) results.push({ nome, codice_fiscale: cf, valore, percentuale });
+    if (nome.length >= 3) results.push({ nome, codice_fiscale: piva, valore, percentuale });
+  }
+
+  // ── Soci azienda senza forma giuridica: P.IVA (11 cifre) + % nelle vicinanze
+  const PIVA_RE = /\b(\d{11})\b/g;
+  let pm: RegExpExecArray | null;
+  while ((pm = PIVA_RE.exec(s4)) !== null) {
+    const piva = pm[1];
+    if (seen.has(piva)) continue;
+    const after = s4.substring(pm.index + piva.length, pm.index + piva.length + 150);
+    // Deve esserci una % nelle vicinanze per confermare che è un socio
+    if (!after.match(/%/)) continue;
+    seen.add(piva);
+    const rawNome = estraiNomePrima(s4, pm.index);
+    const nome = rawNome.replace(STOPWORDS_SOCI, '').replace(/\s{2,}/g, ' ').trim();
+    if (!nome || nome.length < 3) continue;
+    const valMatch = after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/);
+    const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,5})?)\s*%/);
+    results.push({
+      nome,
+      codice_fiscale: piva,
+      valore: valMatch?.[1] ?? '',
+      percentuale: percMatch?.[1] ? percMatch[1] + '%' : '',
+    });
   }
 
   return results;
