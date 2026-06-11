@@ -859,7 +859,32 @@ export default function PraticaDetailPage() {
       practice_id: id, old_status: practice?.status, new_status: 'integrazioni_richieste',
       note: `Richiesta integrazione: ${integrationName}`, created_by: 'admin',
     });
-    toast.success('Integrazione richiesta — stato pratica aggiornato');
+
+    // Invia email al cliente se ha un codice di accesso
+    const clientEmail = (practice as Practice & { clients?: { email: string; ragione_sociale: string } }).clients?.email;
+    const clientName  = (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale;
+    if (clientEmail && accessCode) {
+      const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
+      const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
+      const link = `https://credifile-eosin.vercel.app/#/accesso?p=${id}`;
+      await supabase.functions.invoke('send-client-email', {
+        body: {
+          to: clientEmail,
+          consultant_name: consultantName,
+          documents: [integrationName],
+          link,
+          code: accessCode.codice,
+          practice_number: practice?.numero_pratica,
+          company_name: clientName,
+          subject_override: `Richiesta integrazione documenti — ${clientName ?? practice?.numero_pratica}`,
+        },
+      });
+      toast.success(`Integrazione richiesta — email inviata a ${clientEmail}`);
+    } else {
+      toast.success('Integrazione richiesta — stato pratica aggiornato');
+      if (clientEmail && !accessCode) toast.info('Nota: nessun codice accesso attivo, email non inviata');
+    }
+
     setSaving(false);
     setShowIntegration(false);
     setIntegrationName(''); setIntegrationDesc('');
@@ -2313,6 +2338,11 @@ export default function PraticaDetailPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Richiedi Integrazione Banca</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">Il documento verrà aggiunto alla lista richieste e lo stato pratica diventerà "Integrazioni Richieste".</p>
+          {accessCode && (practice as Practice & { clients?: { email: string } }).clients?.email && (
+            <p className="text-sm text-blue-700 bg-blue-50 rounded-md px-3 py-2 border border-blue-200">
+              📧 Verrà inviata un'email a <strong>{(practice as Practice & { clients?: { email: string } }).clients?.email}</strong> con il documento richiesto.
+            </p>
+          )}
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label>Nome Documento *</Label>

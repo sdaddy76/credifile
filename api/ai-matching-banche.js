@@ -40,7 +40,7 @@ export default async function handler(req, res) {
 
     // 2. KPI più recenti
     const kpis = await fetch(
-      `${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=anno_bilancio,ricavi_vendite,totale_patrimonio_netto,totale_debiti,utile_netto,kpi&order=anno_bilancio.desc&limit=1`,
+      `${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=anno_esercizio,ricavi_vendite,totale_patrimonio_netto,totale_debiti,utile_netto,kpi&order=anno_esercizio.desc&limit=1`,
       { headers: h },
     ).then(r => r.json()).catch(() => []);
     const kpi = kpis?.[0] ?? null;
@@ -54,7 +54,7 @@ export default async function handler(req, res) {
       ).then(r => r.json()))?.[0]?.client_id;
       if (clientId) {
         const k2 = await fetch(
-          `${SUPABASE_URL}/rest/v1/bilanci_kpi?client_id=eq.${encodeURIComponent(clientId)}&select=anno_bilancio,ricavi_vendite,totale_patrimonio_netto,totale_debiti,utile_netto,kpi&order=anno_bilancio.desc&limit=1`,
+          `${SUPABASE_URL}/rest/v1/bilanci_kpi?client_id=eq.${encodeURIComponent(clientId)}&select=anno_esercizio,ricavi_vendite,totale_patrimonio_netto,totale_debiti,utile_netto,kpi&order=anno_esercizio.desc&limit=1`,
           { headers: h },
         ).then(r => r.json()).catch(() => []);
         kpiFallback = k2?.[0] ?? null;
@@ -64,16 +64,40 @@ export default async function handler(req, res) {
 
     // 3. Banche attive con criteri KPI
     const banks = await fetch(
-      `${SUPABASE_URL}/rest/v1/banks?attiva=eq.true&select=id,nome,bank_kpi_requirements(kpi_key,kpi_area,kpi_label,min_value,max_value)`,
+      `${SUPABASE_URL}/rest/v1/banks?attiva=eq.true&select=id,nome,bank_kpi_requirements(kpi_key,kpi_area,kpi_label,min_value,max_value),bank_ateco_requirements(codice,tipo)`,
       { headers: h },
     ).then(r => r.json()).catch(() => []);
+
+    // ATECO della pratica (es. "56.10" o "5610")
+    const practiceAteco = (p.codice_ateco || '').trim().toUpperCase().replace('.', '');
 
     // 4. Score matching per ogni banca
     const matchResults = (banks || []).map(bank => {
       const reqs = bank.bank_kpi_requirements || [];
-      if (!reqs.length) {
-        return { bankId: bank.id, bankName: bank.nome, score: 70, passCount: 0, failCount: 0, ndCount: 0, details: [] };
+      const atecoReqs = bank.bank_ateco_requirements || [];
+
+      // ── ATECO check ──────────────────────────────────────────────────────────
+      let atecoOk = null; // null = non verificato (nessun requisito)
+      if (atecoReqs.length > 0 && practiceAteco) {
+        const inclusi = atecoReqs.filter(a => a.tipo === 'incluso').map(a => a.codice.toUpperCase().replace('.', ''));
+        const esclusi = atecoReqs.filter(a => a.tipo === 'escluso').map(a => a.codice.toUpperCase().replace('.', ''));
+        // Controlla esclusi — match prefisso (es. "56" esclude "5610")
+        const isEscluso = esclusi.some(c => practiceAteco.startsWith(c) || c.startsWith(practiceAteco));
+        if (isEscluso) {
+          atecoOk = false;
+        } else if (inclusi.length > 0) {
+          // Inclusi: il codice pratica deve corrispondere (match prefisso)
+          atecoOk = inclusi.some(c => practiceAteco.startsWith(c) || c.startsWith(practiceAteco));
+        } else {
+          // Solo esclusi configurati e non colpito → OK
+          atecoOk = true;
+        }
       }
+
+      if (!reqs.length && atecoOk === null) {
+        return { bankId: bank.id, bankName: bank.nome, score: 70, passCount: 0, failCount: 0, ndCount: 0, atecoOk, details: [] };
+      }
+
       let pass = 0, fail = 0, nd = 0;
       const details = [];
       for (const req of reqs) {
@@ -82,7 +106,7 @@ export default async function handler(req, res) {
           const area = kpiData.kpi[req.kpi_area];
           actual = area?.[req.kpi_key]?.value ?? area?.[req.kpi_key]?.valore ?? null;
         }
-        // Fallback: colonne dirette in bilanci_kpi (ricavi_vendite → fatturato, utile_netto → utile_netto)
+        // Fallback: colonne dirette in bilanci_kpi
         if (actual === null && kpiData) {
           if (req.kpi_key === 'fatturato' || req.kpi_key === 'ricavi_vendite') {
             actual = kpiData.ricavi_vendite ?? null;
@@ -104,8 +128,10 @@ export default async function handler(req, res) {
         else nd++;
         details.push({ label: req.kpi_label, pass: passed, actual, min: req.min_value, max: req.max_value });
       }
-      const score = reqs.length > 0 ? Math.round((pass / reqs.length) * 100) : 70;
-      return { bankId: bank.id, bankName: bank.nome, score, passCount: pass, failCount: fail, ndCount: nd, details };
+      const kpiScore = reqs.length > 0 ? Math.round((pass / reqs.length) * 100) : 70;
+      // Se ATECO escluso → score 0; se ATECO incluso ma non rispettato → score 0
+      const score = atecoOk === false ? 0 : kpiScore;
+      return { bankId: bank.id, bankName: bank.nome, score, passCount: pass, failCount: fail, ndCount: nd, atecoOk, details };
     }).sort((a, b) => b.score - a.score);
 
     // 5. Groq AI — due prompt separati: analisi società + suggerimento banche
