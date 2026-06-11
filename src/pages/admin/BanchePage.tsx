@@ -53,6 +53,8 @@ export default function BanchePage() {
   const [showBankForm, setShowBankForm] = useState(false);
   const [editingBank, setEditingBank] = useState<Bank | null>(null);
   const [bankForm, setBankForm] = useState(emptyBank);
+  const [ccEmails, setCcEmails] = useState<string[]>(['']);
+  const [bccEmails, setBccEmails] = useState<string[]>(['']);
   const [saving, setSaving] = useState(false);
 
   const [expandedBank, setExpandedBank] = useState<string | null>(null);
@@ -226,17 +228,28 @@ export default function BanchePage() {
     loadModuli(id);
   };
 
-  const openCreateBank = () => { setEditingBank(null); setBankForm(emptyBank); setShowBankForm(true); };
+  const openCreateBank = () => { setEditingBank(null); setBankForm(emptyBank); setCcEmails(['']); setBccEmails(['']); setShowBankForm(true); };
   const openEditBank = (b: Bank) => {
     setEditingBank(b);
     setBankForm({ nome: b.nome, codice: b.codice, contatto: b.contatto ?? '', email: b.email ?? '', email_invio_banca: (b as Bank & { email_invio_banca?: string }).email_invio_banca ?? '', note: b.note ?? '', attiva: b.attiva, logo_url: (b as Bank & { logo_url?: string }).logo_url ?? '' });
+    const parsedCc  = (b.email_cc  || '').split(',').map(e => e.trim()).filter(Boolean);
+    const parsedBcc = (b.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
+    setCcEmails(parsedCc.length  > 0 ? parsedCc  : ['']);
+    setBccEmails(parsedBcc.length > 0 ? parsedBcc : ['']);
     setShowBankForm(true);
   };
 
   const handleSaveBank = async () => {
     if (!bankForm.nome.trim() || !bankForm.codice.trim()) { toast.error('Nome e codice obbligatori'); return; }
     setSaving(true);
-    const payload = { ...bankForm, contatto: bankForm.contatto || null, email: bankForm.email || null, note: bankForm.note || null };
+    const payload = {
+      ...bankForm,
+      contatto: bankForm.contatto || null,
+      email: bankForm.email || null,
+      note: bankForm.note || null,
+      email_cc:  ccEmails.filter(e => e.trim()).join(',') || null,
+      email_bcc: bccEmails.filter(e => e.trim()).join(',') || null,
+    };
     if (editingBank) {
       const { error } = await supabase.from('banks').update(payload).eq('id', editingBank.id);
       if (error) { toast.error('Codice già esistente'); setSaving(false); return; }
@@ -636,11 +649,66 @@ export default function BanchePage() {
               <Label>Email</Label>
               <Input type="email" placeholder="istruttoria@banca.it" value={bankForm.email} onChange={e => setBankForm(f => ({ ...f, email: e.target.value }))} />
               </div>
-              <div className="space-y-2">
-                <Label>Email Invio Documenti Pratica</Label>
-                <Input type="email" placeholder="documenti@banca.it" value={bankForm.email_invio_banca} onChange={e => setBankForm(f => ({ ...f, email_invio_banca: e.target.value }))} />
-                <p className="text-xs text-muted-foreground">Email a cui la segreteria invia la pratica completa.</p>
-            </div>
+
+              {/* Sezione invio pratica: A: / CC: / BCC: */}
+              <div className="space-y-3 p-3 bg-muted/30 rounded-lg border border-border">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Invio Pratica</p>
+
+                {/* A: */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center justify-center w-9 h-7 rounded text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200 shrink-0">A:</span>
+                    <Input type="email" placeholder="documenti@banca.it" value={bankForm.email_invio_banca} onChange={e => setBankForm(f => ({ ...f, email_invio_banca: e.target.value }))} className="flex-1" />
+                  </div>
+                  <p className="text-xs text-muted-foreground pl-11">Destinatario principale. Se vuoto, verrà usata l'email di contatto.</p>
+                </div>
+
+                {/* CC: */}
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">CC (Copia)</p>
+                  {ccEmails.map((email, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span className="inline-flex items-center justify-center w-9 h-7 rounded text-xs font-bold bg-blue-100 text-blue-700 border border-blue-200 shrink-0">CC:</span>
+                      <Input
+                        type="email"
+                        placeholder="cc@banca.it"
+                        value={email}
+                        onChange={e => setCcEmails(prev => prev.map((v, i) => i === idx ? e.target.value : v))}
+                        className="flex-1"
+                      />
+                      {ccEmails.length > 1 && (
+                        <button type="button" onClick={() => setCcEmails(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-red-400 hover:text-red-600 text-lg leading-none px-1">×</button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setCcEmails(prev => [...prev, ''])}
+                    className="text-xs text-blue-600 hover:text-blue-800 underline ml-11">+ Aggiungi CC</button>
+                </div>
+
+                {/* BCC: */}
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">BCC (Copia nascosta)</p>
+                  {bccEmails.map((email, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span className="inline-flex items-center justify-center w-9 h-7 rounded text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200 shrink-0">BCC:</span>
+                      <Input
+                        type="email"
+                        placeholder="bcc@banca.it"
+                        value={email}
+                        onChange={e => setBccEmails(prev => prev.map((v, i) => i === idx ? e.target.value : v))}
+                        className="flex-1"
+                      />
+                      {bccEmails.length > 1 && (
+                        <button type="button" onClick={() => setBccEmails(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-red-400 hover:text-red-600 text-lg leading-none px-1">×</button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setBccEmails(prev => [...prev, ''])}
+                    className="text-xs text-slate-500 hover:text-slate-700 underline ml-11">+ Aggiungi BCC</button>
+                </div>
+              </div>
             <div className="space-y-1.5">
               <Label>URL Logo</Label>
               <div className="flex gap-2 items-center">

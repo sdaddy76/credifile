@@ -100,7 +100,7 @@ export default async function handler(req, res) {
 
     // 2. Banca
     const pbArr = await fetch(
-      `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca)&limit=1`,
+      `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca,email_cc,email_bcc)&limit=1`,
       { headers: H },
     ).then(r => r.json());
     const pb = pbArr?.[0];
@@ -108,6 +108,10 @@ export default async function handler(req, res) {
 
     const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
     if (!bankEmail) return res.status(422).json({ success: false, error: 'Email banca non configurata' });
+
+    // Destinatari CC e BCC (salvati come stringa separata da virgola)
+    const ccList  = (pb.banks?.email_cc  || '').split(',').map(e => e.trim()).filter(Boolean);
+    const bccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
 
     // 3. File + signed URL (7 giorni)
     const files = await fetch(
@@ -332,6 +336,8 @@ ${repSection}
       html: htmlBody,
     };
     if (agentEmail) emailPayload.reply_to = agentEmail;
+    if (ccList.length  > 0) emailPayload.cc  = ccList;
+    if (bccList.length > 0) emailPayload.bcc = bccList;
 
     const emailRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -356,6 +362,8 @@ ${repSection}
     return res.status(200).json({
       success: true,
       sent_to: bankEmail,
+      cc: ccList,
+      bcc: bccList,
       reply_to: agentEmail ?? null,
       docs_sent: docLinks.length,
       kpi_rows: kpiRows.length,

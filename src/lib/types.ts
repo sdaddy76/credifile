@@ -47,6 +47,8 @@ export interface Bank {
   contatto?: string;
   email?: string;
   email_invio_banca?: string;
+  email_cc?: string;
+  email_bcc?: string;
   note?: string;
   attiva: boolean;
   bank_user_id?: string;
