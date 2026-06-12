@@ -34,6 +34,7 @@ const NAV_SEGRETERIA = [
   { to: '/admin/clienti',            icon: Users,           label: 'Clienti' },
   { to: '/admin/rubrica-lead',       icon: BookUser,        label: 'Rubrica Lead' },
   { to: '/admin/banche',             icon: Building2,       label: 'Banche' },
+  { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
   { to: '/admin/template-documenti', icon: Layout,          label: 'Template Documenti' },
   { to: '/admin/statistiche',        icon: BarChart3,       label: 'Statistiche' },
   { to: '/admin/miei-agenti',        icon: UsersRound,      label: 'Miei Agenti' },
@@ -47,6 +48,7 @@ const NAV_AGENTE = [
   { to: '/admin/pratiche',           icon: FolderOpen,      label: 'Pratiche' },
   { to: '/admin/clienti',            icon: Users,           label: 'Clienti' },
   { to: '/admin/rubrica-lead',       icon: BookUser,        label: 'Rubrica Lead' },
+  { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
   { to: '/admin/miei-segnalatori',   icon: UsersRound,      label: 'Miei Segnalatori' },
   { to: '/admin/profilo',            icon: UserCircle,      label: 'Profilo' },
 ];
@@ -54,6 +56,7 @@ const NAV_AGENTE = [
 const NAV_SEGNALATORE = [
   { to: '/admin/segnalatore-dashboard', icon: TrendingUp,    label: 'Le Mie Statistiche' },
   { to: '/admin/clienti',               icon: Users,         label: 'Clienti' },
+  { to: '/admin/kanban-banche',         icon: Columns2,      label: 'Kanban Banche' },
   { to: '/admin/profilo',               icon: UserCircle,    label: 'Profilo' },
 ];
 

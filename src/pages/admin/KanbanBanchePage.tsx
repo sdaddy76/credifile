@@ -52,11 +52,11 @@ function tempoTrascorso(dateStr: string | null): { label: string; urgente: boole
 }
 
 // ─── Card pratica ───────────────────────────────────────────────────────────────
-function PraticaCard({ p, onOpen }: { p: PraticaBanca; onOpen: () => void }) {
+function PraticaCard({ p, showAgente, onOpen }: { p: PraticaBanca; showAgente: boolean; onOpen: () => void }) {
   const ref = p.data_invio ?? p.created_at_pb;
   const { label: tempo, urgente } = tempoTrascorso(ref);
-  const dot   = STATUS_BANCA_DOT[p.status_banca]  ?? 'bg-gray-400';
-  const cardBg = STATUS_BANCA_BG[p.status_banca]  ?? 'bg-white border-gray-200';
+  const dot    = STATUS_BANCA_DOT[p.status_banca]  ?? 'bg-gray-400';
+  const cardBg = STATUS_BANCA_BG[p.status_banca]   ?? 'bg-white border-gray-200';
 
   return (
     <div
@@ -74,7 +74,9 @@ function PraticaCard({ p, onOpen }: { p: PraticaBanca; onOpen: () => void }) {
         </Badge>
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px] text-gray-500">
-        <span className="truncate max-w-[70%]">👤 {p.agente}</span>
+        {showAgente
+          ? <span className="truncate max-w-[70%]">👤 {p.agente}</span>
+          : <span />}
         <span className={`flex items-center gap-0.5 font-semibold ${urgente ? 'text-red-600' : 'text-gray-400'}`}>
           {urgente && <AlertCircle className="w-3 h-3" />}
           <Clock className="w-2.5 h-2.5" />{tempo}
@@ -86,20 +88,69 @@ function PraticaCard({ p, onOpen }: { p: PraticaBanca; onOpen: () => void }) {
 
 // ─── Pagina principale ──────────────────────────────────────────────────────────
 export default function KanbanBanchePage() {
-  const { isSuperAdmin, loading: authLoading } = useAuth();
+  const { isSuperAdmin, isSegreteria, isAgente, isSegnalatore, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [banche, setBanche]     = useState<BancaColonna[]>([]);
   const [pratiche, setPratiche] = useState<PraticaBanca[]>([]);
   const [loading, setLoading]   = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
+  const ruoloLabel = isSuperAdmin   ? 'Tutte le pratiche'
+                   : isSegreteria   ? 'Pratiche dei miei agenti'
+                   : isAgente       ? 'Le mie pratiche'
+                   : isSegnalatore  ? 'Pratiche da me segnalate'
+                   : '';
+
+  // Mostra nome agente sulla card solo per ruoli che gestiscono più agenti
+  const showAgente = isSuperAdmin || isSegreteria;
+
   async function load() {
     setLoading(true);
     try {
-      const { data: bancheData } = await supabase.from('banks').select('id, nome').order('nome');
+      const { data: bancheData } = await supabase
+        .from('banks').select('id, nome').eq('attiva', true).order('nome');
       setBanche((bancheData ?? []) as BancaColonna[]);
 
-      const { data: pbData } = await supabase
+      // ── Calcola lista practice_id visibili per il ruolo ──────────────────────
+      let allowedIds: string[] | null = null; // null = nessun filtro (super_admin)
+
+      if (isAgente && user?.id) {
+        // Agente: solo pratiche a lui assegnate
+        const { data } = await supabase
+          .from('practices').select('id').eq('assigned_to', user.id);
+        allowedIds = (data ?? []).map((r: { id: string }) => r.id);
+
+      } else if (isSegreteria && user?.id) {
+        // Segreteria: pratiche degli agenti assegnati a questa segreteria
+        const { data: assigns } = await supabase
+          .from('segreteria_agent_assignments')
+          .select('agent_user_id')
+          .eq('segreteria_user_id', user.id);
+        const agentIds = (assigns ?? []).map((a: { agent_user_id: string }) => a.agent_user_id);
+        if (agentIds.length > 0) {
+          const { data } = await supabase
+            .from('practices').select('id').in('assigned_to', agentIds);
+          allowedIds = (data ?? []).map((r: { id: string }) => r.id);
+        } else {
+          allowedIds = [];
+        }
+
+      } else if (isSegnalatore && user?.id) {
+        // Segnalatore: pratiche dove è segnalatore
+        const { data } = await supabase
+          .from('practices').select('id').eq('segnalatore_id', user.id);
+        allowedIds = (data ?? []).map((r: { id: string }) => r.id);
+      }
+
+      // Lista vuota → nessun risultato
+      if (allowedIds !== null && allowedIds.length === 0) {
+        setPratiche([]);
+        setLastRefresh(new Date());
+        return;
+      }
+
+      // ── Query practice_banks con filtro opzionale ─────────────────────────────
+      let q = supabase
         .from('practice_banks')
         .select(`
           id, practice_id, bank_id, status, data_invio, created_at,
@@ -109,6 +160,12 @@ export default function KanbanBanchePage() {
           banks(nome)
         `)
         .order('created_at', { ascending: true });
+
+      if (allowedIds !== null) {
+        q = q.in('practice_id', allowedIds);
+      }
+
+      const { data: pbData } = await q;
 
       const mapped: PraticaBanca[] = (pbData ?? []).map((row: any) => {
         const pr = row.practices ?? {};
@@ -129,11 +186,7 @@ export default function KanbanBanchePage() {
     }
   }
 
-  useEffect(() => { if (!authLoading) load(); }, [authLoading]);
-
-  if (!isSuperAdmin) return (
-    <div className="flex items-center justify-center h-64 text-muted-foreground">Accesso non autorizzato.</div>
-  );
+  useEffect(() => { if (!authLoading) load(); }, [authLoading, user?.id]);
 
   // Raggruppa per banca
   const byBank: Record<string, PraticaBanca[]> = {};
@@ -142,19 +195,18 @@ export default function KanbanBanchePage() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Header */}
+      {/* @section: kanban-header */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-background shrink-0">
         <div>
           <h1 className="text-lg font-bold flex items-center gap-2">
             <Building2 className="w-5 h-5 text-primary" /> Kanban Pratiche per Banca
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {banche.length} banche · {pratiche.length} assegnazioni ·
+            {ruoloLabel} · {banche.length} banche · {pratiche.length} assegnazioni ·
             aggiornato {lastRefresh.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Legenda */}
           <div className="hidden lg:flex items-center gap-3 text-[11px] text-muted-foreground">
             {[
               { dot: 'bg-blue-500',  label: 'Inviata' },
@@ -177,7 +229,7 @@ export default function KanbanBanchePage() {
         </div>
       </div>
 
-      {/* Board — scroll orizzontale */}
+      {/* @section: kanban-board */}
       {loading ? (
         <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
           <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Caricamento...
@@ -193,7 +245,6 @@ export default function KanbanBanchePage() {
               }).length;
               return (
                 <div key={banca.id} className="flex flex-col w-60 shrink-0">
-                  {/* Header colonna */}
                   <div className="flex items-center justify-between mb-2 px-1">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -208,7 +259,6 @@ export default function KanbanBanchePage() {
                       <span className="text-[10px] bg-muted text-muted-foreground rounded-full px-1.5 font-semibold">{cards.length}</span>
                     </div>
                   </div>
-                  {/* Cards scroll verticale */}
                   <div className="overflow-y-auto space-y-2 pb-2" style={{ maxHeight: 'calc(100vh - 160px)' }}>
                     {cards.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-gray-200 p-4 text-center text-xs text-muted-foreground">
@@ -216,7 +266,12 @@ export default function KanbanBanchePage() {
                       </div>
                     ) : (
                       cards.map(p => (
-                        <PraticaCard key={p.pb_id} p={p} onOpen={() => navigate(`/admin/pratiche/${p.practice_id}`)} />
+                        <PraticaCard
+                          key={p.pb_id}
+                          p={p}
+                          showAgente={showAgente}
+                          onOpen={() => navigate(`/admin/pratiche/${p.practice_id}`)}
+                        />
                       ))
                     )}
                   </div>
