@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { User, Phone, Mail, Upload, Trash2, Save, Lock, Eye, EyeOff, Shield, Monitor } from 'lucide-react';
+import { User, Phone, Mail, Upload, Trash2, Save, Lock, Eye, EyeOff, Shield, Monitor, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ProfiloPage() {
@@ -23,11 +23,37 @@ export default function ProfiloPage() {
   const [accessLogs, setAccessLogs] = useState<{id:string;ip_address:string;user_agent:string;is_new_ip:boolean;created_at:string}[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
+  // Cambio email
+  const [nuovaEmail, setNuovaEmail] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
   // Cambio password
   const [nuovaPassword, setNuovaPassword] = useState('');
   const [confermaPwd, setConfermaPwd] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [savingPwd, setSavingPwd] = useState(false);
+
+  const handleChangeEmail = async () => {
+    if (!nuovaEmail || !nuovaEmail.includes('@')) {
+      toast.error('Inserisci un indirizzo email valido');
+      return;
+    }
+    if (nuovaEmail === user?.email) {
+      toast.error("L'indirizzo è uguale a quello attuale");
+      return;
+    }
+    setSavingEmail(true);
+    const { error } = await supabase.auth.updateUser({ email: nuovaEmail });
+    setSavingEmail(false);
+    if (error) {
+      toast.error('Errore: ' + error.message);
+      return;
+    }
+    setEmailSent(true);
+    toast.success('Email di conferma inviata al nuovo indirizzo');
+    setNuovaEmail('');
+  };
 
   const handleChangePassword = async () => {
     if (!nuovaPassword) { toast.error('Inserisci la nuova password'); return; }
@@ -128,9 +154,8 @@ export default function ProfiloPage() {
             <Input placeholder="Mario Rossi" value={nome} onChange={e => setNome(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" />Email</Label>
+            <Label className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" />Email attuale</Label>
             <Input value={user?.email ?? ''} disabled className="bg-muted/50 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">L'email non può essere modificata da qui.</p>
           </div>
           <div className="space-y-2">
             <Label className="flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" />Cellulare</Label>
@@ -141,6 +166,54 @@ export default function ProfiloPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Cambio email */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Mail className="w-3.5 h-3.5" />Cambia Email
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {emailSent ? (
+            <div className="flex items-start gap-3 p-3 rounded-lg border border-green-200 bg-green-50">
+              <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-green-800">Email di conferma inviata!</p>
+                <p className="text-xs text-green-700 mt-0.5">
+                  Controlla la casella del nuovo indirizzo e clicca il link di conferma per completare il cambio email.
+                </p>
+                <button
+                  className="text-xs text-green-700 underline mt-1"
+                  onClick={() => setEmailSent(false)}
+                >
+                  Cambia un altro indirizzo
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label>Nuovo indirizzo email</Label>
+                <Input
+                  type="email"
+                  placeholder="nuova@email.it"
+                  value={nuovaEmail}
+                  onChange={e => setNuovaEmail(e.target.value)}
+                  autoComplete="email"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Riceverai un link di conferma al nuovo indirizzo. Il cambio sarà attivo solo dopo la conferma.
+                </p>
+              </div>
+              <Button className="w-full gap-2" onClick={handleChangeEmail} disabled={savingEmail}>
+                <Mail className="w-4 h-4" /> {savingEmail ? 'Invio in corso...' : 'Invia conferma cambio email'}
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Cambio password */}
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Lock className="w-3.5 h-3.5" />Cambia Password</CardTitle></CardHeader>
@@ -163,6 +236,7 @@ export default function ProfiloPage() {
           </Button>
         </CardContent>
       </Card>
+
       {/* Accessi recenti */}
       <Card>
         <CardHeader className="pb-3">

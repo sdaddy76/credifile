@@ -125,7 +125,7 @@ export default async function handler(req, res) {
       const encodedPath = f.storage_path.split('/').map(s => encodeURIComponent(s)).join('/');
       const signRes = await fetch(
         `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
-        { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
+        { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 315360000 }) },
       );
       if (signRes.ok) {
         const signData = await signRes.json();
