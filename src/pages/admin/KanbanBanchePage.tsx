@@ -156,7 +156,7 @@ export default function KanbanBanchePage() {
           id, practice_id, bank_id, status, data_invio, created_at,
           practices!inner(numero_pratica, status,
             assigned_agent:admin_profiles!practices_assigned_to_fkey(nome,email),
-            clients!inner(ragione_sociale)),
+            clients(ragione_sociale)),
           banks(nome)
         `)
         .order('created_at', { ascending: true });
