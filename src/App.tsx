@@ -21,6 +21,8 @@ import SegnalatoreDashboardPage from "@/pages/admin/SegnalatoreDashboardPage";
 import RubricaPage from "@/pages/admin/RubricaPage";
 import TemplateDocumentiPage from "@/pages/admin/TemplateDocumentiPage";
 import KanbanBanchePage from "@/pages/admin/KanbanBanchePage";
+import CalendarioPage from "@/pages/admin/CalendarioPage";
+import TasksPage from "@/pages/admin/TasksPage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
@@ -93,6 +95,8 @@ const App = () => (
             <Route path="rubrica-lead"               element={<RubricaPage />} />
             <Route path="template-documenti"         element={<TemplateDocumentiPage />} />
             <Route path="kanban-banche"              element={<KanbanBanchePage />} />
+            <Route path="calendario"                 element={<CalendarioPage />} />
+            <Route path="tasks"                      element={<TasksPage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />

@@ -7,10 +7,12 @@ import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
   UserCircle, UsersRound, BarChart3, Settings, TrendingUp, BookUser, Layout, Columns2,
+  Calendar, CheckSquare,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import NotificationBell from '@/components/NotificationBell';
 
 const NAV_SUPER = [
   { to: '/admin/dashboard',          icon: LayoutDashboard, label: 'Dashboard' },
@@ -21,6 +23,8 @@ const NAV_SUPER = [
   { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
   { to: '/admin/documenti',          icon: FileText,        label: 'Documenti Standard' },
   { to: '/admin/template-documenti', icon: Layout,          label: 'Template Documenti' },
+  { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
+  { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/statistiche',        icon: BarChart3,       label: 'Statistiche' },
   { to: '/admin/utenti',             icon: UserCog,         label: 'Utenti' },
   { to: '/admin/miei-agenti',        icon: UsersRound,      label: 'Miei Agenti' },
@@ -36,12 +40,13 @@ const NAV_SEGRETERIA = [
   { to: '/admin/banche',             icon: Building2,       label: 'Banche' },
   { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
   { to: '/admin/template-documenti', icon: Layout,          label: 'Template Documenti' },
+  { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
+  { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/statistiche',        icon: BarChart3,       label: 'Statistiche' },
   { to: '/admin/miei-agenti',        icon: UsersRound,      label: 'Miei Agenti' },
   { to: '/admin/impostazioni',       icon: Settings,        label: 'Impostazioni' },
   { to: '/admin/profilo',            icon: UserCircle,      label: 'Profilo' },
 ];
-
 
 const NAV_AGENTE = [
   { to: '/admin/dashboard',          icon: LayoutDashboard, label: 'Dashboard' },
@@ -49,6 +54,8 @@ const NAV_AGENTE = [
   { to: '/admin/clienti',            icon: Users,           label: 'Clienti' },
   { to: '/admin/rubrica-lead',       icon: BookUser,        label: 'Rubrica Lead' },
   { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
+  { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
+  { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/miei-segnalatori',   icon: UsersRound,      label: 'Miei Segnalatori' },
   { to: '/admin/profilo',            icon: UserCircle,      label: 'Profilo' },
 ];
@@ -57,6 +64,7 @@ const NAV_SEGNALATORE = [
   { to: '/admin/segnalatore-dashboard', icon: TrendingUp,    label: 'Le Mie Statistiche' },
   { to: '/admin/clienti',               icon: Users,         label: 'Clienti' },
   { to: '/admin/kanban-banche',         icon: Columns2,      label: 'Kanban Banche' },
+  { to: '/admin/tasks',                 icon: CheckSquare,   label: 'Task' },
   { to: '/admin/profilo',               icon: UserCircle,    label: 'Profilo' },
 ];
 
@@ -78,7 +86,6 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Backup automatico al login per la segreteria
   useAutoBackup(user?.id, isSegreteria, !authLoading);
 
   const navItems =
@@ -89,8 +96,6 @@ export default function AdminLayout() {
 
   const handleSignOut = async () => {
     await signOut();
-    // reload() forza ricaricamento completo dell'app (azzera tutto lo stato React).
-    // replace('/#/login') cambiava solo la hash senza vero reload → user restava in memoria.
     window.location.reload();
   };
 
@@ -113,7 +118,7 @@ export default function AdminLayout() {
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <ShieldAlert className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="font-bold text-foreground text-sm">DocFlow</span>
+            <span className="font-bold text-foreground text-sm">Credifile</span>
           </div>
           <button className="lg:hidden text-muted-foreground hover:text-foreground" onClick={() => setSidebarOpen(false)}>
             <X className="w-5 h-5" />
@@ -156,11 +161,14 @@ export default function AdminLayout() {
       </aside>
 
       <div className="flex-1 lg:ml-64 flex flex-col min-h-screen">
-        <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card sticky top-0 z-10">
-          <button className="text-muted-foreground hover:text-foreground" onClick={() => setSidebarOpen(true)}>
+        {/* Header mobile */}
+        <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card sticky top-0 z-10">
+          <button className="lg:hidden text-muted-foreground hover:text-foreground" onClick={() => setSidebarOpen(true)}>
             <Menu className="w-5 h-5" />
           </button>
-          <span className="font-semibold text-foreground text-sm">DocFlow Finanziario</span>
+          <span className="font-semibold text-foreground text-sm lg:hidden">Credifile</span>
+          <div className="flex-1" />
+          <NotificationBell />
         </header>
         <main className="flex-1 p-4 sm:p-6">
           <Outlet />

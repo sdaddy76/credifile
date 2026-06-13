@@ -22,7 +22,8 @@ import AmlReportTab from '@/components/AmlReportTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
-  PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar, FileDown, ClipboardCopy, Layout
+  PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar, FileDown, ClipboardCopy, Layout,
+  CheckSquare, StickyNote, Pin
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
@@ -148,6 +149,93 @@ export default function PraticaDetailPage() {
       .order('created_at', { ascending: false });
     setActivityLogs(data ?? []);
     setLoadingActivity(false);
+  };
+
+  // ── NOTE INTERNE ─────────────────────────────────────────────────────────
+  interface PracticeNote { id: string; testo: string; autore_nome?: string; autore_ruolo?: string; pinned: boolean; created_at: string; }
+  const [notes, setNotes] = useState<PracticeNote[]>([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [newNoteText, setNewNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+
+  const loadNotes = async () => {
+    if (!id) return;
+    setLoadingNotes(true);
+    const { data } = await supabase.from('practice_notes').select('*').eq('practice_id', id).order('pinned', { ascending: false }).order('created_at', { ascending: false });
+    setNotes(data ?? []);
+    setLoadingNotes(false);
+  };
+
+  const addNote = async () => {
+    if (!newNoteText.trim() || !id) return;
+    setSavingNote(true);
+    const { data: profilo } = await supabase.from('admin_profiles').select('nome,ruolo').eq('id', user?.id ?? '').maybeSingle();
+    const { error } = await supabase.from('practice_notes').insert({
+      practice_id: id,
+      testo: newNoteText.trim(),
+      autore_id: user?.id,
+      autore_nome: profilo?.nome ?? user?.email,
+      autore_ruolo: profilo?.ruolo ?? null,
+    });
+    setSavingNote(false);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    setNewNoteText('');
+    loadNotes();
+    toast.success('Nota aggiunta');
+  };
+
+  const deleteNote = async (noteId: string) => {
+    if (!confirm('Eliminare questa nota?')) return;
+    await supabase.from('practice_notes').delete().eq('id', noteId);
+    setNotes(prev => prev.filter(n => n.id !== noteId));
+  };
+
+  const togglePinNote = async (noteId: string, pinned: boolean) => {
+    await supabase.from('practice_notes').update({ pinned: !pinned }).eq('id', noteId);
+    setNotes(prev => prev.map(n => n.id === noteId ? { ...n, pinned: !pinned } : n));
+  };
+
+  // ── TASK PRATICA ─────────────────────────────────────────────────────────
+  interface PracticeTask { id: string; titolo: string; descrizione?: string; stato: string; priorita: string; scadenza?: string; assegnato_nome?: string; created_at: string; }
+  const [practiceTasks, setPracticeTasks] = useState<PracticeTask[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [newTaskTitolo, setNewTaskTitolo] = useState('');
+  const [newTaskScadenza, setNewTaskScadenza] = useState('');
+  const [newTaskPriorita, setNewTaskPriorita] = useState('media');
+  const [savingTask, setSavingTask] = useState(false);
+
+  const loadPracticeTasks = async () => {
+    if (!id) return;
+    setLoadingTasks(true);
+    const { data } = await supabase.from('practice_tasks').select('*').eq('practice_id', id).order('scadenza', { ascending: true, nullsFirst: false }).order('priorita');
+    setPracticeTasks(data ?? []);
+    setLoadingTasks(false);
+  };
+
+  const addTask = async () => {
+    if (!newTaskTitolo.trim() || !id) return;
+    setSavingTask(true);
+    const { data: profilo } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
+    const { error } = await supabase.from('practice_tasks').insert({
+      practice_id: id,
+      titolo: newTaskTitolo.trim(),
+      priorita: newTaskPriorita,
+      scadenza: newTaskScadenza || null,
+      created_by: user?.id,
+      created_by_nome: profilo?.nome ?? user?.email,
+      assegnato_a: user?.id,
+      assegnato_nome: profilo?.nome ?? user?.email,
+    });
+    setSavingTask(false);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    setNewTaskTitolo(''); setNewTaskScadenza(''); setNewTaskPriorita('media');
+    loadPracticeTasks();
+    toast.success('Task aggiunto');
+  };
+
+  const updateTaskStato = async (taskId: string, stato: string) => {
+    await supabase.from('practice_tasks').update({ stato, ...(stato === 'completata' ? { completata_at: new Date().toISOString() } : {}) }).eq('id', taskId);
+    setPracticeTasks(prev => prev.map(t => t.id === taskId ? { ...t, stato } : t));
   };
 
   // ── 2. SCORE COMBINATO ───────────────────────────────────────────────────
@@ -1228,6 +1316,8 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="genera-doc" onClick={loadDocTemplates}>📝 Genera Doc</TabsTrigger>
               <TabsTrigger value="timeline" onClick={loadActivityLogs}>📋 Timeline</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
+              <TabsTrigger value="note" onClick={loadNotes}>💬 Note {notes.length > 0 ? `(${notes.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="task" onClick={loadPracticeTasks}>✅ Task {practiceTasks.filter(t=>t.stato!=='completata').length > 0 ? `(${practiceTasks.filter(t=>t.stato!=='completata').length})` : ''}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
@@ -2224,6 +2314,104 @@ export default function PraticaDetailPage() {
                 </div>
               )}
             </TabsContent>
+
+            {/* ── Tab Note Interne ── */}
+            <TabsContent value="note" className="mt-3 space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold flex items-center gap-1.5"><StickyNote className="w-4 h-4 text-purple-500"/>Note Interne</h3>
+                <span className="text-xs text-muted-foreground">Visibili solo al team interno</span>
+              </div>
+              {/* Aggiungi nota */}
+              <Card className="border-purple-100 bg-purple-50/30">
+                <CardContent className="pt-3 pb-3 space-y-2">
+                  <Textarea placeholder="Scrivi una nota interna..." value={newNoteText} onChange={e => setNewNoteText(e.target.value)} rows={3} className="resize-none text-sm" />
+                  <Button size="sm" onClick={addNote} disabled={savingNote || !newNoteText.trim()} className="gap-1.5">
+                    <Save className="w-3.5 h-3.5"/> {savingNote ? 'Salvataggio...' : 'Aggiungi Nota'}
+                  </Button>
+                </CardContent>
+              </Card>
+              {loadingNotes && <div className="flex justify-center py-6"><div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"/></div>}
+              {!loadingNotes && notes.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessuna nota interna
+                </div>
+              )}
+              {notes.map(note => (
+                <div key={note.id} className={`rounded-lg border p-3 space-y-1.5 ${note.pinned ? 'border-amber-200 bg-amber-50' : 'border-border bg-card'}`}>
+                  <p className="text-sm whitespace-pre-wrap">{note.testo}</p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {note.autore_nome && <span>👤 {note.autore_nome}</span>}
+                      {note.autore_ruolo && <span className="capitalize bg-muted px-1.5 py-0.5 rounded-full">{note.autore_ruolo}</span>}
+                      <span>{new Date(note.created_at).toLocaleString('it-IT', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => togglePinNote(note.id, note.pinned)} className="p-1 hover:bg-accent rounded" title={note.pinned ? 'Rimuovi pin' : 'Appunta'}>
+                        <Pin className={`w-3.5 h-3.5 ${note.pinned ? 'text-amber-500' : 'text-muted-foreground'}`}/>
+                      </button>
+                      <button onClick={() => deleteNote(note.id)} className="p-1 hover:bg-red-50 rounded" title="Elimina">
+                        <Trash2 className="w-3.5 h-3.5 text-red-400"/>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </TabsContent>
+
+            {/* ── Tab Task ── */}
+            <TabsContent value="task" className="mt-3 space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold flex items-center gap-1.5"><CheckSquare className="w-4 h-4 text-blue-500"/>Task</h3>
+              </div>
+              {/* Aggiungi task */}
+              <Card className="border-blue-100 bg-blue-50/30">
+                <CardContent className="pt-3 pb-3 space-y-2">
+                  <Input placeholder="Titolo task..." value={newTaskTitolo} onChange={e => setNewTaskTitolo(e.target.value)} className="text-sm"/>
+                  <div className="flex gap-2">
+                    <Input type="date" value={newTaskScadenza} onChange={e => setNewTaskScadenza(e.target.value)} className="text-sm flex-1"/>
+                    <Select value={newTaskPriorita} onValueChange={setNewTaskPriorita}>
+                      <SelectTrigger className="w-28 text-sm"><SelectValue/></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="alta">🔴 Alta</SelectItem>
+                        <SelectItem value="media">🟡 Media</SelectItem>
+                        <SelectItem value="bassa">🟢 Bassa</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button size="sm" onClick={addTask} disabled={savingTask || !newTaskTitolo.trim()} className="gap-1.5">
+                    <Plus className="w-3.5 h-3.5"/> {savingTask ? 'Salvataggio...' : 'Aggiungi Task'}
+                  </Button>
+                </CardContent>
+              </Card>
+              {loadingTasks && <div className="flex justify-center py-6"><div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"/></div>}
+              {!loadingTasks && practiceTasks.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  <CheckSquare className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessun task per questa pratica
+                </div>
+              )}
+              {practiceTasks.map(task => {
+                const today = new Date().toISOString().split('T')[0];
+                const isScaduto = task.scadenza && task.scadenza < today && task.stato !== 'completata';
+                return (
+                  <div key={task.id} className={`flex items-start gap-3 p-3 rounded-lg border ${isScaduto ? 'border-red-200 bg-red-50' : 'border-border'}`}>
+                    <button onClick={() => updateTaskStato(task.id, task.stato === 'completata' ? 'aperta' : 'completata')}
+                      className={`mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${task.stato === 'completata' ? 'bg-green-500 border-green-500' : 'border-border hover:border-primary'}`}>
+                      {task.stato === 'completata' && <CheckCircle className="w-3 h-3 text-white"/>}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${task.stato === 'completata' ? 'line-through text-muted-foreground' : ''}`}>{task.titolo}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap text-xs text-muted-foreground">
+                        <span className={`px-1.5 py-0.5 rounded-full font-medium ${task.priorita === 'alta' ? 'bg-red-100 text-red-700' : task.priorita === 'media' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>{task.priorita}</span>
+                        {task.scadenza && <span className={isScaduto ? 'text-red-600 font-semibold' : ''}><Clock className="w-3 h-3 inline mr-0.5"/>{new Date(task.scadenza+'T00:00:00').toLocaleDateString('it-IT')}{isScaduto && ' ⚠'}</span>}
+                        {task.assegnato_nome && <span>👤 {task.assegnato_nome}</span>}
+                      </div>
+                    </div>
+                    <Badge className={`text-[10px] shrink-0 ${task.stato === 'completata' ? 'bg-green-100 text-green-800' : task.stato === 'in_corso' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>{task.stato.replace('_',' ')}</Badge>
+                  </div>
+                );
+              })}
+            </TabsContent>
+
           </Tabs>
         </div>
       </div>
