@@ -1200,11 +1200,22 @@ export default function PraticaDetailPage() {
               {client?.telefono && <div><p className="text-muted-foreground text-xs">Telefono</p>
                 <div className="flex items-center gap-2">
                   <p>{client.telefono}</p>
-                  <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1 px-2 text-emerald-600 border-emerald-300 hover:bg-emerald-50" onClick={() => sendWhatsApp(client!.telefono!)} disabled={sendingWA}>
-                    <Phone className="w-2.5 h-2.5" />{sendingWA ? '...' : 'WhatsApp'}
-                  </Button>
                 </div>
               </div>}
+              {/* Bottone WhatsApp — sempre visibile, disabilitato se manca il telefono */}
+              <div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={`h-7 text-xs gap-1.5 px-2.5 w-full justify-center mt-1 ${client?.telefono ? 'text-emerald-600 border-emerald-300 hover:bg-emerald-50' : 'text-muted-foreground border-dashed'}`}
+                  onClick={() => client?.telefono ? sendWhatsApp(client.telefono) : toast.error('Aggiungi il numero di telefono nella scheda cliente per usare WhatsApp')}
+                  disabled={sendingWA}
+                  title={client?.telefono ? `Invia WhatsApp a ${client.telefono}` : 'Nessun numero di telefono — modifica la scheda cliente'}
+                >
+                  <Phone className="w-3 h-3" />
+                  {sendingWA ? 'Invio...' : client?.telefono ? 'Invia WhatsApp' : 'WhatsApp (n° mancante)'}
+                </Button>
+              </div>
               {bank && <div><p className="text-muted-foreground text-xs">Banca</p><p className="flex items-center gap-1"><Building2 className="w-3 h-3" />{bank.nome}</p></div>}
               {practice.importo_richiesto && <div><p className="text-muted-foreground text-xs">Importo</p><p className="flex items-center gap-1 font-semibold"><Euro className="w-3 h-3" />{practice.importo_richiesto.toLocaleString('it-IT')}</p></div>}
               <div>
