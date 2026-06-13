@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   FileText, CheckCircle2, XCircle, Clock, RefreshCw,
-  TrendingUp, BarChart3, Activity,
+  TrendingUp, BarChart3, Activity, Banknote,
 } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS, type PracticeStatus } from '@/lib/types';
 
@@ -16,6 +16,17 @@ interface PraticaRiepilogo {
   status: PracticeStatus;
   created_at: string;
   clients: { ragione_sociale: string } | null;
+}
+
+interface Commissione {
+  id: string;
+  practice_id: string;
+  importo: number;
+  stato: string;
+  data_maturazione?: string;
+  data_liquidazione?: string;
+  note?: string;
+  practices?: { numero_pratica: string; clients?: { ragione_sociale: string } | null } | null;
 }
 
 interface StatusCount {
@@ -127,18 +138,27 @@ function BarChart({ data, maxVal }: { data: StatusCount[]; maxVal: number }) {
 export default function SegnalatoreDashboardPage() {
   const { user } = useAuth();
   const [pratiche, setPratiche] = useState<PraticaRiepilogo[]>([]);
+  const [commissioni, setCommissioni] = useState<Commissione[]>([]);
   const [loading,  setLoading]  = useState(true);
 
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('practices')
-      .select('id, numero_pratica, status, created_at, clients(ragione_sociale)')
-      .eq('segnalatore_id', user.id)
-      .order('created_at', { ascending: false });
+    const [{ data, error }, { data: comm }] = await Promise.all([
+      supabase
+        .from('practices')
+        .select('id, numero_pratica, status, created_at, clients(ragione_sociale)')
+        .eq('segnalatore_id', user.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('segnalatore_commissions')
+        .select('id, practice_id, importo, stato, data_maturazione, data_liquidazione, note, practices(numero_pratica, clients(ragione_sociale))')
+        .eq('segnalatore_id', user.id)
+        .order('data_maturazione', { ascending: false }),
+    ]);
 
     if (!error) setPratiche((data ?? []) as unknown as PraticaRiepilogo[]);
+    setCommissioni((comm ?? []) as unknown as Commissione[]);
     setLoading(false);
   }, [user]);
 
@@ -176,6 +196,12 @@ export default function SegnalatoreDashboardPage() {
 
   // Ultime 5 pratiche
   const ultime5 = pratiche.slice(0, 5);
+
+  // Calcoli commissioni
+  const totaleMaturato = commissioni.reduce((s, c) => s + (c.importo ?? 0), 0);
+  const liquidato = commissioni.filter(c => c.stato === 'liquidata').reduce((s, c) => s + (c.importo ?? 0), 0);
+  const daLiquidare = commissioni.filter(c => c.stato !== 'liquidata').reduce((s, c) => s + (c.importo ?? 0), 0);
+  const fmtEur = (v: number) => v.toLocaleString('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
 
   // KPI rapidi
   const approvate  = countByStatus['approvata']  ?? 0;
@@ -312,6 +338,52 @@ export default function SegnalatoreDashboardPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* ── Commissioni ──────────────────────────────────────────────── */}
+          <Card className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Banknote className="w-4 h-4 text-primary" />
+                Le Mie Commissioni
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pb-4 space-y-4">
+              {/* KPI commissioni */}
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: 'Totale Maturato', value: fmtEur(totaleMaturato), cls: 'text-primary bg-primary/10' },
+                  { label: 'Liquidato',        value: fmtEur(liquidato),       cls: 'text-emerald-600 bg-emerald-50' },
+                  { label: 'Da Liquidare',     value: fmtEur(daLiquidare),     cls: 'text-amber-600 bg-amber-50' },
+                ].map(k => (
+                  <div key={k.label} className={`rounded-xl p-3 ${k.cls.split(' ')[1]}`}>
+                    <p className={`text-sm font-black ${k.cls.split(' ')[0]}`}>{k.value}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{k.label}</p>
+                  </div>
+                ))}
+              </div>
+              {/* Elenco commissioni */}
+              {commissioni.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">Nessuna commissione registrata</p>
+              ) : (
+                <div className="divide-y divide-border">
+                  {commissioni.slice(0, 8).map(c => (
+                    <div key={c.id} className="flex items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium truncate">{c.practices?.clients?.ragione_sociale ?? '—'}</p>
+                        <p className="text-[10px] text-muted-foreground font-mono">{c.practices?.numero_pratica ?? c.practice_id.slice(0,8)}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-0.5 shrink-0">
+                        <span className="text-sm font-bold text-foreground">{fmtEur(c.importo)}</span>
+                        <Badge className={`text-[10px] py-0 ${c.stato === 'liquidata' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
+                          {c.stato}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* ── Ultima attività: ultime 5 pratiche ────────────────────────── */}
           <Card className="border-border">

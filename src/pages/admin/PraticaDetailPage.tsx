@@ -23,7 +23,7 @@ import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
   PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar, FileDown, ClipboardCopy, Layout,
-  CheckSquare, StickyNote, Pin
+  CheckSquare, StickyNote, Pin, ListChecks, Phone
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
@@ -249,6 +249,64 @@ export default function PraticaDetailPage() {
     const { data } = await supabase.from('email_send_log').select('*').eq('practice_id', id).order('created_at', { ascending: false });
     setEmailLogs(data ?? []);
     setLoadingEmailLog(false);
+  };
+
+  // ── CHECKLIST DOCUMENTALE ────────────────────────────────────────────────
+  interface ChecklistItem { id: string; template_item_id?: string; nome: string; obbligatorio: boolean; completata: boolean; ordine: number; }
+  interface ChecklistTpl { id: string; nome: string; tipo_pratica?: string; }
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+  const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTpl[]>([]);
+  const [loadingChecklist, setLoadingChecklist] = useState(false);
+  const [selectedTplId, setSelectedTplId] = useState('');
+
+  const loadChecklist = async () => {
+    if (!id) return;
+    setLoadingChecklist(true);
+    const [{ data: items }, { data: tpls }] = await Promise.all([
+      supabase.from('practice_checklist_items').select('*').eq('practice_id', id).order('ordine'),
+      supabase.from('checklist_templates').select('id, nome, tipo_pratica').eq('attivo', true).order('nome'),
+    ]);
+    setChecklistItems((items ?? []) as ChecklistItem[]);
+    setChecklistTemplates((tpls ?? []) as ChecklistTpl[]);
+    setLoadingChecklist(false);
+  };
+
+  const applyTemplate = async () => {
+    if (!selectedTplId || !id) return;
+    const { data: tplItems } = await supabase.from('checklist_template_items').select('*').eq('template_id', selectedTplId).order('ordine');
+    if (!tplItems?.length) { toast.error('Template vuoto'); return; }
+    const rows = tplItems.map(i => ({ practice_id: id, template_item_id: i.id, nome: i.nome, obbligatorio: i.obbligatorio, ordine: i.ordine, completata: false }));
+    const { error } = await supabase.from('practice_checklist_items').insert(rows);
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    toast.success('Template applicato');
+    loadChecklist();
+  };
+
+  const toggleChecklistItem = async (itemId: string, completata: boolean) => {
+    await supabase.from('practice_checklist_items').update({ completata: !completata }).eq('id', itemId);
+    setChecklistItems(prev => prev.map(i => i.id === itemId ? { ...i, completata: !completata } : i));
+  };
+
+  const deleteChecklistItem = async (itemId: string) => {
+    await supabase.from('practice_checklist_items').delete().eq('id', itemId);
+    setChecklistItems(prev => prev.filter(i => i.id !== itemId));
+  };
+
+  // ── WHATSAPP ─────────────────────────────────────────────────────────────
+  const [sendingWA, setSendingWA] = useState(false);
+
+  const sendWhatsApp = async (telefono: string) => {
+    if (!telefono) { toast.error('Numero di telefono non disponibile'); return; }
+    const msg = prompt('Messaggio WhatsApp da inviare al cliente:', `Gentile cliente, la sua pratica n° ${practice.numero_pratica} è in stato: ${practice.status}. Per informazioni contatti il suo consulente.`);
+    if (!msg) return;
+    setSendingWA(true);
+    try {
+      const res = await fetch('/api/send-whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: telefono, message: msg, practice_numero: practice.numero_pratica, cliente: client?.ragione_sociale }) });
+      const data = await res.json();
+      if (data.success) toast.success('WhatsApp inviato ✓');
+      else toast.error('Errore WhatsApp: ' + (data.error ?? 'sconosciuto'));
+    } catch { toast.error('Errore di rete'); }
+    setSendingWA(false);
   };
 
   // ── 2. SCORE COMBINATO ───────────────────────────────────────────────────
@@ -1139,7 +1197,14 @@ export default function PraticaDetailPage() {
               <div><p className="text-muted-foreground text-xs">Ragione Sociale</p><p className="font-medium">{client?.ragione_sociale}</p></div>
               <div><p className="text-muted-foreground text-xs">Email</p><p>{client?.email}</p></div>
               {client?.piva && <div><p className="text-muted-foreground text-xs">P.IVA</p><p className="font-mono">{client.piva}</p></div>}
-              {client?.telefono && <div><p className="text-muted-foreground text-xs">Telefono</p><p>{client.telefono}</p></div>}
+              {client?.telefono && <div><p className="text-muted-foreground text-xs">Telefono</p>
+                <div className="flex items-center gap-2">
+                  <p>{client.telefono}</p>
+                  <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1 px-2 text-emerald-600 border-emerald-300 hover:bg-emerald-50" onClick={() => sendWhatsApp(client!.telefono!)} disabled={sendingWA}>
+                    <Phone className="w-2.5 h-2.5" />{sendingWA ? '...' : 'WhatsApp'}
+                  </Button>
+                </div>
+              </div>}
               {bank && <div><p className="text-muted-foreground text-xs">Banca</p><p className="flex items-center gap-1"><Building2 className="w-3 h-3" />{bank.nome}</p></div>}
               {practice.importo_richiesto && <div><p className="text-muted-foreground text-xs">Importo</p><p className="flex items-center gap-1 font-semibold"><Euro className="w-3 h-3" />{practice.importo_richiesto.toLocaleString('it-IT')}</p></div>}
               <div>
@@ -1332,6 +1397,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="note" onClick={loadNotes}>💬 Note {notes.length > 0 ? `(${notes.length})` : ''}</TabsTrigger>
               <TabsTrigger value="task" onClick={loadPracticeTasks}>✅ Task {practiceTasks.filter(t=>t.stato!=='completata').length > 0 ? `(${practiceTasks.filter(t=>t.stato!=='completata').length})` : ''}</TabsTrigger>
               <TabsTrigger value="email-log" onClick={loadEmailLog}>📧 Email Inviate</TabsTrigger>
+              <TabsTrigger value="checklist" onClick={loadChecklist}>📋 Checklist {checklistItems.length > 0 ? `(${checklistItems.filter(i=>i.completata).length}/${checklistItems.length})` : ''}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
@@ -2457,6 +2523,60 @@ export default function PraticaDetailPage() {
                     {log.sent_by_nome && <span>👤 {log.sent_by_nome}</span>}
                     <span className="flex items-center gap-1"><Clock className="w-3 h-3"/>{new Date(log.created_at).toLocaleString('it-IT', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
                   </div>
+                </div>
+              ))}
+            </TabsContent>
+
+            {/* ── CHECKLIST DOCUMENTALE ──────────────────────────────────── */}
+            <TabsContent value="checklist" className="mt-3 space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold flex items-center gap-1.5"><ListChecks className="w-4 h-4 text-blue-500"/>Checklist Documentale</h3>
+                <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={loadChecklist} disabled={loadingChecklist}>
+                  <RefreshCw className={`w-3 h-3 ${loadingChecklist ? 'animate-spin' : ''}`}/> Aggiorna
+                </Button>
+              </div>
+
+              {/* Applica template */}
+              {checklistTemplates.length > 0 && (
+                <div className="flex gap-2 items-center p-3 bg-muted/30 rounded-lg">
+                  <select className="flex-1 h-8 rounded-md border border-input bg-background px-2 text-xs" value={selectedTplId} onChange={e => setSelectedTplId(e.target.value)}>
+                    <option value="">— Seleziona template da applicare —</option>
+                    {checklistTemplates.map(t => <option key={t.id} value={t.id}>{t.nome}{t.tipo_pratica ? ` (${t.tipo_pratica})` : ''}</option>)}
+                  </select>
+                  <Button size="sm" className="h-8 text-xs gap-1.5" onClick={applyTemplate} disabled={!selectedTplId}>
+                    <Plus className="w-3 h-3"/> Applica
+                  </Button>
+                </div>
+              )}
+
+              {/* Riepilogo completamento */}
+              {checklistItems.length > 0 && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
+                  <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
+                    <div className="h-1.5 rounded-full bg-emerald-500 transition-all duration-500"
+                      style={{ width: `${(checklistItems.filter(i=>i.completata).length / checklistItems.length) * 100}%` }} />
+                  </div>
+                  <span className="shrink-0 font-medium">{checklistItems.filter(i=>i.completata).length}/{checklistItems.length} completati</span>
+                </div>
+              )}
+
+              {/* Lista voci */}
+              {loadingChecklist && <div className="flex justify-center py-6"><div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"/></div>}
+              {!loadingChecklist && checklistItems.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  <ListChecks className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessuna voce — applica un template o aggiunge voci manualmente
+                </div>
+              )}
+              {checklistItems.map(item => (
+                <div key={item.id} className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${item.completata ? 'bg-emerald-50/50 border-emerald-200' : 'border-border'}`}>
+                  <button onClick={() => toggleChecklistItem(item.id, item.completata)} className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${item.completata ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground/40 hover:border-primary'}`}>
+                    {item.completata && <CheckCircle className="w-3 h-3 text-white"/>}
+                  </button>
+                  <span className={`flex-1 text-sm ${item.completata ? 'line-through text-muted-foreground' : ''}`}>{item.nome}</span>
+                  {item.obbligatorio && <Badge className="text-[10px] bg-red-100 text-red-700 shrink-0">Obbl.</Badge>}
+                  <button onClick={() => deleteChecklistItem(item.id)} className="p-1 hover:bg-red-50 rounded text-red-400 shrink-0">
+                    <Trash2 className="w-3 h-3"/>
+                  </button>
                 </div>
               ))}
             </TabsContent>

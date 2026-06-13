@@ -23,6 +23,7 @@ import TemplateDocumentiPage from "@/pages/admin/TemplateDocumentiPage";
 import KanbanBanchePage from "@/pages/admin/KanbanBanchePage";
 import CalendarioPage from "@/pages/admin/CalendarioPage";
 import TasksPage from "@/pages/admin/TasksPage";
+import ChecklistTemplatePage from "@/pages/admin/ChecklistTemplatePage";
 import ClientAccessPage from "@/pages/client/ClientAccessPage";
 import ClientPortalPage from "@/pages/client/ClientPortalPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
@@ -97,6 +98,7 @@ const App = () => (
             <Route path="kanban-banche"              element={<KanbanBanchePage />} />
             <Route path="calendario"                 element={<CalendarioPage />} />
             <Route path="tasks"                      element={<TasksPage />} />
+            <Route path="checklist-template"         element={<ChecklistTemplatePage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
