@@ -4,6 +4,9 @@ import type { User, Session } from '@supabase/supabase-js';
 
 export type UserRole = 'super_admin' | 'agente' | 'supervisore_segreteria' | 'segnalatore' | 'consulente' | 'banca' | null;
 
+// Email protette: il ruolo super_admin è garantito anche in caso di timeout/errore DB
+const PROTECTED_SUPER_ADMINS = ['stefano@daddino.com'];
+
 interface AuthProfile {
   ruolo: UserRole;
   nome?: string;
@@ -16,9 +19,13 @@ export function useAuth() {
   const [role, setRole] = useState<UserRole>(null);
   const [profileNome, setProfileNome] = useState<string | null>(null);
 
-  async function fetchRole(userId: string): Promise<void> {
+  async function fetchRole(userId: string, userEmail?: string | null): Promise<void> {
+    // Protezione frontend: se l'email è nell'elenco protetto, forza super_admin
+    // indipendentemente da quello che restituisce il DB (la vera protezione è il trigger DB)
+    const isProtected = userEmail && PROTECTED_SUPER_ADMINS.includes(userEmail.toLowerCase());
+
     try {
-      // Timeout: se la query admin_profiles non risponde in 6s, fallback ad 'agente'
+      // Timeout: se la query admin_profiles non risponde in 6s, fallback
       const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000));
       const query = supabase
         .from('admin_profiles')
@@ -31,11 +38,13 @@ export function useAuth() {
         timeout,
       ]);
 
-      setRole(data?.ruolo ?? 'agente');
+      // Se email protetta, ignora il ruolo dal DB e forza super_admin
+      const resolvedRole: UserRole = isProtected ? 'super_admin' : (data?.ruolo ?? 'agente');
+      setRole(resolvedRole);
       setProfileNome(data?.nome ?? null);
     } catch {
-      // Su errori di rete fallback sicuro
-      setRole('agente');
+      // Su errori di rete: email protetta → super_admin, altrimenti fallback sicuro a null
+      setRole(isProtected ? 'super_admin' : null);
     }
   }
 
@@ -49,7 +58,7 @@ export function useAuth() {
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
-          fetchRole(session.user.id).finally(() => {
+          fetchRole(session.user.id, session.user.email).finally(() => {
             clearTimeout(safetyTimer);
             setLoading(false);
           });
@@ -69,7 +78,7 @@ export function useAuth() {
       if (session?.user) {
         // Non blocchiamo il loading qui (già gestito da getSession),
         // ma aggiorniamo ruolo se cambia sessione
-        fetchRole(session.user.id).finally(() => setLoading(false));
+        fetchRole(session.user.id, session.user.email).finally(() => setLoading(false));
       } else {
         setRole(null);
         setProfileNome(null);
