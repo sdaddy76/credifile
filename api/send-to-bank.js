@@ -359,6 +359,25 @@ ${repSection}
       },
     );
 
+    // 10. Log storico email_send_log
+    await fetch(`${SUPABASE_URL}/rest/v1/email_send_log`, {
+      method: 'POST',
+      headers: { ...H, Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        practice_id,
+        bank_id,
+        bank_nome: bank?.nome ?? null,
+        destinatari: [bankEmail],
+        cc: ccList.length > 0 ? ccList : null,
+        bcc: bccList.length > 0 ? bccList : null,
+        oggetto: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
+        stato: 'inviata',
+        sent_by: pratica.agent?.id ?? null,
+        sent_by_nome: pratica.agent?.nome ?? null,
+        resend_id: emailBody?.id ?? null,
+      }),
+    }).catch(() => null); // Non blocca se il log fallisce
+
     return res.status(200).json({
       success: true,
       sent_to: bankEmail,

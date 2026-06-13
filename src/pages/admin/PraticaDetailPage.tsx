@@ -238,6 +238,19 @@ export default function PraticaDetailPage() {
     setPracticeTasks(prev => prev.map(t => t.id === taskId ? { ...t, stato } : t));
   };
 
+  // ── STORICO EMAIL BANCHE ─────────────────────────────────────────────────
+  interface EmailLog { id: string; bank_nome?: string; destinatari?: string[]; cc?: string[]; oggetto?: string; stato: string; sent_by_nome?: string; created_at: string; }
+  const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
+  const [loadingEmailLog, setLoadingEmailLog] = useState(false);
+
+  const loadEmailLog = async () => {
+    if (!id) return;
+    setLoadingEmailLog(true);
+    const { data } = await supabase.from('email_send_log').select('*').eq('practice_id', id).order('created_at', { ascending: false });
+    setEmailLogs(data ?? []);
+    setLoadingEmailLog(false);
+  };
+
   // ── 2. SCORE COMBINATO ───────────────────────────────────────────────────
   const [scoreBancabilita, setScoreBancabilita] = useState<number | null>(null);
   const [scoreReputazione, setScoreReputazione] = useState<number | null>(null);
@@ -1318,6 +1331,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
               <TabsTrigger value="note" onClick={loadNotes}>💬 Note {notes.length > 0 ? `(${notes.length})` : ''}</TabsTrigger>
               <TabsTrigger value="task" onClick={loadPracticeTasks}>✅ Task {practiceTasks.filter(t=>t.stato!=='completata').length > 0 ? `(${practiceTasks.filter(t=>t.stato!=='completata').length})` : ''}</TabsTrigger>
+              <TabsTrigger value="email-log" onClick={loadEmailLog}>📧 Email Inviate</TabsTrigger>
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
@@ -2410,6 +2424,41 @@ export default function PraticaDetailPage() {
                   </div>
                 );
               })}
+            </TabsContent>
+
+            {/* ── Tab Storico Email Inviate ── */}
+            <TabsContent value="email-log" className="mt-3 space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold flex items-center gap-1.5"><Mail className="w-4 h-4 text-blue-500"/>Storico Email Inviate alle Banche</h3>
+                <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={loadEmailLog} disabled={loadingEmailLog}>
+                  <RefreshCw className={`w-3 h-3 ${loadingEmailLog ? 'animate-spin' : ''}`}/> Aggiorna
+                </Button>
+              </div>
+              {loadingEmailLog && <div className="flex justify-center py-6"><div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"/></div>}
+              {!loadingEmailLog && emailLogs.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  <Mail className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessuna email inviata per questa pratica
+                </div>
+              )}
+              {emailLogs.map(log => (
+                <div key={log.id} className="rounded-lg border border-border p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{log.bank_nome ?? 'Banca'}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{log.oggetto}</p>
+                    </div>
+                    <Badge className={`text-[10px] shrink-0 ${log.stato === 'inviata' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                      {log.stato}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                    {log.destinatari && <span>A: {log.destinatari.join(', ')}</span>}
+                    {log.cc && log.cc.length > 0 && <span>CC: {log.cc.join(', ')}</span>}
+                    {log.sent_by_nome && <span>👤 {log.sent_by_nome}</span>}
+                    <span className="flex items-center gap-1"><Clock className="w-3 h-3"/>{new Date(log.created_at).toLocaleString('it-IT', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+                  </div>
+                </div>
+              ))}
             </TabsContent>
 
           </Tabs>
