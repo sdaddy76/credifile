@@ -309,7 +309,20 @@ export default function PraticaDetailPage() {
     setSendingWA(false);
   };
 
-  // ── 2. SCORE COMBINATO ───────────────────────────────────────────────────
+  // Fire-and-forget: invia WhatsApp automatico senza bloccare il flusso principale
+  const inviaWhatsAppAuto = (telefono: string | undefined | null, messaggio: string) => {
+    if (!telefono) return; // silenzioso se manca il numero
+    fetch('/api/send-whatsapp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: telefono,
+        message: messaggio,
+        practice_numero: practice?.numero_pratica,
+        cliente: client?.ragione_sociale,
+      }),
+    }).catch(() => { /* ignora errori di rete — non bloccare il flusso */ });
+  };
   const [scoreBancabilita, setScoreBancabilita] = useState<number | null>(null);
   const [scoreReputazione, setScoreReputazione] = useState<number | null>(null);
   const [segreteriaDiCompetenza, setSegreteriaDiCompetenza] = useState<{nome?: string; email: string} | null>(null);
@@ -935,6 +948,11 @@ export default function PraticaDetailPage() {
       metadata: { old_status: practice.status, new_status: newStatus },
     });
     toast.success('Stato aggiornato');
+    // WhatsApp automatico al cliente se ha il telefono
+    inviaWhatsAppAuto(
+      client?.telefono,
+      `Gentile ${client?.ragione_sociale ?? 'Cliente'},\n\nla sua pratica n° ${practice.numero_pratica} è passata allo stato: *${STATUS_LABELS[newStatus as keyof typeof STATUS_LABELS] ?? newStatus}*.\n\nPer informazioni contatti il suo consulente.`
+    );
     setSaving(false);
     setShowStatusChange(false);
     setStatusNote('');
@@ -1043,6 +1061,12 @@ export default function PraticaDetailPage() {
       toast.success('Integrazione richiesta — stato pratica aggiornato');
       if (clientEmail && !accessCode) toast.info('Nota: nessun codice accesso attivo, email non inviata');
     }
+
+    // WhatsApp automatico al cliente se ha il telefono
+    inviaWhatsAppAuto(
+      client?.telefono,
+      `Gentile ${client?.ragione_sociale ?? 'Cliente'},\n\nle è stata richiesta un'integrazione documenti per la pratica n° ${practice?.numero_pratica}:\n\n📄 *${integrationName}*\n\nAcceda al portale per caricare i documenti.`
+    );
 
     setSaving(false);
     setShowIntegration(false);
