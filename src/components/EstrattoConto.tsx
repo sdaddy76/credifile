@@ -8,6 +8,219 @@ import { Separator } from '@/components/ui/separator';
 import { Upload, Trash2, RefreshCw, TrendingUp, TrendingDown, AlertCircle, FileText, Users, Building2, Receipt, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import * as XLSX from 'xlsx';
+
+/* ─────────────────────────────────────────────
+   CSV / XLS PARSING
+───────────────────────────────────────────── */
+
+/** Normalizza una stringa header per il confronto */
+function normHdr(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+/** Parser CSV robusto: gestisce separatori , e ; e campi quoted */
+function parseCsvText(text: string): string[][] {
+  // Rimuove BOM (UTF-8 con BOM da Excel)
+  const clean = text.replace(/^\uFEFF/, '');
+  // Auto-detect separatore: conta ; vs , nella prima riga
+  const firstLine = clean.split('\n')[0] ?? '';
+  const sep = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
+
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuote = false;
+
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
+    if (inQuote) {
+      if (ch === '"') {
+        if (clean[i + 1] === '"') { field += '"'; i++; } // escaped quote
+        else inQuote = false;
+      } else {
+        field += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuote = true;
+      } else if (ch === sep) {
+        row.push(field.trim());
+        field = '';
+      } else if (ch === '\n') {
+        row.push(field.trim());
+        if (row.some(c => c !== '')) rows.push(row);
+        row = [];
+        field = '';
+        if (clean[i + 1] === '\r') i++; // CRLF
+      } else if (ch === '\r') {
+        // skip bare CR
+      } else {
+        field += ch;
+      }
+    }
+  }
+  if (field || row.length) { row.push(field.trim()); if (row.some(c => c !== '')) rows.push(row); }
+  return rows;
+}
+
+interface ColMap {
+  date?: number;       // data operazione/valuta
+  date2?: number;      // seconda data (valuta o contabile)
+  desc?: number;       // descrizione/causale
+  dare?: number;       // addebito/uscita/dare
+  avere?: number;      // accredito/entrata/avere
+  importo?: number;    // importo unico con segno
+  saldo?: number;      // saldo progressivo
+}
+
+/** Rileva automaticamente le colonne di un estratto conto italiano */
+function detectColumns(headers: string[]): ColMap {
+  const nh = headers.map(normHdr);
+  const col: ColMap = {};
+
+  nh.forEach((h, i) => {
+    // Date
+    if (col.date === undefined && (h.includes('data op') || h.includes('data cont') || h === 'data' || h.startsWith('data ') || h === 'date')) col.date = i;
+    else if (col.date2 === undefined && (h.includes('data val') || h.includes('valuta') || h === 'data valuta')) col.date2 = i;
+
+    // Descrizione
+    if (col.desc === undefined && (h.includes('descriz') || h.includes('causal') || h.includes('movim') || h.includes('operaz') || h === 'nota' || h === 'dettaglio' || h.includes('dett'))) col.desc = i;
+
+    // Dare (uscita)
+    if (col.dare === undefined && (h === 'dare' || h.includes('addeb') || h === 'uscite' || h === 'uscita' || h.includes('debit') || h.includes('pagam'))) col.dare = i;
+
+    // Avere (entrata)
+    if (col.avere === undefined && (h === 'avere' || h.includes('accred') || h === 'entrate' || h === 'entrata' || h.includes('credit'))) col.avere = i;
+
+    // Importo unico
+    if (col.importo === undefined && !col.dare && !col.avere &&
+        (h === 'importo' || h === 'importo (eur)' || h === 'importo eur' || h === 'amount' || h === 'valore' || h.startsWith('importo'))) col.importo = i;
+
+    // Saldo
+    if (col.saldo === undefined && (h.includes('saldo') || h === 'balance')) col.saldo = i;
+  });
+
+  return col;
+}
+
+/** Converte un importo testuale italiano ("1.234,56" o "-1234.56") in numero */
+function parseNum(s: string): number {
+  if (!s) return 0;
+  // Rimuove simboli valuta e spazi
+  let t = s.replace(/[€$£\s]/g, '').replace(/'/g, '');
+  // Formato italiano: 1.234,56
+  if (/\d,\d{2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+  // Formato anglosassone: 1,234.56 — già OK per parseFloat
+  const n = parseFloat(t);
+  return isNaN(n) ? 0 : n;
+}
+
+/** Converte righe tabellari in Transazioni usando la ColMap */
+function righeToTransazioni(
+  rows: string[][],
+  col: ColMap,
+  fileName: string,
+  practiceId: string,
+): Transazione[] {
+  const result: Transazione[] = [];
+
+  for (const row of rows) {
+    if (row.length < 2) continue;
+
+    // Descrizione
+    const desc = col.desc !== undefined ? row[col.desc] ?? '' : row.slice(1).join(' ');
+    if (!desc.trim()) continue;
+
+    // Data
+    let dataStr: string | undefined;
+    const rawDate = col.date !== undefined ? row[col.date] : undefined;
+    if (rawDate) {
+      // Tenta parsing date in vari formati
+      const mIT = /(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})/.exec(rawDate);
+      const mISO = /(\d{4})[.\-](\d{2})[.\-](\d{2})/.exec(rawDate);
+      if (mISO) dataStr = `${mISO[1]}-${mISO[2]}-${mISO[3]}`;
+      else if (mIT) {
+        const a = mIT[3].length === 2 ? `20${mIT[3]}` : mIT[3];
+        dataStr = `${a}-${mIT[2].padStart(2,'0')}-${mIT[1].padStart(2,'0')}`;
+      }
+    }
+
+    // Importo e tipo
+    let importoAbs = 0;
+    let tipo: 'entrata' | 'uscita' = 'altro' as any;
+
+    if (col.dare !== undefined && col.avere !== undefined) {
+      const dare = Math.abs(parseNum(row[col.dare] ?? ''));
+      const avere = Math.abs(parseNum(row[col.avere] ?? ''));
+      if (dare > 0) { importoAbs = dare; tipo = 'uscita'; }
+      else if (avere > 0) { importoAbs = avere; tipo = 'entrata'; }
+      else continue; // riga senza importo
+    } else if (col.importo !== undefined) {
+      const val = parseNum(row[col.importo] ?? '');
+      if (val === 0) continue;
+      importoAbs = Math.abs(val);
+      tipo = val >= 0 ? 'entrata' : 'uscita';
+    } else {
+      // Fallback: cerca il primo numero nella riga
+      for (const cell of row) {
+        const v = parseNum(cell);
+        if (Math.abs(v) > 0.005) { importoAbs = Math.abs(v); tipo = v >= 0 ? 'entrata' : 'uscita'; break; }
+      }
+      if (importoAbs === 0) continue;
+    }
+
+    // Saldo
+    const saldo = col.saldo !== undefined ? Math.abs(parseNum(row[col.saldo] ?? '')) || undefined : undefined;
+
+    const categoria = classificaTransazione(desc, tipo);
+
+    result.push({
+      practice_id: practiceId,
+      data_valuta: dataStr,
+      importo: importoAbs,
+      tipo,
+      categoria,
+      descrizione: desc.substring(0, 200),
+      saldo_progressivo: saldo,
+      file_nome: fileName,
+    });
+  }
+  return result;
+}
+
+/** Legge un file CSV (testo) e restituisce le transazioni */
+function parseCsvFile(text: string, fileName: string, practiceId: string): Transazione[] {
+  const rows = parseCsvText(text);
+  if (rows.length < 2) return [];
+  const headers = rows[0];
+  const col = detectColumns(headers);
+  // Se non troviamo nessuna colonna utile, proviamo a considerare che la prima riga sia già dati
+  if (col.date === undefined && col.importo === undefined && col.dare === undefined) {
+    // Prova senza header (raw numeric scan)
+    return [];
+  }
+  return righeToTransazioni(rows.slice(1), col, fileName, practiceId);
+}
+
+/** Legge un file XLS/XLSX con SheetJS e restituisce le transazioni */
+function parseXlsxFile(arrayBuffer: ArrayBuffer, fileName: string, practiceId: string): Transazione[] {
+  const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  // Converte in array di array (AOA)
+  const aoa: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' }) as string[][];
+  if (aoa.length < 2) return [];
+
+  // Cerca la riga header (la prima con almeno 3 celle non vuote)
+  let headerRow = 0;
+  for (let i = 0; i < Math.min(10, aoa.length); i++) {
+    if (aoa[i].filter(c => c && String(c).trim()).length >= 3) { headerRow = i; break; }
+  }
+  const headers = aoa[headerRow].map(c => String(c));
+  const col = detectColumns(headers);
+  const dataRows = aoa.slice(headerRow + 1).map(r => r.map(c => String(c)));
+  return righeToTransazioni(dataRows, col, fileName, practiceId);
+}
 
 /* ─────────────────────────────────────────────
    TYPES
@@ -343,6 +556,7 @@ export function EstrattoConto({ practiceId }: Props) {
   const [kpi, setKpi] = useState<Kpi | null>(null);
   const [loading, setLoading] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [parsingCsv, setParsingCsv] = useState(false);
   const [filtroCategoria, setFiltroCategoria] = useState<string>('tutti');
   const [filtroTipo, setFiltroTipo] = useState<string>('tutti');
   const [dbAvailable, setDbAvailable] = useState<boolean | null>(null);
@@ -450,6 +664,65 @@ export function EstrattoConto({ practiceId }: Props) {
     e.target.value = '';
   }, [practiceId, dbAvailable]);
 
+  /* ── Upload CSV / XLS ── */
+  const handleUploadCsv = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    if (!['csv', 'xls', 'xlsx', 'ods'].includes(ext)) {
+      toast.error('Seleziona un file CSV, XLS o XLSX');
+      return;
+    }
+
+    setParsingCsv(true);
+    setFileNome(file.name);
+    toast.info('Importazione CSV/XLS in corso…');
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      let parsed: Transazione[] = [];
+
+      if (ext === 'csv') {
+        const text = new TextDecoder('utf-8').decode(arrayBuffer);
+        parsed = parseCsvFile(text, file.name, practiceId);
+      } else {
+        parsed = parseXlsxFile(arrayBuffer, file.name, practiceId);
+      }
+
+      if (parsed.length === 0) {
+        toast.warning('Nessuna transazione rilevata. Verifica che il file abbia intestazioni riconoscibili (es. Data, Descrizione, Dare/Avere o Importo).');
+        setParsingCsv(false);
+        return;
+      }
+
+      setTransazioni(parsed);
+      setKpi(calcolaKpi(parsed));
+      toast.success(`Importate ${parsed.length} transazioni da ${ext.toUpperCase()}`);
+
+      // Salva su DB
+      if (dbAvailable !== false) {
+        await supabase.from('estratto_conto_transactions').delete().eq('practice_id', practiceId).eq('file_nome', file.name);
+        const { error: insErr } = await supabase.from('estratto_conto_transactions').insert(parsed);
+        if (insErr) {
+          if (insErr.code === '42P01') {
+            setDbAvailable(false);
+            toast.warning('Importate ma non salvate — applica la migration SQL');
+          } else {
+            toast.warning('Importazione completata, salvataggio DB non riuscito');
+          }
+        } else {
+          setDbAvailable(true);
+          toast.success('Transazioni salvate nel database');
+        }
+      }
+    } catch (err) {
+      console.error('Errore importazione CSV/XLS:', err);
+      toast.error('Errore durante l\'importazione del file');
+    }
+    setParsingCsv(false);
+    e.target.value = '';
+  }, [practiceId, dbAvailable]);
+
   /* ── Delete All ── */
   const handleDeleteAll = useCallback(async () => {
     if (!confirm('Eliminare tutte le transazioni per questa pratica?')) return;
@@ -492,7 +765,7 @@ export function EstrattoConto({ practiceId }: Props) {
         <div>
           <h3 className="text-base font-semibold text-gray-800">Analisi Estratto Conto</h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Carica il PDF dell'estratto conto per rilevare bonifici clienti, stipendi, fornitori e tributi
+            Carica il PDF oppure importa il CSV/XLS dall'area clienti della banca per rilevare bonifici, stipendi, fornitori e tributi
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -520,16 +793,33 @@ export function EstrattoConto({ practiceId }: Props) {
           <label className="cursor-pointer">
             <input
               type="file"
+              accept=".csv,.xls,.xlsx,.ods"
+              className="hidden"
+              onChange={handleUploadCsv}
+              disabled={parsingCsv || parsing}
+            />
+            <Button asChild size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700" disabled={parsingCsv || parsing}>
+              <span>
+                {parsingCsv
+                  ? <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Import…</>
+                  : <><Upload className="h-3.5 w-3.5" /> CSV / XLS</>
+                }
+              </span>
+            </Button>
+          </label>
+          <label className="cursor-pointer">
+            <input
+              type="file"
               accept=".pdf"
               className="hidden"
               onChange={handleUpload}
-              disabled={parsing}
+              disabled={parsing || parsingCsv}
             />
-            <Button asChild size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700" disabled={parsing}>
+            <Button asChild size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700" disabled={parsing || parsingCsv}>
               <span>
                 {parsing
                   ? <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Analisi…</>
-                  : <><Upload className="h-3.5 w-3.5" /> Carica PDF</>
+                  : <><Upload className="h-3.5 w-3.5" /> PDF</>
                 }
               </span>
             </Button>
