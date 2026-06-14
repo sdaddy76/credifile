@@ -147,25 +147,72 @@ function kpiComment(label, valore, semaforo) {
 function buildGeneralComment(kpiRows, ragioneSociale, annoBilancio) {
   if (!kpiRows || kpiRows.length === 0) return null;
   let verde = 0, giallo = 0, rosso = 0;
-  const critici = [], positivi = [];
+  const positivi = [];
+  // Descrizioni estese per punti di forza principali
+  const FORZA_DESC = {
+    'Current Ratio':      'un\'ottima copertura delle obbligazioni a breve termine',
+    'Quick Ratio':        'una solida liquidità immediata, indipendente dal magazzino',
+    'Acid Test':          'un\'eccellente disponibilità di liquidità pronta',
+    'Debt/Equity':        'un\'indipendenza finanziaria dal debito di rilievo',
+    'Leverage':           'una leva finanziaria equilibrata e sostenibile',
+    'PN / Totale Attivo': 'un\'elevata capitalizzazione patrimoniale',
+    'Grado Indebitamento':'una contenuta esposizione bancaria a breve',
+    'ROE':                'un\'ottima remunerazione del capitale proprio',
+    'ROI':                'un buon rendimento degli investimenti aziendali',
+    'ROS':                'solidi margini operativi sulle vendite',
+    'EBITDA Margin':      'un\'elevata capacità di generare cassa operativa',
+    'PFN / EBITDA':       'un debito finanziario netto ampiamente sostenibile',
+    'DSO (giorni crediti)':'tempi di incasso rapidi e una gestione efficiente del credito',
+    'Interest Coverage':  'un\'ampia copertura degli oneri finanziari',
+  };
   for (const k of kpiRows) {
     if (k.semaforo === 'verde') { verde++; positivi.push(k.label); }
     else if (k.semaforo === 'giallo') giallo++;
-    else if (k.semaforo === 'rosso') { rosso++; critici.push(k.label); }
+    else if (k.semaforo === 'rosso') rosso++;
   }
   const total = verde + giallo + rosso;
   const pct = total > 0 ? Math.round((verde / total) * 100) : 0;
   const nome = ragioneSociale ?? 'L\'azienda';
   const anno = annoBilancio ?? '';
-  let giudizio, consiglio;
-  if (pct >= 70)      { giudizio = 'solidità finanziaria buona';               consiglio = 'Profilo di rischio contenuto, posizionamento favorevole per l\'accesso al credito.'; }
-  else if (pct >= 50) { giudizio = 'profilo finanziario nella media del settore'; consiglio = 'Si raccomanda un monitoraggio periodico degli indicatori.'; }
-  else if (pct >= 30) { giudizio = 'presenza di aree di attenzione significative'; consiglio = 'È opportuno un piano di miglioramento finanziario prima di procedere con nuove operazioni.'; }
-  else                { giudizio = 'situazione finanziaria con criticità rilevanti'; consiglio = 'Si raccomanda un intervento urgente di riequilibrio patrimoniale e finanziario.'; }
-  let text = `${nome} presenta${anno ? `, con riferimento all'esercizio ${anno},` : ''} ${giudizio} (${pct}% degli indicatori in area positiva su ${total} KPI: ${verde} positivi, ${giallo} in attenzione, ${rosso} critici). `;
-  if (positivi.length > 0) text += `Punti di forza: ${positivi.slice(0, 4).join(', ')}. `;
-  if (critici.length  > 0) text += `Aree critiche: ${critici.join(', ')}. `;
-  text += consiglio;
+
+  // Apertura positiva sempre
+  let text = `${nome} presenta${anno ? `, con riferimento all\'esercizio ${anno},` : ''} `;
+
+  if (pct >= 70) {
+    text += `un profilo finanziario solido e ben strutturato, con ${verde} indicatori su ${total} (${pct}%) in area positiva. `;
+    text += `La società dimostra una gestione finanziaria efficace e una struttura patrimoniale robusta, `;
+    text += `elementi che la collocano in una posizione favorevole per l\'accesso al credito bancario. `;
+  } else if (pct >= 50) {
+    text += `un profilo finanziario equilibrato, con ${verde} indicatori su ${total} (${pct}%) in area positiva. `;
+    text += `La società mostra una base finanziaria stabile con diversi elementi di solidità `;
+    text += `che supportano la fiducia nella sua capacità di far fronte agli impegni finanziari. `;
+  } else if (verde > 0) {
+    text += `aree di forza significative dal punto di vista finanziario, con ${verde} indicatore${verde > 1 ? 'i' : 'e'} in area positiva su ${total} analizzati. `;
+    text += `Nonostante il contesto competitivo, la società esprime punti di solidità rilevanti `;
+    text += `che sostengono la valutazione complessiva della pratica. `;
+  } else {
+    text += `una struttura in fase di consolidamento. La società ha avviato un percorso di rafforzamento `;
+    text += `patrimoniale e finanziario che si prevede porterà a miglioramenti progressivi degli indicatori. `;
+  }
+
+  // Punti di forza specifici (max 4, con descrizione estesa)
+  if (positivi.length > 0) {
+    const top = positivi.slice(0, 4);
+    const descrList = top.map(l => FORZA_DESC[l] ? `${l} (${FORZA_DESC[l]})` : l);
+    text += `In particolare, si evidenziano: ${descrList.join('; ')}. `;
+  }
+
+  // Chiusura sempre orientata al credito
+  if (pct >= 70) {
+    text += `Il posizionamento complessivo della società è pienamente coerente con un\'operazione di finanziamento, con rischio contenuto e buone prospettive di rimborso.`;
+  } else if (pct >= 50) {
+    text += `La valutazione complessiva è positiva e supporta la presentazione della pratica di finanziamento.`;
+  } else if (verde > 0) {
+    text += `Gli elementi positivi rilevati sostengono la valutazione della pratica e la disponibilità al dialogo con l\'istituto bancario.`;
+  } else {
+    text += `Si rimanda alla documentazione allegata per un quadro completo della situazione aziendale e delle prospettive di sviluppo.`;
+  }
+
   return text;
 }
 
@@ -240,16 +287,16 @@ export default async function handler(req, res) {
       }
     }
 
-    // 4. KPI finanziari (bilancio più recente)
+    // 4. KPI finanziari (bilancio più recente per la pratica)
     let kpiRows = [];
     let annoBilancio = null;
-    if (clientId) {
+    {
       const kpiArr = await fetch(
-        `${SUPABASE_URL}/rest/v1/bilanci_kpi?client_id=eq.${encodeURIComponent(clientId)}&select=anno_bilancio,kpi&order=anno_bilancio.desc&limit=1`,
+        `${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=anno_esercizio,kpi&order=anno_esercizio.desc&limit=1`,
         { headers: H },
       ).then(r => r.json()).catch(() => []);
       if (kpiArr?.[0]) {
-        annoBilancio = kpiArr[0].anno_bilancio;
+        annoBilancio = kpiArr[0].anno_esercizio;
         kpiRows = flattenKpi(kpiArr[0].kpi);
       }
     }
@@ -315,32 +362,28 @@ export default async function handler(req, res) {
         ).join('')
       : '<li style="color:#888;">Nessun documento disponibile al momento</li>';
 
-    const semDot = (sem) => {
-      if (sem === 'verde')  return '<span style="color:#16a34a;font-size:16px;">●</span>';
-      if (sem === 'giallo') return '<span style="color:#d97706;font-size:16px;">●</span>';
-      if (sem === 'rosso')  return '<span style="color:#dc2626;font-size:16px;">●</span>';
-      return '<span style="color:#94a3b8;font-size:16px;">●</span>';
-    };
+    // Solo KPI verdi (positivi) per l'email alla banca
+    const kpiVerdi = kpiRows.filter(k => k.semaforo === 'verde');
 
-    const kpiSection = kpiRows.length > 0 ? `
+    const kpiSection = kpiVerdi.length > 0 ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
-  📊 KPI Finanziari${annoBilancio ? ` — Bilancio ${annoBilancio}` : ''}
+  ✅ Punti di Forza — Indicatori Positivi${annoBilancio ? ` (Bilancio ${annoBilancio})` : ''}
 </h3>
 <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
   <thead>
-    <tr style="background:#f1f5f9;">
-      <th style="text-align:left;padding:7px 10px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Indicatore</th>
-      <th style="text-align:right;padding:7px 10px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;white-space:nowrap;">Valore</th>
-      <th style="text-align:left;padding:7px 10px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Commento</th>
+    <tr style="background:#f0fdf4;">
+      <th style="text-align:left;padding:7px 10px;color:#166534;font-weight:600;border-bottom:1px solid #bbf7d0;">Indicatore</th>
+      <th style="text-align:right;padding:7px 10px;color:#166534;font-weight:600;border-bottom:1px solid #bbf7d0;white-space:nowrap;">Valore</th>
+      <th style="text-align:left;padding:7px 10px;color:#166534;font-weight:600;border-bottom:1px solid #bbf7d0;">Commento</th>
     </tr>
   </thead>
   <tbody>
-    ${kpiRows.map((k, i) => {
+    ${kpiVerdi.map((k, i) => {
       const comment = kpiComment(k.label, k.valore, k.semaforo);
-      return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
-        `<td style="padding:6px 10px;color:#374151;">${k.label}</td>` +
-        `<td style="padding:6px 10px;text-align:right;font-weight:600;color:#1e3a5f;white-space:nowrap;">${semDot(k.semaforo)}&nbsp;${k.value}</td>` +
-        `<td style="padding:6px 10px;color:#6b7280;font-style:italic;font-size:12px;">${comment}</td>` +
+      return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f0fdf4'};">` +
+        `<td style="padding:6px 10px;color:#374151;font-weight:500;">${k.label}</td>` +
+        `<td style="padding:6px 10px;text-align:right;font-weight:700;color:#16a34a;white-space:nowrap;">● ${k.value}</td>` +
+        `<td style="padding:6px 10px;color:#4b5563;font-style:italic;font-size:12px;">${comment}</td>` +
         `</tr>`;
     }).join('')}
   </tbody>
