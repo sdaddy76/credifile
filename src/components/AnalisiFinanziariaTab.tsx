@@ -347,6 +347,132 @@ function passLabel(pass: boolean | null) {
   return 'N/D';
 }
 
+// ─── Commenti KPI per PDF ─────────────────────────────────────────────────────
+function kpiComment(label: string, valore: number | null, semaforo: string): string {
+  if (valore === null || semaforo === 'nd') return 'Dato non disponibile.';
+  const v = valore;
+  switch (label) {
+    case 'Current Ratio':
+      if (semaforo === 'verde') return v >= 2 ? 'Ottima liquidità a breve termine.' : 'Buona copertura delle passività a breve.';
+      if (semaforo === 'giallo') return 'Liquidità sufficiente ma da monitorare attentamente.';
+      return 'Rischio liquidità: attivo corrente non copre i debiti a breve.';
+    case 'Quick Ratio':
+      if (semaforo === 'verde') return 'Buona liquidità senza dipendenza dal magazzino.';
+      if (semaforo === 'giallo') return 'Dipendenza significativa dal magazzino per la liquidità.';
+      return 'Liquidità immediata critica, difficoltà nel breve termine.';
+    case 'Acid Test':
+      if (semaforo === 'verde') return 'Eccellente disponibilità di cassa e crediti a breve.';
+      if (semaforo === 'giallo') return 'Riserve liquide nel limite minimo.';
+      return 'Scarsa liquidità immediata, rischio insolvenza a breve.';
+    case 'Debt/Equity':
+      if (semaforo === 'verde') return v < 1 ? 'Eccellente indipendenza finanziaria dal debito.' : 'Rapporto debito/PN nella norma.';
+      if (semaforo === 'giallo') return 'Indebitamento elevato rispetto al patrimonio, monitorare.';
+      return 'Eccessivo ricorso al capitale di debito, struttura fragile.';
+    case 'Leverage':
+      if (semaforo === 'verde') return 'Struttura finanziaria equilibrata, leva contenuta.';
+      if (semaforo === 'giallo') return 'Leva finanziaria elevata, prudenza nell\'assumere nuovi debiti.';
+      return 'Leva eccessiva, rischio finanziario significativo.';
+    case 'PN / Totale Attivo':
+      if (semaforo === 'verde') return v > 50 ? 'Solida capitalizzazione aziendale, basso rischio.' : 'Buona autonomia finanziaria.';
+      if (semaforo === 'giallo') return 'Autonomia finanziaria da rafforzare con nuovi apporti.';
+      return 'Capitalizzazione insufficiente, alta dipendenza da terzi.';
+    case 'Grado Indebitamento':
+      if (semaforo === 'verde') return 'Bassa esposizione bancaria a breve, situazione fisiologica.';
+      if (semaforo === 'giallo') return 'Esposizione bancaria a breve da monitorare.';
+      return 'Elevata dipendenza dal credito bancario a breve termine.';
+    case 'ROE':
+      if (semaforo === 'verde') return v > 15 ? 'Ottima redditività per gli azionisti.' : 'Buona remunerazione del capitale proprio.';
+      if (semaforo === 'giallo') return 'Redditività del capitale proprio modesta ma positiva.';
+      return 'Rendimento insufficiente per gli investitori.';
+    case 'ROI':
+      if (semaforo === 'verde') return 'Buon rendimento degli investimenti effettuati.';
+      if (semaforo === 'giallo') return 'Rendimento degli asset da migliorare.';
+      return 'Scarsa efficienza nell\'utilizzo degli investimenti.';
+    case 'ROS':
+      if (semaforo === 'verde') return v > 10 ? 'Ottimi margini operativi sulle vendite.' : 'Margine operativo sulle vendite positivo.';
+      if (semaforo === 'giallo') return 'Margine di vendita ridotto, pricing o costi da rivedere.';
+      return 'Marginalità operativa critica, pressione sui costi elevata.';
+    case 'EBITDA Margin':
+      if (semaforo === 'verde') return v > 20 ? 'Eccellente capacità di generare cassa operativa.' : 'Buona generazione di cassa dalla gestione corrente.';
+      if (semaforo === 'giallo') return 'Capacità di generare cassa al limite minimo accettabile.';
+      return 'Cassa operativa insufficiente per sostenere gli investimenti.';
+    case 'PFN / EBITDA':
+      if (semaforo === 'verde') return v < 1.5 ? 'Debito finanziario netto ripagabile in meno di 2 anni.' : 'Posizione debitoria sostenibile rispetto ai flussi.';
+      if (semaforo === 'giallo') return 'Debito elevato rispetto alla capacità di rimborso.';
+      return `Debito netto critico (${v.toFixed(1)}× EBITDA), sostenibilità a rischio.`;
+    case 'DSO (giorni crediti)':
+      if (semaforo === 'verde') return 'Incassi rapidi, ottima gestione del credito commerciale.';
+      if (semaforo === 'giallo') return `Tempi di incasso da ridurre (${Math.round(v)} gg medi).`;
+      return `Incassi lenti (${Math.round(v)} gg), rischio crediti inesigibili.`;
+    case 'Interest Coverage':
+      if (semaforo === 'verde') return v > 5 ? 'Eccellente copertura degli oneri finanziari.' : 'Buona capacità di coprire gli interessi passivi.';
+      if (semaforo === 'giallo') return 'Copertura interessi nel limite minimo, monitorare.';
+      return 'Difficoltà a sostenere il costo del debito finanziario.';
+    default:
+      if (label.startsWith('DSCR')) {
+        if (semaforo === 'verde') return 'Adeguata copertura del servizio del debito (rate + interessi).';
+        if (semaforo === 'giallo') return 'Copertura rata finanziamenti al limite, margine ridotto.';
+        return 'Copertura rata insufficiente, rischio default su finanziamenti.';
+      }
+      if (semaforo === 'verde') return 'Valore nella norma, nessuna criticità rilevata.';
+      if (semaforo === 'giallo') return 'Valore richiede attenzione e monitoraggio periodico.';
+      return 'Valore critico, intervento correttivo raccomandato.';
+  }
+}
+
+function buildGeneralComment(bilanci: BilancioRecord[]): string {
+  if (bilanci.length === 0) return 'Dati bilancio insufficienti per una valutazione complessiva.';
+  const latest = bilanci[0];
+  if (!latest.kpi) return 'KPI non ancora calcolati. Caricare il bilancio per la valutazione.';
+
+  let verde = 0, giallo = 0, rosso = 0, total = 0;
+  const critici: string[] = [];
+  const positivi: string[] = [];
+
+  for (const area of Object.values(latest.kpi) as Record<string, KpiEntry>[]) {
+    for (const entry of Object.values(area)) {
+      total++;
+      if (entry.semaforo === 'verde') { verde++; positivi.push(entry.label); }
+      else if (entry.semaforo === 'giallo') giallo++;
+      else if (entry.semaforo === 'rosso') { rosso++; critici.push(entry.label); }
+    }
+  }
+
+  const pct = total > 0 ? Math.round((verde / total) * 100) : 0;
+  const nome = latest.ragione_sociale ?? 'L\'azienda';
+  const anno = latest.anno_esercizio;
+
+  let giudizio: string;
+  let consiglio: string;
+  if (pct >= 70) {
+    giudizio = 'solidità finanziaria complessivamente buona';
+    consiglio = 'Il profilo di rischio risulta contenuto e il posizionamento è favorevole per l\'accesso al credito.';
+  } else if (pct >= 50) {
+    giudizio = 'profilo finanziario nella media del settore';
+    consiglio = 'Si raccomanda un monitoraggio periodico degli indicatori e il rafforzamento delle aree in giallo.';
+  } else if (pct >= 30) {
+    giudizio = 'presenza di aree di attenzione significative';
+    consiglio = 'È opportuno elaborare un piano di miglioramento finanziario prima di procedere con nuove richieste di credito.';
+  } else {
+    giudizio = 'situazione finanziaria con criticità rilevanti';
+    consiglio = 'Si raccomanda un intervento urgente di riequilibrio patrimoniale e finanziario.';
+  }
+
+  let text = `${nome} presenta, con riferimento all'esercizio ${anno}, ${giudizio} (${pct}% degli indicatori in area positiva su ${total} KPI analizzati, con ${verde} positivi, ${giallo} in attenzione e ${rosso} critici). `;
+  if (positivi.length > 0) {
+    const top = positivi.slice(0, 4).join(', ');
+    text += `Punti di forza: ${top}. `;
+  }
+  if (critici.length > 0) {
+    text += `Aree critiche: ${critici.join(', ')}. `;
+  }
+  text += consiglio;
+  if (bilanci.length > 1) {
+    text += ` Analisi condotta su ${bilanci.length} esercizi (${bilanci.map((b) => b.anno_esercizio).join(', ')}).`;
+  }
+  return text;
+}
+
 // ─── Generazione report PDF ──────────────────────────────────────────────────
 function generateBancabilitaReport(
   bilanci: BilancioRecord[],
@@ -429,8 +555,8 @@ function generateBancabilitaReport(
 
       // Riga di intestazione area
       rows.push([
-        { content: areaLabel.toUpperCase(), styles: { fontStyle: 'bold', fillColor: [30, 58, 138] as [number,number,number], textColor: [255,255,255] as [number,number,number], colSpan: 3 } },
-        '', '',
+        { content: areaLabel.toUpperCase(), styles: { fontStyle: 'bold', fillColor: [30, 58, 138] as [number,number,number], textColor: [255,255,255] as [number,number,number], colSpan: 4 } },
+        '', '', '',
       ]);
 
       for (const entry of Object.values(entries)) {
@@ -441,21 +567,23 @@ function generateBancabilitaReport(
           entry.label,
           entry.formatted,
           { content: sem, styles: { fillColor: fill, textColor: text, fontStyle: 'bold' } },
+          kpiComment(entry.label, entry.valore, entry.semaforo),
         ]);
       }
     }
 
     autoTable(doc, {
       startY: y,
-      head: [['Indicatore', 'Valore', 'Rating']],
+      head: [['Indicatore', 'Valore', 'Rating', 'Commento']],
       body: rows,
       margin: { left: 14, right: 14 },
-      styles: { fontSize: 8, cellPadding: 2.5 },
-      headStyles: { fillColor: BLUE, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      styles: { fontSize: 7.5, cellPadding: 2 },
+      headStyles: { fillColor: BLUE, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5 },
       columnStyles: {
-        0: { cellWidth: 90 },
-        1: { cellWidth: 40, halign: 'right' },
-        2: { cellWidth: 40, halign: 'center' },
+        0: { cellWidth: 58 },
+        1: { cellWidth: 22, halign: 'right' },
+        2: { cellWidth: 24, halign: 'center' },
+        3: { cellWidth: 78, fontStyle: 'italic', textColor: DGRAY },
       },
       didParseCell(data) {
         // le righe di intestazione area hanno colSpan impostato nell'oggetto
@@ -477,6 +605,30 @@ function generateBancabilitaReport(
       doc.addPage();
       y = 15;
     }
+  }
+
+  // ── VALUTAZIONE COMPLESSIVA ────────────────────────────────────────────────
+  if (bilanci.length > 0 && bilanci[0].kpi) {
+    if (y > 220) { doc.addPage(); y = 15; }
+    doc.setTextColor(...BLUE);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('VALUTAZIONE COMPLESSIVA', 14, y);
+    y += 5;
+
+    const commentText = buildGeneralComment(bilanci);
+    const commentLines = doc.splitTextToSize(commentText, W - 32);
+    const boxH = Math.max(20, commentLines.length * 4.5 + 8);
+
+    doc.setFillColor(241, 245, 249);
+    doc.roundedRect(14, y, W - 28, boxH, 2, 2, 'F');
+    doc.setDrawColor(148, 163, 184);
+    doc.roundedRect(14, y, W - 28, boxH, 2, 2, 'S');
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text(commentLines, 19, y + 6);
+    y += boxH + 10;
   }
 
   // ── VERIFICA BANCABILITÀ ───────────────────────────────────────────────────
