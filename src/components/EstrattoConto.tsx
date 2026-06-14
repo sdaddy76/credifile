@@ -65,6 +65,9 @@ const KW_FORNITORI = [
   'AFFITTO', 'UTENZA', 'ENEL', 'ENI', 'A2A', 'IREN', 'HERA', 'LUCE',
   'GAS', 'ACQUA', 'TELEFONIA', 'TIM', 'VODAFONE', 'WIND', 'FASTWEB',
   'ASSICURAZ', 'PREMI ASS', 'LEASING', 'MUTUO', 'RATA',
+  // Pagamenti con carte
+  'MASTERCARD', 'VISA', 'PAGAMENTO CARTA', 'PAG CARTA', 'ADDEBITO CARTA',
+  'AMERICAN EXPRESS', 'AMEX', 'BANCOMAT',
 ];
 
 const KW_CLIENTI_ENTRATA = [
@@ -120,17 +123,20 @@ async function estraiTestoPdf(arrayBuffer: ArrayBuffer): Promise<string[][]> {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
 
-    // Raggruppa token per coordinata Y (tolleranza 3pt)
-    const byY: Map<number, string[]> = new Map();
+    // Raggruppa token per coordinata Y (tolleranza 3pt), registrando anche X
+    const byY: Map<number, Array<{ str: string; x: number }>> = new Map();
     for (const item of content.items) {
       if (!('str' in item)) continue;
       const y = Math.round((item as any).transform[5] / 3) * 3;
+      const x = (item as any).transform[4] as number;
       if (!byY.has(y)) byY.set(y, []);
-      byY.get(y)!.push((item as any).str);
+      byY.get(y)!.push({ str: (item as any).str, x });
     }
-    // Ordina per Y decrescente (top→bottom)
+    // Ordina per Y decrescente (top→bottom), poi per X crescente (sinistra→destra)
     const sorted = [...byY.entries()].sort((a, b) => b[0] - a[0]);
-    for (const [, tokens] of sorted) {
+    for (const [, tokObjs] of sorted) {
+      tokObjs.sort((a, b) => a.x - b.x); // sinistra → destra garantisce: data | desc | importo | saldo
+      const tokens = tokObjs.map(t => t.str);
       const line = tokens.join(' ').trim();
       if (line) allLines.push(tokens);
     }
@@ -189,10 +195,36 @@ function parseRighe(righe: string[][]): Transazione[] {
     const importiMatch = [...riga.matchAll(/([+-]?\s*\d{1,3}(?:\.\d{3})*,\d{2})/g)];
     if (importiMatch.length === 0) continue;
 
-    // Prende il primo importo trovato come importo transazione
-    const importoRaw = importiMatch[0][1].replace(/\s/g, '');
-    const importoVal = parseImporto(importoRaw);
-    if (importoVal === null || importoVal === 0) continue;
+    // Raccoglie tutti gli importi trovati sulla riga
+    const allAmounts = importiMatch
+      .map(m => ({ raw: m[1].replace(/\s/g, ''), val: parseImporto(m[1].replace(/\s/g, '')) }))
+      .filter((a): a is { raw: string; val: number } => a.val !== null && Math.abs(a.val) > 0.005);
+    if (allAmounts.length === 0) continue;
+
+    // Selezione importo transazione vs saldo progressivo:
+    // Se ci sono ≥2 importi e il massimo è ≥10× il minimo → il massimo è il saldo, prende il minimo
+    // (tipico estratto conto IT: data | desc | importo_transazione | saldo_conto)
+    let importoVal: number;
+    let importoRaw: string;
+    if (allAmounts.length === 1) {
+      importoVal = allAmounts[0].val;
+      importoRaw = allAmounts[0].raw;
+    } else {
+      const absVals = allAmounts.map(a => Math.abs(a.val));
+      const maxAbs = Math.max(...absVals);
+      const minAbs = Math.min(...absVals);
+      if (maxAbs / (minAbs || 0.01) >= 10) {
+        // Il massimo è quasi certamente il saldo: sceglie il non-massimo più a sinistra
+        const chosen = allAmounts.find(a => Math.abs(a.val) < maxAbs) ?? allAmounts[0];
+        importoVal = chosen.val;
+        importoRaw = chosen.raw;
+      } else {
+        // Valori comparabili: prende il primo in ordine visivo (già ordinato per X)
+        importoVal = allAmounts[0].val;
+        importoRaw = allAmounts[0].raw;
+      }
+    }
+    if (importoVal === 0) continue;
 
     // Determina tipo (entrata/uscita) da segno o contesto
     let tipo: 'entrata' | 'uscita' = importoVal >= 0 ? 'entrata' : 'uscita';
@@ -225,10 +257,10 @@ function parseRighe(righe: string[][]): Transazione[] {
     const categoria = classificaTransazione(desc, tipo);
     const dataISO_str = dataISO(mData[1], mData[2], mData[3]);
 
-    // Saldo progressivo: prende l'ultimo importo se ce ne sono ≥2
+    // Saldo progressivo: il valore assoluto massimo tra tutti gli importi trovati
     let saldo: number | undefined;
-    if (importiMatch.length >= 2) {
-      saldo = Math.abs(parseImporto(importiMatch[importiMatch.length - 1][1].replace(/\s/g, '')) ?? 0);
+    if (allAmounts.length >= 2) {
+      saldo = Math.max(...allAmounts.map(a => Math.abs(a.val)));
     }
 
     transazioni.push({
