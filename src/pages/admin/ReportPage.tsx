@@ -334,18 +334,12 @@ export default function ReportPage() {
   const load = async () => {
     setLoading(true);
     try {
-      // Bilanci KPI
+      // Bilanci KPI: la tabella usa practice_id e anno_esercizio
+      // Join con practices per ottenere numero_pratica e ragione_sociale dal cliente
       const { data: kpiRaw } = await supabase
         .from('bilanci_kpi')
-        .select('id, client_id, anno_bilancio, ragione_sociale, is_holding, totale_attivo, totale_patrimonio_netto, totale_debiti, ricavi_vendite, utile_netto, kpi, created_at')
-        .order('anno_bilancio', { ascending: false })
-        .limit(500);
-
-      // Pratiche (per collegare client_id → practice_id + numero_pratica)
-      const { data: practicesRaw } = await supabase
-        .from('practices')
-        .select('id, client_id, numero_pratica, status')
-        .order('created_at', { ascending: false })
+        .select('id, practice_id, anno_esercizio, ragione_sociale, is_holding, totale_attivo, totale_patrimonio_netto, totale_debiti, ricavi_vendite, utile_netto, kpi, created_at, practices(id, numero_pratica, status)')
+        .order('anno_esercizio', { ascending: false })
         .limit(500);
 
       // Email log
@@ -355,12 +349,14 @@ export default function ReportPage() {
         .order('created_at', { ascending: false })
         .limit(200);
 
-      // Raggruppa bilanci per client_id
-      const byClient: Record<string, BilancioRecord[]> = {};
+      // Raggruppa bilanci per practice_id
+      const byPratica: Record<string, { bilanci: BilancioRecord[]; practiceId: string; numeroPratica: string | null }> = {};
       for (const row of (kpiRaw ?? [])) {
+        const pid = row.practice_id as string;
+        if (!pid) continue;
         const bil: BilancioRecord = {
           id: row.id,
-          anno_esercizio: row.anno_bilancio,
+          anno_esercizio: row.anno_esercizio,
           ragione_sociale: row.ragione_sociale ?? '—',
           is_holding: row.is_holding ?? false,
           totale_attivo: row.totale_attivo ?? 0,
@@ -371,24 +367,19 @@ export default function ReportPage() {
           kpi: row.kpi as KpiResult,
           created_at: row.created_at,
         };
-        if (!byClient[row.client_id]) byClient[row.client_id] = [];
-        byClient[row.client_id].push(bil);
-      }
-
-      // Mappa client_id → pratica più recente
-      const practiceByClient: Record<string, { id: string; numero: string; status: string }> = {};
-      for (const p of (practicesRaw ?? [])) {
-        if (p.client_id && !practiceByClient[p.client_id]) {
-          practiceByClient[p.client_id] = { id: p.id, numero: p.numero_pratica, status: p.status };
+        if (!byPratica[pid]) {
+          const prac = row.practices as unknown as { id: string; numero_pratica: string; status: string } | null;
+          byPratica[pid] = { bilanci: [], practiceId: pid, numeroPratica: prac?.numero_pratica ?? null };
         }
+        byPratica[pid].bilanci.push(bil);
       }
 
-      const list: ClienteKpi[] = Object.entries(byClient).map(([clientId, bilanci]) => ({
-        clientId,
-        ragioneSociale: bilanci[0]?.ragione_sociale ?? '—',
-        bilanci,
-        practiceId:    practiceByClient[clientId]?.id   ?? null,
-        numeroPratica: practiceByClient[clientId]?.numero ?? null,
+      const list: ClienteKpi[] = Object.values(byPratica).map(entry => ({
+        clientId:      entry.practiceId,   // usiamo practiceId come chiave univoca
+        ragioneSociale: entry.bilanci[0]?.ragione_sociale ?? '—',
+        bilanci:       entry.bilanci,
+        practiceId:    entry.practiceId,
+        numeroPratica: entry.numeroPratica,
       }));
       list.sort((a, b) => a.ragioneSociale.localeCompare(b.ragioneSociale));
 
