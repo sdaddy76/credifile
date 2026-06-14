@@ -18,6 +18,7 @@ import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import AnalisiFinanziariaTab from '@/components/AnalisiFinanziariaTab';
 import BancabilitaTab from '@/components/BancabilitaTab';
 import ReputazioneTab from '@/components/ReputazioneTab';
+import { EstrattoConto } from '@/components/EstrattoConto';
 import AmlReportTab from '@/components/AmlReportTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
@@ -1433,6 +1434,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="task" onClick={loadPracticeTasks}>✅ Task {practiceTasks.filter(t=>t.stato!=='completata').length > 0 ? `(${practiceTasks.filter(t=>t.stato!=='completata').length})` : ''}</TabsTrigger>
               <TabsTrigger value="email-log" onClick={loadEmailLog}>📧 Email Inviate</TabsTrigger>
               <TabsTrigger value="checklist" onClick={loadChecklist}>📋 Checklist {checklistItems.length > 0 ? `(${checklistItems.filter(i=>i.completata).length}/${checklistItems.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="estratto-conto">📊 Estratto Conto</TabsTrigger>
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
@@ -2614,6 +2616,10 @@ export default function PraticaDetailPage() {
                   </button>
                 </div>
               ))}
+            </TabsContent>
+
+            <TabsContent value="estratto-conto" className="mt-3">
+              <EstrattoConto practiceId={practice.id} />
             </TabsContent>
 
           </Tabs>
