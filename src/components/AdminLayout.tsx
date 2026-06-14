@@ -7,7 +7,7 @@ import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
   UserCircle, UsersRound, BarChart3, Settings, TrendingUp, BookUser, Layout, Columns2,
-  Calendar, CheckSquare, ClipboardList,
+  Calendar, CheckSquare, ClipboardList, FileBarChart2,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -23,7 +23,8 @@ const NAV_SUPER = [
   { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
   { to: '/admin/documenti',          icon: FileText,        label: 'Documenti Standard' },
   { to: '/admin/template-documenti', icon: Layout,          label: 'Template Documenti' },
-  { to: '/admin/checklist-template', icon: ClipboardList,  label: 'Checklist' },
+  { to: '/admin/checklist-template', icon: ClipboardList,   label: 'Checklist' },
+  { to: '/admin/report',             icon: FileBarChart2,   label: 'Report' },
   { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
   { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/statistiche',        icon: BarChart3,       label: 'Statistiche' },
@@ -41,7 +42,8 @@ const NAV_SEGRETERIA = [
   { to: '/admin/banche',             icon: Building2,       label: 'Banche' },
   { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
   { to: '/admin/template-documenti', icon: Layout,          label: 'Template Documenti' },
-  { to: '/admin/checklist-template', icon: ClipboardList,  label: 'Checklist' },
+  { to: '/admin/checklist-template', icon: ClipboardList,   label: 'Checklist' },
+  { to: '/admin/report',             icon: FileBarChart2,   label: 'Report' },
   { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
   { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/statistiche',        icon: BarChart3,       label: 'Statistiche' },
