@@ -722,9 +722,9 @@ export default function PratichePage() {
             </div>
             {!isAgente && agents.length > 0 && (
               <div className="space-y-2">
-                <Label>Assegna ad Agente</Label>
+                <Label>Assegna ad Agente / Admin</Label>
                 <Select value={form.assigned_to} onValueChange={v => setForm(f => ({ ...f, assigned_to: v === 'nessuno' ? '' : v }))}>
-                  <SelectTrigger><SelectValue placeholder="Seleziona agente (opzionale)..." /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Seleziona utente (opzionale)..." /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="nessuno">— Nessuna assegnazione —</SelectItem>
                     {agents.map(a => (

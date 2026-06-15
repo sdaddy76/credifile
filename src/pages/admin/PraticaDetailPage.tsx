@@ -773,7 +773,7 @@ export default function PraticaDetailPage() {
     if (!emailTrimmed) { toast.error('L\'email non può essere vuota'); return; }
     setSavingClientEdit(true);
     try {
-      const clientId = (practice as Practice & { client_id: string }).client_id;
+      const clientId = practice.client_id;
       const payload: Record<string, string | null> = { email: emailTrimmed };
       if (telTrimmed) payload.telefono = telTrimmed;
       else payload.telefono = null;

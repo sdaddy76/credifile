@@ -1,15 +1,6 @@
 // update-user-email.js — Aggiorna email utente via Supabase Admin REST API
 // Vercel Serverless Function (Hobby: max 60s)
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Content-Type': 'application/json',
-};
-
-const ok   = (d)   => new Response(JSON.stringify(d), { status: 200, headers: CORS });
-const fail = (msg) => new Response(JSON.stringify({ success: false, error: msg }), { status: 200, headers: CORS });
-
 export default async function handler(req, res) {
   // Gestione CORS preflight
   if (req.method === 'OPTIONS') {

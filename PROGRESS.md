@@ -115,3 +115,6 @@
 [2026-06-10 18:29] Fix KPI banca completati: utile_netto aggiunto al catalogo, dropdown raggruppato per area con emoji, fallback colonne dirette ricavi_vendite/utile_netto nel matching. Avvio build.
 [2026-06-10 18:32] Deploy OK commit 4941555: KPI banca — utile_netto aggiunto, dropdown raggruppato per area, fallback matching colonne dirette.
 [2026-06-10 18:32] Deploy OK commit 4941555: KPI banca utile_netto aggiunto, dropdown raggruppato per area, fallback matching colonne dirette bilanci_kpi.
+[2026-06-15 23:16] Avvio revisione capillare codice: tsc check + review file modificati
+[2026-06-15 23:16] tsc --noEmit OK (zero errori). Avvio revisione PraticaDetailPage.tsx
+[2026-06-15 23:19] Revisione completata: 3 fix da applicare - dead code update-user-email.js, label agente PratichePage, cast ridondante PraticaDetailPage
