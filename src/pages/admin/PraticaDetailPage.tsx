@@ -24,7 +24,7 @@ import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
   PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar, FileDown, ClipboardCopy, Layout,
-  CheckSquare, StickyNote, Pin, ListChecks, Phone
+  CheckSquare, StickyNote, Pin, ListChecks, Phone, Pencil
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
@@ -70,6 +70,11 @@ export default function PraticaDetailPage() {
   const [showReassign, setShowReassign] = useState(false);
   const [reassignTo, setReassignTo] = useState('');
   const [savingReassign, setSavingReassign] = useState(false);
+  // Modifica contatti cliente
+  const [showClientEdit, setShowClientEdit] = useState(false);
+  const [clientEditEmail, setClientEditEmail] = useState('');
+  const [clientEditTel, setClientEditTel] = useState('');
+  const [savingClientEdit, setSavingClientEdit] = useState(false);
   const [practiceBanks, setPracticeBanks] = useState<{id:string;bank_id:string;status:string;note?:string;data_invio?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
   const [addingBank, setAddingBank] = useState('');
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
@@ -760,6 +765,30 @@ export default function PraticaDetailPage() {
     }
   }, [isSuperAdmin, isSegreteria, user?.id]);
 
+  // ── Salva contatti cliente (email + telefono) ────────────────────────────────
+  const handleSaveClientContact = async () => {
+    if (!practice || !client) return;
+    const emailTrimmed = clientEditEmail.trim();
+    const telTrimmed   = clientEditTel.trim();
+    if (!emailTrimmed) { toast.error('L\'email non può essere vuota'); return; }
+    setSavingClientEdit(true);
+    try {
+      const clientId = (practice as Practice & { client_id: string }).client_id;
+      const payload: Record<string, string | null> = { email: emailTrimmed };
+      if (telTrimmed) payload.telefono = telTrimmed;
+      else payload.telefono = null;
+      const { error } = await supabase.from('clients').update(payload).eq('id', clientId);
+      if (error) throw error;
+      toast.success('Contatti aggiornati');
+      setShowClientEdit(false);
+      load();
+    } catch (e) {
+      toast.error('Errore: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSavingClientEdit(false);
+    }
+  };
+
   // ── Riassegna pratica — auto-save on selection ──────────────────────────────
   const handleReassignSelect = async (value: string) => {
     if (!practice) return;
@@ -1238,7 +1267,18 @@ export default function PraticaDetailPage() {
         {/* Info cliente */}
         <div className="space-y-4">
           <Card className="border-border">
-            <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><User className="w-4 h-4 text-primary" />Dati Cliente</CardTitle></CardHeader>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2"><User className="w-4 h-4 text-primary" />Dati Cliente</span>
+                {!isSegnalatore && (
+                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-primary"
+                    title="Modifica email e telefono"
+                    onClick={() => { setClientEditEmail(client?.email ?? ''); setClientEditTel(client?.telefono ?? ''); setShowClientEdit(true); }}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+              </CardTitle>
+            </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <div><p className="text-muted-foreground text-xs">Ragione Sociale</p><p className="font-medium">{client?.ragione_sociale}</p></div>
               <div><p className="text-muted-foreground text-xs">Email</p><p>{client?.email}</p></div>
@@ -2679,6 +2719,33 @@ export default function PraticaDetailPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowReassign(false); setReassignTo(''); }} disabled={savingReassign}>Annulla</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog modifica contatti cliente */}
+      <Dialog open={showClientEdit} onOpenChange={v => { if (!savingClientEdit) setShowClientEdit(v); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><User className="w-4 h-4 text-primary" />Modifica Contatti Cliente</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-xs text-muted-foreground">{client?.ragione_sociale}</p>
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" />Email *</Label>
+              <Input type="email" placeholder="info@azienda.it" value={clientEditEmail}
+                onChange={e => setClientEditEmail(e.target.value)} disabled={savingClientEdit} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" />Telefono</Label>
+              <Input placeholder="+39 02 1234567" value={clientEditTel}
+                onChange={e => setClientEditTel(e.target.value)} disabled={savingClientEdit} />
+              <p className="text-xs text-muted-foreground">Lascia vuoto per rimuovere il numero.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowClientEdit(false)} disabled={savingClientEdit}>Annulla</Button>
+            <Button onClick={handleSaveClientContact} disabled={savingClientEdit || !clientEditEmail.trim()}>
+              {savingClientEdit ? 'Salvataggio…' : 'Salva'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
