@@ -1,4 +1,4 @@
-// admin-update-user — cambia password utente via Supabase Admin REST API
+// admin-update-user — cambia password e/o email utente via Supabase Admin REST API
 // Nessun import esterno: solo fetch nativo Deno
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -10,33 +10,77 @@ const fail = (msg: string) => new Response(JSON.stringify({ success: false, erro
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
-    const { user_id, password } = await req.json();
-    if (!user_id)  return fail('user_id obbligatorio');
-    if (!password) return fail('password obbligatoria');
-    if (password.length < 6) return fail('Password minimo 6 caratteri');
+    const { user_id, password, email } = await req.json();
+    if (!user_id) return fail('user_id obbligatorio');
+    if (!password && !email) return fail('password o email obbligatoria');
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const serviceKey  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     if (!supabaseUrl || !serviceKey) return fail('Configurazione server mancante');
 
-    // PUT /auth/v1/admin/users/{user_id}  →  aggiorna password
-    const r = await fetch(`${supabaseUrl}/auth/v1/admin/users/${user_id}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${serviceKey}`,
-        'apikey': serviceKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ password }),
-    });
+    // ── Cambio password ──────────────────────────────────────────────────────
+    if (password) {
+      if (password.length < 6) return fail('Password minimo 6 caratteri');
 
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      return fail(err?.message ?? `Errore API (${r.status})`, 400);
+      const r = await fetch(`${supabaseUrl}/auth/v1/admin/users/${user_id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${serviceKey}`,
+          'apikey': serviceKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password }),
+      });
+
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        return fail(err?.message ?? `Errore API password (${r.status})`);
+      }
+    }
+
+    // ── Cambio email ─────────────────────────────────────────────────────────
+    if (email) {
+      const emailTrimmed = email.trim().toLowerCase();
+
+      // 1. Aggiorna auth.users via Admin API (bypass verifica email)
+      const r = await fetch(`${supabaseUrl}/auth/v1/admin/users/${user_id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${serviceKey}`,
+          'apikey': serviceKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: emailTrimmed }),
+      });
+
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        return fail(err?.message ?? `Errore API email (${r.status})`);
+      }
+
+      // 2. Aggiorna admin_profiles.email per consistenza
+      const profileRes = await fetch(
+        `${supabaseUrl}/rest/v1/admin_profiles?id=eq.${user_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${serviceKey}`,
+            'apikey': serviceKey,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({ email: emailTrimmed }),
+        }
+      );
+
+      if (!profileRes.ok) {
+        const err = await profileRes.json().catch(() => ({}));
+        return fail(err?.message ?? `Errore aggiornamento profilo (${profileRes.status})`);
+      }
     }
 
     return ok({ success: true });
   } catch (e) {
-    return fail(String(e), 500);
+    return fail(String(e));
   }
 });

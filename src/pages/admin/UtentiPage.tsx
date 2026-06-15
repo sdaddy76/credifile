@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Activity, Monitor, RefreshCw, ChevronDown, ChevronUp, Lock } from 'lucide-react';
+import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Activity, Monitor, RefreshCw, ChevronDown, ChevronUp, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
 
@@ -59,6 +59,8 @@ export default function UtentiPage() {
   const [showEditPwd, setShowEditPwd] = useState(false);
   const [changingPwd, setChangingPwd] = useState(false);
   const [editAssignId, setEditAssignId] = useState(''); // per cambio ruolo → segnalatore
+  const [editEmail, setEditEmail] = useState('');
+  const [changingEmail, setChangingEmail] = useState(false);
 
   // Gestione segnalatori (super_admin + segreteria)
   const [segnAssignMap, setSegnAssignMap] = useState<Record<string, string>>({}); // segnalatore_id → agent_id
@@ -147,6 +149,7 @@ export default function UtentiPage() {
     setEditPassword('');
     setShowEditPwd(false);
     setEditAssignId('');
+    setEditEmail('');
   };
 
   const handleDelete = async () => {
@@ -184,6 +187,25 @@ export default function UtentiPage() {
     }
     toast.success('Password aggiornata con successo');
     setEditPassword('');
+  };
+
+  const handleChangeEmail = async () => {
+    if (!showEdit) return;
+    const trimmed = editEmail.trim().toLowerCase();
+    if (!trimmed) { toast.error('Inserisci la nuova email'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) { toast.error('Formato email non valido'); return; }
+    setChangingEmail(true);
+    const { data, error } = await supabase.functions.invoke('admin-update-user', {
+      body: { user_id: showEdit.id, email: trimmed },
+    });
+    setChangingEmail(false);
+    if (error || !data?.success) {
+      toast.error(error?.message ?? data?.error ?? 'Errore cambio email');
+      return;
+    }
+    toast.success(`Email aggiornata → ${trimmed}`);
+    setEditEmail('');
+    load();
   };
 
   const handleCreate = async () => {
@@ -821,6 +843,40 @@ export default function UtentiPage() {
                 </Button>
               </div>
             </div>
+
+            {/* ── Cambio email (solo super_admin) ── */}
+            {isSuperAdmin && (
+              <div className="border-t border-border pt-4 space-y-2">
+                <Label className="flex items-center gap-2 text-sm font-semibold">
+                  <Mail className="w-4 h-4 text-primary" /> Cambia email
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Email attuale: <span className="font-mono font-medium">{showEdit?.email}</span>
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    type="email"
+                    placeholder="nuova@email.it"
+                    value={editEmail}
+                    onChange={e => setEditEmail(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleChangeEmail}
+                    disabled={changingEmail || !editEmail.trim()}
+                    className="shrink-0"
+                  >
+                    {changingEmail ? 'Salvo...' : 'Aggiorna'}
+                  </Button>
+                </div>
+                <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1">
+                  ⚠ L'utente dovrà usare la nuova email per accedere. Comunicagliela.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEdit(null)}>Annulla</Button>
