@@ -69,6 +69,7 @@ export default function PraticaDetailPage() {
   const [agentsForReassign, setAgentsForReassign] = useState<{id:string;nome?:string;email:string}[]>([]);
   const [showReassign, setShowReassign] = useState(false);
   const [reassignTo, setReassignTo] = useState('');
+  const [savingReassign, setSavingReassign] = useState(false);
   const [practiceBanks, setPracticeBanks] = useState<{id:string;bank_id:string;status:string;note?:string;data_invio?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
   const [addingBank, setAddingBank] = useState('');
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
@@ -758,6 +759,26 @@ export default function PraticaDetailPage() {
         });
     }
   }, [isSuperAdmin, isSegreteria, user?.id]);
+
+  // ── Riassegna pratica — auto-save on selection ──────────────────────────────
+  const handleReassignSelect = async (value: string) => {
+    if (!practice) return;
+    setReassignTo(value);
+    const val = value === 'nessuno' ? null : value;
+    setSavingReassign(true);
+    try {
+      const { error } = await supabase.from('practices').update({ assigned_to: val }).eq('id', practice.id);
+      if (error) throw error;
+      toast.success('Pratica riassegnata');
+      setShowReassign(false);
+      setReassignTo('');
+      load();
+    } catch (e) {
+      toast.error('Errore: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSavingReassign(false);
+    }
+  };
 
   // ── Importa Centrale Rischi PDF ─────────────────────────────────────────────
   const handleCRFile = async (file: File) => {
@@ -2626,7 +2647,7 @@ export default function PraticaDetailPage() {
         </div>
       </div>
       {/* Dialog riassegna agente */}
-      <Dialog open={showReassign} onOpenChange={setShowReassign}>
+      <Dialog open={showReassign} onOpenChange={(open) => { if (!savingReassign) { setShowReassign(open); if (!open) setReassignTo(''); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>👤 Riassegna Pratica</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
@@ -2639,10 +2660,15 @@ export default function PraticaDetailPage() {
               <p className="text-xs text-muted-foreground">Puoi assegnare la pratica solo ai tuoi agenti.</p>
             )}
             {isSuperAdmin && (
-              <p className="text-xs text-muted-foreground">Seleziona l'agente a cui assegnare questa pratica.</p>
+              <p className="text-xs text-muted-foreground">Seleziona l'utente a cui assegnare questa pratica. Il salvataggio avviene automaticamente.</p>
             )}
-            <Select value={reassignTo} onValueChange={setReassignTo}>
-              <SelectTrigger><SelectValue placeholder="Seleziona agente..." /></SelectTrigger>
+            <Select value={reassignTo} onValueChange={handleReassignSelect} disabled={savingReassign}>
+              <SelectTrigger>
+                {savingReassign
+                  ? <span className="flex items-center gap-2 text-muted-foreground"><span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin inline-block" />Salvataggio…</span>
+                  : <SelectValue placeholder="Seleziona utente…" />
+                }
+              </SelectTrigger>
               <SelectContent>
                 {isSuperAdmin && <SelectItem value="nessuno">— Rimuovi assegnazione —</SelectItem>}
                 {agentsForReassign.map(a => (
@@ -2652,15 +2678,7 @@ export default function PraticaDetailPage() {
             </Select>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowReassign(false)}>Annulla</Button>
-            <Button onClick={async () => {
-              const val = reassignTo === 'nessuno' ? null : (reassignTo || null);
-              const { error } = await supabase.from('practices').update({ assigned_to: val }).eq('id', practice!.id);
-              if (error) { toast.error('Errore: ' + error.message); return; }
-              toast.success('Pratica riassegnata');
-              setShowReassign(false);
-              load();
-            }} disabled={!reassignTo}>Salva</Button>
+            <Button variant="outline" onClick={() => { setShowReassign(false); setReassignTo(''); }} disabled={savingReassign}>Annulla</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
