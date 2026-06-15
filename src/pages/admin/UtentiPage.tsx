@@ -195,17 +195,25 @@ export default function UtentiPage() {
     if (!trimmed) { toast.error('Inserisci la nuova email'); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) { toast.error('Formato email non valido'); return; }
     setChangingEmail(true);
-    const { data, error } = await supabase.functions.invoke('admin-update-user', {
-      body: { user_id: showEdit.id, email: trimmed },
-    });
-    setChangingEmail(false);
-    if (error || !data?.success) {
-      toast.error(error?.message ?? data?.error ?? 'Errore cambio email');
-      return;
+    try {
+      const res = await fetch('/api/update-user-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: showEdit.id, email: trimmed }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        toast.error(data?.error ?? 'Errore cambio email');
+        return;
+      }
+      toast.success(`Email aggiornata → ${trimmed}`);
+      setEditEmail('');
+      load();
+    } catch (e) {
+      toast.error('Errore di rete durante il cambio email');
+    } finally {
+      setChangingEmail(false);
     }
-    toast.success(`Email aggiornata → ${trimmed}`);
-    setEditEmail('');
-    load();
   };
 
   const handleCreate = async () => {
