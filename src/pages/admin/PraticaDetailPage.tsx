@@ -743,7 +743,7 @@ export default function PraticaDetailPage() {
   // Carica agenti filtrati per ruolo — dipende dall'auth che può arrivare dopo il mount
   useEffect(() => {
     if (isSuperAdmin) {
-      supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome')
+      supabase.from('admin_profiles').select('id,nome,email').in('ruolo', ['agente', 'super_admin']).order('nome')
         .then(r => setAgentsForReassign(r.data ?? []));
     } else if (isSegreteria && user?.id) {
       supabase.from('segreteria_agent_assignments').select('agent_user_id').eq('segreteria_user_id', user.id)

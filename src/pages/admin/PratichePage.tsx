@@ -159,7 +159,7 @@ export default function PratichePage() {
     if (authLoading) return;
     load();
     supabase.from('clients').select('*').order('ragione_sociale').then(r => setClients(r.data ?? []));
-    supabase.from('admin_profiles').select('id,nome,email').eq('ruolo', 'agente').order('nome')
+    supabase.from('admin_profiles').select('id,nome,email').in('ruolo', ['agente', 'super_admin']).order('nome')
       .then(r => setAgents(r.data ?? []));
     supabase.from('banks').select('*').order('nome')
       .then(r => setBanks(r.data ?? []));
