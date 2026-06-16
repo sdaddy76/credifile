@@ -25,6 +25,7 @@ interface Segnalazione {
   agente_id?: string | null;
   note_interne?: string | null;
   created_at: string;
+  file_urls?: { nome: string; url: string }[] | null;
   agente?: { nome: string; nome_cognome: string } | null;
 }
 
@@ -206,6 +207,23 @@ export default function SegnalazioniRicevutePage() {
                           <FileText className="w-3 h-3 shrink-0 mt-0.5" />
                           {seg.note}
                         </p>
+                      )}
+                      {/* Documenti allegati */}
+                      {seg.file_urls && seg.file_urls.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {seg.file_urls.map((f, i) => (
+                            <a
+                              key={i}
+                              href={f.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors max-w-[220px]"
+                            >
+                              <FileText className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{f.nome}</span>
+                            </a>
+                          ))}
+                        </div>
                       )}
                     </div>
                     {/* Cambio stato rapido */}
