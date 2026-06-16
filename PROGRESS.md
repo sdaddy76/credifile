@@ -128,3 +128,7 @@
 [2026-06-16 21:05] Inizio implementazione: link pubblico segnalazione + fix Task segnalatori. Piano: migrazione DB, API pubblica, pagina standalone, route, pannello admin, deploy.
 [2026-06-16 21:05] Skill website caricata. Avvio: migrazione DB segnalazioni_pubbliche + inspect_website_project
 [2026-06-16 21:11] Completati: migrazione DB segnalazioni_pubbliche, api/segnalazione-pubblica.js, SegnalazionePublicaPage.tsx, SegnalazioniRicevutePage.tsx, route /segnala + /admin/segnalazioni-ricevute, menu AdminLayout, banner TasksPage. Avvio build.
+[2026-06-16 21:14] Deploy OK commit e24090e. credifile-eosin.vercel.app. File: SegnalazionePublicaPage, SegnalazioniRicevutePage, api/segnalazione-pubblica.js, AdminLayout (menu Inbox), TasksPage (banner segnalatori), App.tsx (route /segnala + /admin/segnalazioni-ricevute).
+[2026-06-16 21:14] Deploy completo commit e24090e. Tutte le feature implementate e online su credifile-eosin.vercel.app
+[2026-06-16 21:46] Avvio: aggiunta colonna file_urls a segnalazioni_pubbliche + rewrite SegnalazionePublicaPage con upload visura/documenti identica a NuovaSegnalazionePage
+[2026-06-16 21:49] Completati: DB file_urls, API con upload base64->Storage, SegnalazionePublicaPage identica a NuovaSegnalazionePage. Avvio build.
