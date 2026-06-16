@@ -294,18 +294,30 @@ export default async function handler(req, res) {
     );
     const docLinks = signResults.filter(Boolean);
 
-    // 4. KPI finanziari (bilancio più recente per la pratica)
+    // 4. KPI finanziari (ultimi 2 bilanci per confronto)
     let kpiRows = [];
     let annoBilancio = null;
+    let bilanciMulti = [];
     {
       const kpiArr = await fetch(
-        `${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=anno_esercizio,kpi&order=anno_esercizio.desc&limit=1`,
+        `${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=anno_esercizio,kpi,ricavi_vendite,utile_netto&order=anno_esercizio.desc&limit=2`,
         { headers: H },
       ).then(r => r.json()).catch(() => []);
-      if (kpiArr?.[0]) {
-        annoBilancio = kpiArr[0].anno_esercizio;
-        kpiRows = flattenKpi(kpiArr[0].kpi);
+      bilanciMulti = Array.isArray(kpiArr) ? kpiArr : [];
+      if (bilanciMulti[0]) {
+        annoBilancio = bilanciMulti[0].anno_esercizio;
+        kpiRows = flattenKpi(bilanciMulti[0].kpi);
       }
+    }
+
+    // 4b. Dati anagrafici estesi del cliente (storicità, forma giuridica, visura)
+    let clienteExt = {};
+    if (clientId) {
+      const cExt = await fetch(
+        `${SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(clientId)}&select=data_costituzione,forma_giuridica,capitale_sociale,codice_ateco,ateco_descrizione,visura_json,indirizzo`,
+        { headers: H },
+      ).then(r => r.json()).catch(() => []);
+      clienteExt = Array.isArray(cExt) && cExt[0] ? cExt[0] : {};
     }
 
     // 5. Score reputazione (analisi più recente per pratica)
@@ -478,6 +490,113 @@ export default async function handler(req, res) {
   </tbody>
 </table>` : '';
 
+    // ── Profilo aziendale ─────────────────────────────────────────────────
+    const anniAttivita = (() => {
+      if (!clienteExt.data_costituzione) return null;
+      const founded = new Date(clienteExt.data_costituzione);
+      const years = Math.floor((Date.now() - founded.getTime()) / (365.25*24*3600*1000));
+      return years;
+    })();
+    const profiloSection = (clienteExt.data_costituzione || clienteExt.forma_giuridica || clienteExt.codice_ateco) ? `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  🏢 Profilo Aziendale
+</h3>
+<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
+  <tbody>
+    ${clienteExt.forma_giuridica ? `<tr><td style="padding:5px 10px;color:#64748b;width:38%;">Forma giuridica</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${clienteExt.forma_giuridica}</td></tr>` : ''}
+    ${clienteExt.data_costituzione ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Data costituzione</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${new Date(clienteExt.data_costituzione).toLocaleDateString('it-IT')}${anniAttivita ? ` <span style="color:#059669;font-size:12px;">(${anniAttivita} anni di attività)</span>` : ''}</td></tr>` : ''}
+    ${clienteExt.capitale_sociale ? `<tr><td style="padding:5px 10px;color:#64748b;">Capitale sociale</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">€ ${Number(clienteExt.capitale_sociale).toLocaleString('it-IT')}</td></tr>` : ''}
+    ${clienteExt.codice_ateco ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Codice ATECO</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${clienteExt.codice_ateco}${clienteExt.ateco_descrizione ? ` — <span style="font-weight:400;color:#475569;">${clienteExt.ateco_descrizione.substring(0,100)}</span>` : ''}</td></tr>` : ''}
+    ${anniAttivita >= 5 ? `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">✅ Azienda consolidata (${anniAttivita} anni)</span></td></tr>` : anniAttivita !== null ? `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">⚠️ Azienda giovane (${anniAttivita} anni)</span></td></tr>` : ''}
+  </tbody>
+</table>` : '';
+
+    // ── Confronto bilanci YoY ─────────────────────────────────────────────
+    const confrontoSection = (() => {
+      if (bilanciMulti.length < 2) return '';
+      const b0 = bilanciMulti[0]; // più recente
+      const b1 = bilanciMulti[1]; // precedente
+      const kpi0 = flattenKpi(b0.kpi);
+      const kpi1 = flattenKpi(b1.kpi);
+      const rows = kpi0.map(k0 => {
+        const k1 = kpi1.find(k => k.label === k0.label);
+        if (!k1 || k0.valore == null || k1.valore == null) return null;
+        const delta = k0.valore - k1.valore;
+        const pct = k1.valore !== 0 ? ((delta / Math.abs(k1.valore)) * 100) : null;
+        return { label: k0.label, v0: k0.value, v1: k1.value, delta, pct, semaforo0: k0.semaforo };
+      }).filter(Boolean).slice(0, 10);
+      if (rows.length === 0) return '';
+      return `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  📊 Evoluzione Finanziaria — ${b1.anno_esercizio} → ${b0.anno_esercizio}
+</h3>
+<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">
+  <thead><tr style="background:#f1f5f9;">
+    <th style="text-align:left;padding:7px 10px;color:#475569;border-bottom:1px solid #e2e8f0;">Indicatore</th>
+    <th style="text-align:right;padding:7px 10px;color:#475569;border-bottom:1px solid #e2e8f0;">${b1.anno_esercizio}</th>
+    <th style="text-align:right;padding:7px 10px;color:#475569;border-bottom:1px solid #e2e8f0;">${b0.anno_esercizio}</th>
+    <th style="text-align:center;padding:7px 10px;color:#475569;border-bottom:1px solid #e2e8f0;">Variazione</th>
+  </tr></thead>
+  <tbody>
+    ${rows.map((r, i) => {
+      const trendColor = r.delta > 0 ? '#16a34a' : r.delta < 0 ? '#dc2626' : '#64748b';
+      const trendIcon = r.delta > 0 ? '▲' : r.delta < 0 ? '▼' : '━';
+      const pctStr = r.pct != null ? `${r.pct > 0 ? '+' : ''}${r.pct.toFixed(1)}%` : '';
+      return `<tr style="background:${i%2===0?'#fff':'#f8fafc'};">` +
+        `<td style="padding:5px 10px;color:#374151;">${r.label}</td>` +
+        `<td style="padding:5px 10px;text-align:right;color:#64748b;">${r.v1}</td>` +
+        `<td style="padding:5px 10px;text-align:right;font-weight:600;color:#1e293b;">${r.v0}</td>` +
+        `<td style="padding:5px 10px;text-align:center;font-weight:700;color:${trendColor};">${trendIcon} ${pctStr}</td>` +
+        `</tr>`;
+    }).join('')}
+  </tbody>
+</table>`;
+    })();
+
+    // ── Segnali strutturali da visura ─────────────────────────────────────
+    const visuraSection = (() => {
+      const vj = clienteExt.visura_json;
+      if (!vj || !vj.segnali_strutturali?.length) return '';
+      const segnali = vj.segnali_strutturali;
+      const warnings = segnali.filter(s => s.tipo === 'warning');
+      const attenzione = segnali.filter(s => s.tipo === 'attenzione');
+      const positivi = segnali.filter(s => s.tipo === 'positivo');
+      const amm = vj.storico_amministratori ?? [];
+      const sedi = vj.storico_sedi ?? [];
+      const rami = vj.passaggi_rami ?? [];
+      return `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  🔍 Analisi Strutturale da Visura Camerale
+</h3>
+<div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;">
+  <div style="flex:1;min-width:140px;background:#f8fafc;border-radius:8px;padding:10px 14px;border:1px solid #e2e8f0;text-align:center;">
+    <div style="font-size:22px;font-weight:800;color:#1e293b;">${amm.length}</div>
+    <div style="font-size:11px;color:#64748b;margin-top:2px;">Cariche analizzate</div>
+    <div style="font-size:11px;font-weight:600;color:${amm.filter(a=>a.cessato).length>2?'#dc2626':'#374151'};">${amm.filter(a=>a.cessato).length} cessazioni</div>
+  </div>
+  <div style="flex:1;min-width:140px;background:#f8fafc;border-radius:8px;padding:10px 14px;border:1px solid #e2e8f0;text-align:center;">
+    <div style="font-size:22px;font-weight:800;color:#1e293b;">${sedi.length}</div>
+    <div style="font-size:11px;color:#64748b;margin-top:2px;">Sedi rilevate</div>
+    <div style="font-size:11px;font-weight:600;color:${sedi.length>2?'#d97706':'#374151'};">${sedi.filter(s=>s.tipo==='variazione').length} variazioni</div>
+  </div>
+  <div style="flex:1;min-width:140px;background:#f8fafc;border-radius:8px;padding:10px 14px;border:1px solid #e2e8f0;text-align:center;">
+    <div style="font-size:22px;font-weight:800;color:${rami.length>0?'#d97706':'#1e293b'};">${rami.length}</div>
+    <div style="font-size:11px;color:#64748b;margin-top:2px;">Rami d'azienda</div>
+    <div style="font-size:11px;font-weight:600;color:#374151;">${rami.length>0?'Presenti':'Nessuno'}</div>
+  </div>
+</div>
+${[...warnings, ...attenzione, ...positivi].map(s => {
+  const bg = s.tipo==='warning'?'#fef2f2' : s.tipo==='positivo'?'#f0fdf4' : '#fffbeb';
+  const border = s.tipo==='warning'?'#fca5a5' : s.tipo==='positivo'?'#86efac' : '#fde68a';
+  const icon = s.tipo==='warning'?'⚠️' : s.tipo==='positivo'?'✅' : '💡';
+  return `<div style="background:${bg};border-left:4px solid ${border};border-radius:4px;padding:10px 14px;margin-top:8px;">
+  <strong style="font-size:13px;">${icon} ${s.titolo}</strong>
+  <p style="margin:4px 0 0;font-size:12px;color:#374151;">${s.descrizione}</p>
+</div>`;
+}).join('')}
+${vj.data_analisi ? `<p style="font-size:10px;color:#94a3b8;margin-top:8px;text-align:right;">Visura analizzata il ${new Date(vj.data_analisi).toLocaleDateString('it-IT')}</p>` : ''}`;
+    })();
+
     const htmlBody = `<!DOCTYPE html>
 <html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
 <div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
@@ -491,8 +610,11 @@ ${notaHtml}
   📎 Documenti allegati (${docLinks.length})
 </h3>
 <ul style="padding-left:20px;">${docsHtml}</ul>
+${profiloSection}
+${visuraSection}
 ${kpiSection}
 ${generalSection}
+${confrontoSection}
 ${finSection}
 ${bancabSection}
 ${repSection}

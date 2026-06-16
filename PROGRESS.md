@@ -121,3 +121,6 @@
 [2026-06-15 23:22] Revisione capillare completata. Fix deployati: dead code update-user-email.js, label Assegna ad Agente/Admin, cast practice.client_id semplificato. tsc zero errori. Commit d844225
 [2026-06-16 10:32] Fix send-to-bank: parallelizzazione URL signing + fix query reputational_analyses/bilanci_kpi/bancabilita_pesi. Fix scoreBancabilita in PraticaDetailPage (calcolo da bilanci_kpi+pesi). Deploy 143150c.
 [2026-06-16 10:34] Inizio implementazione segnalatore semplificato: api/notifica-segnalazione.js + NuovaSegnalazionePage + nav/route
+[2026-06-16 20:33] Avvio sviluppo: analisi reputazionale visura, comparazione bilanci, email banca migliorata
+[2026-06-16 20:36] Scrittura api/analizza-visura.js, AnalisiFinanziariaTab YoY, ReputazioneTab visura signals, send-to-bank improvements
+[2026-06-16 20:43] Completate: api/analizza-visura.js, AnalisiFinanziariaTab YoY, ReputazioneTab visura+modal, send-to-bank profilo+confronto+visura. Avvio build.

@@ -1177,6 +1177,62 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
         </div>
       )}
 
+      {/* ── Sezione Confronto Bilanci YoY ── */}
+      {bilanci.length >= 2 && (() => {
+        const b0 = bilanci[0];
+        const b1 = bilanci[1];
+        if (!b0?.kpi || !b1?.kpi) return null;
+        type DeltaRow = { label: string; v0: number | null; v1: number | null; pct: number | null };
+        const rows: DeltaRow[] = [];
+        for (const area of Object.keys(AREA_LABELS) as (keyof KpiResult)[]) {
+          const e0 = b0.kpi[area] ?? {}; const e1 = b1.kpi[area] ?? {};
+          for (const key of Object.keys(e0)) {
+            const r0 = e0[key]; const r1 = e1[key];
+            const v0 = r0?.valore ?? null; const v1 = r1?.valore ?? null;
+            const delta = v0 != null && v1 != null ? v0 - v1 : null;
+            const pct = delta != null && v1 != null && v1 !== 0 ? (delta / Math.abs(v1)) * 100 : null;
+            rows.push({ label: r0?.label ?? key, v0, v1, pct });
+          }
+        }
+        return (
+          <div key="confronto-yoy">
+            <Separator className="my-4" />
+            <h3 className="font-semibold text-foreground flex items-center gap-2 mb-3">
+              <TrendingUp className="w-4 h-4 text-primary" />
+              Confronto Bilanci — {b1.anno_esercizio} → {b0.anno_esercizio}
+            </h3>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-muted/50">
+                    <th className="text-left px-3 py-2 text-muted-foreground font-semibold border-b border-border">Indicatore</th>
+                    <th className="text-right px-3 py-2 text-muted-foreground font-semibold border-b border-border">{b1.anno_esercizio}</th>
+                    <th className="text-right px-3 py-2 text-muted-foreground font-semibold border-b border-border">{b0.anno_esercizio}</th>
+                    <th className="text-center px-3 py-2 text-muted-foreground font-semibold border-b border-border">Var. %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => {
+                    const pos = (r.pct ?? 0) > 0; const neg = (r.pct ?? 0) < 0;
+                    return (
+                      <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                        <td className="px-3 py-1.5 text-foreground">{r.label}</td>
+                        <td className="px-3 py-1.5 text-right text-muted-foreground">{r.v1 != null ? r.v1.toFixed(2) : '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-semibold">{r.v0 != null ? r.v0.toFixed(2) : '—'}</td>
+                        <td className={`px-3 py-1.5 text-center font-bold ${pos ? 'text-green-700' : neg ? 'text-red-600' : 'text-muted-foreground'}`}>
+                          {r.pct != null ? `${pos ? '▲ ' : neg ? '▼ ' : '━ '}${Math.abs(r.pct).toFixed(1)}%` : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[10px] text-muted-foreground/60 mt-2 text-right">▲ miglioramento · ▼ peggioramento vs esercizio precedente</p>
+          </div>
+        );
+      })()}
+
       {/* ── Sezione Verifica Bancabilità ── */}
       <Separator />
       <div>

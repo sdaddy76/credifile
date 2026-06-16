@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   RefreshCw, AlertTriangle, CheckCircle2, Building2, User, Users,
   ExternalLink, Clock, TrendingUp, TrendingDown, Newspaper, ShieldAlert,
-  BarChart2, Minus, Ban, RotateCcw, Info,
+  BarChart2, Minus, Ban, RotateCcw, Info, FileSearch, MapPin, Briefcase,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -441,6 +441,43 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
   const [excludeTarget,  setExcludeTarget]  = useState<{ signal: Signal; subjectName: string } | null>(null);
   const [savingExclude,  setSavingExclude]  = useState(false);
 
+  // ── Visura Camerale ────────────────────────────────────────────────────────
+  type VisuraJson = {
+    storico_amministratori?: Array<{ carica: string; nome: string; data_inizio?: string | null; data_fine?: string | null; cessato?: boolean }>;
+    storico_soci?: Array<{ nome: string; percentuale?: number | null; data_variazione?: string | null }>;
+    storico_sedi?: Array<{ indirizzo: string; data_inizio?: string | null; tipo?: string }>;
+    passaggi_rami?: Array<{ descrizione: string; data?: string | null }>;
+    segnali_strutturali?: Array<{ tipo: string; categoria: string; titolo: string; descrizione: string; peso: number }>;
+    anagrafica?: { data_costituzione?: string; forma_giuridica?: string; capitale_sociale?: number; codice_ateco?: string; ateco_descrizione?: string };
+    data_analisi?: string;
+  };
+  const [visuraData,        setVisuraData]        = useState<VisuraJson | null>(null);
+  const [showVisuraModal,   setShowVisuraModal]   = useState(false);
+  const [visuraText,        setVisuraText]        = useState('');
+  const [analyzingVisura,   setAnalyzingVisura]   = useState(false);
+
+  const loadVisuraData = useCallback(async () => {
+    if (!clientId) return;
+    const { data } = await supabase.from('clients').select('visura_json').eq('id', clientId).single();
+    const vj = (data as { visura_json?: VisuraJson } | null)?.visura_json;
+    if (vj?.data_analisi) setVisuraData(vj);
+  }, [clientId]);
+
+  const handleAnalizzaVisura = async () => {
+    if (!visuraText.trim() || visuraText.trim().length < 50) { toast.error('Incolla il testo completo della visura (minimo 50 caratteri)'); return; }
+    setAnalyzingVisura(true);
+    try {
+      const res = await fetch('/api/analizza-visura', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ practice_id: practiceId, visura_testo: visuraText }) });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error ?? 'Errore analisi visura');
+      toast.success(`Visura analizzata — ${data.sommario?.segnali_warning ?? 0} warning, ${data.sommario?.segnali_positivi ?? 0} positivi`);
+      setShowVisuraModal(false);
+      setVisuraText('');
+      await loadVisuraData();
+    } catch(e: unknown) { toast.error('Errore: ' + (e instanceof Error ? e.message : String(e))); }
+    finally { setAnalyzingVisura(false); }
+  };
+
   const loadHistory = useCallback(async () => {
     setLoadingHistory(true);
     const { data } = await supabase
@@ -456,6 +493,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
   }, [practiceId]);
 
   useEffect(() => { loadHistory(); }, [loadHistory]);
+  useEffect(() => { loadVisuraData(); }, [loadVisuraData]);
 
   const handleAnalyze = async () => {
     setLoading(true);
@@ -577,11 +615,95 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
             Ricerca su Google News + DuckDuckGo · 7 query parallele per soggetto · 9 categorie di rischio
           </p>
         </div>
-        <Button onClick={handleAnalyze} disabled={loading} className="gap-2">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Analisi in corso…' : analyses.length > 0 ? 'Aggiorna Analisi' : 'Avvia Analisi'}
-        </Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => setShowVisuraModal(true)} className="gap-1.5">
+            <FileSearch className="w-3.5 h-3.5" /> Analizza Visura
+          </Button>
+          <Button onClick={handleAnalyze} disabled={loading} className="gap-2">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Analisi in corso…' : analyses.length > 0 ? 'Aggiorna Analisi' : 'Avvia Analisi'}
+          </Button>
+        </div>
       </div>
+
+      {/* ── Sezione segnali da visura camerale ── */}
+      {visuraData && visuraData.segnali_strutturali && visuraData.segnali_strutturali.length > 0 && (
+        <Card className="border-blue-200 bg-blue-50/30">
+          <CardHeader className="pb-2 pt-3 px-4">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
+              <span className="flex items-center gap-1.5"><FileSearch className="w-3.5 h-3.5 text-blue-600" /> Segnali da Visura Camerale</span>
+              <div className="flex items-center gap-3 text-[10px] font-normal">
+                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {visuraData.storico_sedi?.length ?? 0} sedi</span>
+                <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {visuraData.storico_amministratori?.length ?? 0} cariche</span>
+                <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" /> {visuraData.passaggi_rami?.length ?? 0} rami</span>
+                <button onClick={() => setShowVisuraModal(true)} className="text-blue-600 hover:underline">aggiorna</button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-3 space-y-2">
+            {visuraData.segnali_strutturali.map((s, i) => (
+              <div key={i} className={`flex items-start gap-2 rounded-lg px-3 py-2 border ${
+                s.tipo === 'warning'    ? 'bg-red-50 border-red-200' :
+                s.tipo === 'attenzione' ? 'bg-amber-50 border-amber-200' :
+                s.tipo === 'positivo'  ? 'bg-green-50 border-green-200' :
+                'bg-muted/30 border-border'}`}>
+                <span className="text-sm mt-0.5">{s.tipo === 'warning' ? '⚠️' : s.tipo === 'positivo' ? '✅' : '💡'}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold">{s.titolo}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{s.descrizione}</p>
+                </div>
+                <Badge variant="outline" className="text-[10px] shrink-0">{s.categoria}</Badge>
+              </div>
+            ))}
+            {visuraData.storico_amministratori && visuraData.storico_amministratori.filter(a => a.cessato).length > 0 && (
+              <div className="mt-2">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Amministratori cessati</p>
+                {visuraData.storico_amministratori.filter(a => a.cessato).map((a, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs py-0.5 border-b border-dashed border-border/50 last:border-0">
+                    <Users className="w-3 h-3 text-muted-foreground shrink-0" />
+                    <span className="font-medium">{a.nome}</span>
+                    <span className="text-muted-foreground">({a.carica})</span>
+                    {a.data_fine && <span className="ml-auto text-muted-foreground/70">cessato {a.data_fine}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground/50 text-right pt-1">
+              Analisi del {visuraData.data_analisi ? new Date(visuraData.data_analisi).toLocaleDateString('it-IT') : '—'}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Modal Analizza Visura ── */}
+      {showVisuraModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={e => { if(e.target===e.currentTarget) setShowVisuraModal(false); }}>
+          <div className="bg-background rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold flex items-center gap-2"><FileSearch className="w-4 h-4 text-primary" /> Analizza Visura Camerale</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Incolla il testo della visura per estrarre segnali strutturali (storico amm., soci, sedi, rami)</p>
+              </div>
+              <button onClick={() => setShowVisuraModal(false)} className="text-muted-foreground hover:text-foreground text-xl leading-none px-2">✕</button>
+            </div>
+            <div className="p-4 flex-1 overflow-auto">
+              <textarea
+                className="w-full h-64 rounded-lg border border-border p-3 text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="Incolla qui il testo completo della visura camerale...&#10;&#10;Il sistema estrarrà automaticamente:&#10;• Storico amministratori e cessazioni&#10;• Variazioni compagine societaria&#10;• Variazioni sede legale&#10;• Passaggi di rami d'azienda&#10;• Segnali di allerta strutturali"
+                value={visuraText}
+                onChange={e => setVisuraText(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground/60 mt-1">{visuraText.length.toLocaleString()} caratteri · Minimo 50 richiesti</p>
+            </div>
+            <div className="p-4 border-t flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setShowVisuraModal(false)}>Annulla</Button>
+              <Button onClick={handleAnalizzaVisura} disabled={analyzingVisura || visuraText.length < 50} className="gap-2">
+                {analyzingVisura ? <><RefreshCw className="w-4 h-4 animate-spin" />Analisi...</> : <><FileSearch className="w-4 h-4" />Analizza Visura</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Storico pill ── */}
       {analyses.length > 1 && (
