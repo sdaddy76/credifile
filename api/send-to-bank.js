@@ -543,7 +543,7 @@ ${repSection}
       body: JSON.stringify({
         practice_id,
         bank_id,
-        bank_nome: bank?.nome ?? null,
+        bank_nome: pb.banks?.nome ?? null,
         destinatari: [bankEmail],
         cc: ccList.length > 0 ? ccList : null,
         bcc: bccList.length > 0 ? bccList : null,
