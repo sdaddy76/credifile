@@ -17,7 +17,17 @@ type KpiResult = Record<string, Record<string, KpiEntry>>;
 interface BilancioRecord {
   id: string; anno_esercizio: number; ragione_sociale: string;
   is_holding: boolean; kpi: KpiResult; created_at: string;
+  ricavi_vendite?: number | null; utile_netto?: number | null;
 }
+
+// Chiavi KPI che sono colonne dirette in bilanci_kpi, NON nel JSON kpi
+const ABSOLUTE_KPI_KEYS: Record<string, 'ricavi_vendite' | 'utile_netto'> = {
+  ricavi_vendite: 'ricavi_vendite',
+  fatturato:      'ricavi_vendite',
+  ricavi:         'ricavi_vendite',
+  utile_netto:    'utile_netto',
+  utile:          'utile_netto',
+};
 interface BankKpiReq {
   id: string; bank_id: string; kpi_key: string; kpi_area: string;
   kpi_label: string; min_value: number | null; max_value: number | null;
@@ -396,7 +406,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
       // bilancio più recente (può essere assente)
       const { data: kpiRows } = await supabase
         .from('bilanci_kpi')
-        .select('id,anno_esercizio,ragione_sociale,is_holding,kpi,created_at')
+        .select('id,anno_esercizio,ragione_sociale,is_holding,kpi,ricavi_vendite,utile_netto,created_at')
         .eq('practice_id', practiceId)
         .order('anno_esercizio', { ascending: false });
       const bil = (kpiRows ?? []) as BilancioRecord[];
@@ -440,8 +450,18 @@ export default function BancabilitaTab({ practiceId }: Props) {
         const bankReqs = reqs.filter(r => r.bank_id === bank.id);
 
         const enriched = bankReqs.map(req => {
-          const areaObj = latestKpi ? latestKpi[req.kpi_area] as Record<string, KpiEntry> | undefined : undefined;
-          const actual  = areaObj?.[req.kpi_key]?.valore ?? null;
+          // 1. Valori assoluti di bilancio: sempre dalla colonna diretta (ricavi_vendite, utile_netto)
+          //    Non dal JSON kpi (che potrebbe contenere 0 o essere assente per questi campi)
+          let actual: number | null = null;
+          const absCol = ABSOLUTE_KPI_KEYS[req.kpi_key];
+          if (absCol && bil.length > 0) {
+            actual = bil[0][absCol] ?? null;
+          }
+          // 2. KPI ratio standard: cerca nel JSON kpi solo se non è un valore assoluto
+          if (actual === null) {
+            const areaObj = latestKpi ? latestKpi[req.kpi_area] as Record<string, KpiEntry> | undefined : undefined;
+            actual = areaObj?.[req.kpi_key]?.valore ?? null;
+          }
           let pass: boolean | null = null;
           if (actual !== null) {
             pass = true;
@@ -782,17 +802,9 @@ export default function BancabilitaTab({ practiceId }: Props) {
                     </div>
                   </CardContent>
 
-                  {/* Dettaglio espanso */}
+                  {/* Dettaglio espanso — lista KPI rispettati e non */}
                   {isOpen && total > 0 && (
                     <div className="border-t border-current/20 bg-white/60 px-4 pb-3 pt-2 rounded-b-lg">
-                      {/* Indice per questa banca */}
-                      <div className="mb-3">
-                        <IndiceBancabilita
-                          latestKpi={latest?.kpi ?? null}
-                          practiceId={practiceId}
-                          bancaId={banca.bankId}
-                        />
-                      </div>
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-muted-foreground border-b border-border/50">
