@@ -7,7 +7,7 @@ import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
   UserCircle, UsersRound, BarChart3, Settings, TrendingUp, BookUser, Layout, Columns2,
-  Calendar, CheckSquare, ClipboardList, FileBarChart2,
+  Calendar, CheckSquare, ClipboardList, FileBarChart2, Send,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -65,8 +65,8 @@ const NAV_AGENTE = [
 ];
 
 const NAV_SEGNALATORE = [
+  { to: '/admin/nuova-segnalazione',    icon: Send,          label: 'Nuova Segnalazione' },
   { to: '/admin/segnalatore-dashboard', icon: TrendingUp,    label: 'Le Mie Statistiche' },
-  { to: '/admin/clienti',               icon: Users,         label: 'Clienti' },
   { to: '/admin/kanban-banche',         icon: Columns2,      label: 'Kanban Banche' },
   { to: '/admin/tasks',                 icon: CheckSquare,   label: 'Task' },
   { to: '/admin/profilo',               icon: UserCircle,    label: 'Profilo' },

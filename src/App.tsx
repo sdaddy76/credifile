@@ -18,6 +18,7 @@ import MieiSegnalPage from "@/pages/admin/MieiSegnalPage";
 import StatistichePage from "@/pages/admin/StatistichePage";
 import ImpostazioniPage from "@/pages/admin/ImpostazioniPage";
 import SegnalatoreDashboardPage from "@/pages/admin/SegnalatoreDashboardPage";
+import NuovaSegnalazionePage from "@/pages/admin/NuovaSegnalazionePage";
 import RubricaPage from "@/pages/admin/RubricaPage";
 import TemplateDocumentiPage from "@/pages/admin/TemplateDocumentiPage";
 import KanbanBanchePage from "@/pages/admin/KanbanBanchePage";
@@ -94,6 +95,7 @@ const App = () => (
             <Route path="miei-agenti"              element={<MieiAgentiPage />} />
             <Route path="miei-segnalatori"          element={<MieiSegnalPage />} />
             <Route path="segnalatore-dashboard"     element={<SegnalatoreDashboardPage />} />
+            <Route path="nuova-segnalazione"         element={<NuovaSegnalazionePage />} />
             <Route path="rubrica-lead"               element={<RubricaPage />} />
             <Route path="template-documenti"         element={<TemplateDocumentiPage />} />
             <Route path="kanban-banche"              element={<KanbanBanchePage />} />
