@@ -976,6 +976,92 @@ export default function PraticaDetailPage() {
     }
   };
 
+  // Propaga un documento (stesso storage_path) a tutte le altre pratiche della stessa società
+  const propagaDocumentoAltrePratiche = async (
+    docId: string,
+    storagePath: string,
+    nomeFile: string,
+    mimeType: string,
+    dimensione: number,
+  ) => {
+    if (!practice?.client_id || !id) return;
+    const docSorgente = documents.find(d => d.id === docId);
+    if (!docSorgente) return;
+
+    const { data: praticheSibling } = await supabase
+      .from('practices')
+      .select('id')
+      .eq('client_id', practice.client_id)
+      .neq('id', id);
+
+    if (!praticheSibling?.length) return;
+
+    let propagati = 0;
+    for (const pratica of praticheSibling) {
+      // Cerca practice_document con lo stesso nome nella pratica sibling
+      const { data: docSibling } = await supabase
+        .from('practice_documents')
+        .select('id, status')
+        .eq('practice_id', pratica.id)
+        .eq('nome', docSorgente.nome)
+        .maybeSingle();
+
+      let targetDocId: string;
+      if (docSibling) {
+        targetDocId = docSibling.id;
+        if (docSibling.status !== 'caricato') {
+          await supabase
+            .from('practice_documents')
+            .update({ status: 'caricato', uploaded_at: new Date().toISOString() })
+            .eq('id', targetDocId);
+        }
+      } else {
+        // Crea un nuovo practice_document nella pratica sibling
+        const { data: nuovoDoc } = await supabase
+          .from('practice_documents')
+          .insert({
+            practice_id: pratica.id,
+            nome: docSorgente.nome,
+            tipo: docSorgente.tipo,
+            obbligatorio: docSorgente.obbligatorio,
+            status: 'caricato',
+            uploaded_at: new Date().toISOString(),
+            template_id: docSorgente.template_id ?? null,
+          })
+          .select('id')
+          .single();
+        if (!nuovoDoc) continue;
+        targetDocId = nuovoDoc.id;
+      }
+
+      // Evita duplicati: non inserire se esiste già un file con lo stesso storage_path
+      const { data: esistente } = await supabase
+        .from('uploaded_files')
+        .select('id')
+        .eq('practice_id', pratica.id)
+        .eq('storage_path', storagePath)
+        .maybeSingle();
+
+      if (!esistente) {
+        await supabase.from('uploaded_files').insert({
+          practice_document_id: targetDocId,
+          practice_id: pratica.id,
+          nome_file: nomeFile,
+          storage_path: storagePath,
+          mime_type: mimeType,
+          dimensione: dimensione,
+          uploaded_by: 'admin',
+        });
+        propagati++;
+      }
+    }
+
+    if (propagati > 0) {
+      const praticheLabel = propagati === 1 ? 'pratica' : 'pratiche';
+      toast.info(`📋 "${nomeFile}" propagato a ${propagati} altra ${praticheLabel} della stessa società`);
+    }
+  };
+
   // Upload documento da admin (per conto del cliente)
   const handleAdminUpload = async (docId: string, file: File) => {
     if (!id) return;
@@ -989,6 +1075,7 @@ export default function PraticaDetailPage() {
       mime_type: file.type, dimensione: file.size, uploaded_by: 'admin',
     });
     await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
+    await propagaDocumentoAltrePratiche(docId, path, file.name, file.type, file.size);
     toast.success(`"${file.name}" caricato con successo`);
     setUploadingAdminDoc(null);
     load();
@@ -1018,6 +1105,7 @@ export default function PraticaDetailPage() {
             mime_type: blob.type, dimensione: bytes, uploaded_by: 'admin',
           });
           await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
+          await propagaDocumentoAltrePratiche(docId, path, name, blob.type, bytes);
           toast.success(`"${name}" importato da Dropbox`);
           load();
         } catch (e) {
