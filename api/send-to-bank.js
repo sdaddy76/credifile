@@ -238,24 +238,30 @@ export default async function handler(req, res) {
       'Prefer': 'return=representation',
     };
 
-    // 1. Pratica + cliente + agente
-    const praticaArr = await fetch(
-      `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
-      { headers: H },
-    ).then(r => r.json());
-    const pratica = praticaArr?.[0];
+    // 1+2+3a. Pratica, banca e lista file in parallelo
+    const [praticaArr, pbArr, filesRaw] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
+        { headers: H },
+      ).then(r => r.json()),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca,email_cc,email_bcc)&limit=1`,
+        { headers: H },
+      ).then(r => r.json()),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`,
+        { headers: H },
+      ).then(r => r.json()).catch(() => []),
+    ]);
+
+    const pratica = Array.isArray(praticaArr) ? praticaArr[0] : null;
     if (!pratica) return res.status(404).json({ success: false, error: 'Pratica non trovata' });
 
     const clientId   = pratica.clients?.id;
     const agentEmail = pratica.agent?.email ?? null;
     const agentNome  = pratica.agent?.nome  ?? null;
 
-    // 2. Banca
-    const pbArr = await fetch(
-      `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca,email_cc,email_bcc)&limit=1`,
-      { headers: H },
-    ).then(r => r.json());
-    const pb = pbArr?.[0];
+    const pb = Array.isArray(pbArr) ? pbArr[0] : null;
     if (!pb) return res.status(404).json({ success: false, error: 'Assegnazione banca non trovata' });
 
     const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
@@ -265,27 +271,28 @@ export default async function handler(req, res) {
     const ccList  = (pb.banks?.email_cc  || '').split(',').map(e => e.trim()).filter(Boolean);
     const bccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
 
-    // 3. File + signed URL (7 giorni)
-    const files = await fetch(
-      `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`,
-      { headers: H },
-    ).then(r => r.json()).catch(() => []) ?? [];
-
-    const docLinks = [];
-    for (const f of files) {
-      if (!f.storage_path) continue;
-      const encodedPath = f.storage_path.split('/').map(s => encodeURIComponent(s)).join('/');
-      const signRes = await fetch(
-        `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
-        { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 315360000 }) },
-      );
-      if (signRes.ok) {
-        const signData = await signRes.json();
-        let url = signData?.signedUrl ?? null;
-        if (!url && signData?.signedURL) url = `${SUPABASE_URL}/storage/v1${signData.signedURL}`;
-        if (url) docLinks.push({ nomeDoc: f.practice_documents?.nome ?? f.nome_file, nomeFile: f.nome_file, url });
-      }
-    }
+    // 3b. URL firmati in parallelo (tutti i file contemporaneamente)
+    const files = Array.isArray(filesRaw) ? filesRaw : [];
+    const signResults = await Promise.all(
+      files
+        .filter(f => !!f.storage_path)
+        .map(async f => {
+          const encodedPath = f.storage_path.split('/').map(s => encodeURIComponent(s)).join('/');
+          try {
+            const signRes = await fetch(
+              `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
+              { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 315360000 }) },
+            );
+            if (!signRes.ok) return null;
+            const signData = await signRes.json();
+            let url = signData?.signedUrl ?? null;
+            if (!url && signData?.signedURL) url = `${SUPABASE_URL}/storage/v1${signData.signedURL}`;
+            if (!url) return null;
+            return { nomeDoc: f.practice_documents?.nome ?? f.nome_file, nomeFile: f.nome_file, url };
+          } catch { return null; }
+        }),
+    );
+    const docLinks = signResults.filter(Boolean);
 
     // 4. KPI finanziari (bilancio più recente per la pratica)
     let kpiRows = [];
@@ -301,44 +308,46 @@ export default async function handler(req, res) {
       }
     }
 
-    // 5. Score reputazione (analisi più recente)
+    // 5. Score reputazione (analisi più recente per pratica)
     let rep = null;
-    if (clientId) {
+    {
       const repArr = await fetch(
-        `${SUPABASE_URL}/rest/v1/reputational_analyses?client_id=eq.${encodeURIComponent(clientId)}&select=score_globale,score_societa,score_amm,score_soci&order=created_at.desc&limit=1`,
+        `${SUPABASE_URL}/rest/v1/reputational_analyses?practice_id=eq.${encodeURIComponent(practice_id)}&select=score_globale,score_societa,score_amm,score_soci&order=created_at.desc&limit=1`,
         { headers: H },
       ).then(r => r.json()).catch(() => []);
-      if (repArr?.[0]) rep = repArr[0];
+      if (Array.isArray(repArr) && repArr[0]) rep = repArr[0];
     }
 
-    // 6. Indice bancabilità — calcolato dai pesi banca + KPI cliente
-    // bancabilita_pesi ha chiave (banca_id, kpi_key), NON client_id
+    // 6. Indice bancabilità — pesi default (banca_id IS NULL) + override banca specifica + KPI pratica
     let bancabScore = null;
-    if (clientId) {
-      try {
-        const [pesiArr, kpiLatest] = await Promise.all([
-          fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=eq.${encodeURIComponent(bank_id)}&select=kpi_key,kpi_area,peso,soglia_ottimo,soglia_suff,soglia_critica,inverso,attivo`, { headers: H }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?client_id=eq.${encodeURIComponent(clientId)}&select=kpi&order=anno_bilancio.desc&limit=1`, { headers: H }).then(r => r.json()),
-        ]);
-        const pesi   = (pesiArr  ?? []).filter(p => p.attivo !== false);
-        const kpiObj = kpiLatest?.[0]?.kpi ?? null;
-        if (pesi.length > 0 && kpiObj) {
-          let pesoPonderato = 0, sommaScore = 0;
-          for (const p of pesi) {
-            const area   = kpiObj[p.kpi_area];
-            const entry  = area?.[p.kpi_key];
-            const valore = entry?.value ?? entry?.valore ?? null;
-            if (valore == null) continue;
-            const num    = typeof valore === 'number' ? valore : parseFloat(valore);
-            if (isNaN(num)) continue;
-            const s = calcolaScoreNode(num, p.soglia_ottimo, p.soglia_suff, p.soglia_critica, !!p.inverso);
-            sommaScore   += s * (p.peso ?? 1);
-            pesoPonderato += (p.peso ?? 1);
-          }
-          if (pesoPonderato > 0) bancabScore = Math.round(sommaScore / pesoPonderato);
+    try {
+      const [pesiDefault, pesiOverride, kpiLatest] = await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=is.null&attivo=eq.true&select=kpi_key,kpi_area,peso,soglia_ottimo,soglia_suff,soglia_critica,inverso`, { headers: H }).then(r => r.json()),
+        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=eq.${encodeURIComponent(bank_id)}&attivo=eq.true&select=kpi_key,kpi_area,peso,soglia_ottimo,soglia_suff,soglia_critica,inverso`, { headers: H }).then(r => r.json()),
+        fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=kpi&order=anno_esercizio.desc&limit=1`, { headers: H }).then(r => r.json()),
+      ]);
+      // Merge: override banca ha priorità sui default per lo stesso kpi_key
+      const defaults  = Array.isArray(pesiDefault)  ? pesiDefault  : [];
+      const overrides = Array.isArray(pesiOverride) ? pesiOverride : [];
+      const merged = defaults.map(d => overrides.find(o => o.kpi_key === d.kpi_key) ?? d);
+      for (const o of overrides) { if (!merged.find(m => m.kpi_key === o.kpi_key)) merged.push(o); }
+      const pesi   = merged.filter(p => (p.peso ?? 0) > 0);
+      const kpiObj = (Array.isArray(kpiLatest) && kpiLatest[0]?.kpi) ? kpiLatest[0].kpi : null;
+      if (pesi.length > 0 && kpiObj) {
+        let pesoPonderato = 0, sommaScore = 0;
+        for (const p of pesi) {
+          const entry  = kpiObj[p.kpi_area]?.[p.kpi_key];
+          const valore = entry?.valore ?? entry?.value ?? null;
+          if (valore == null) continue;
+          const num = typeof valore === 'number' ? valore : parseFloat(valore);
+          if (isNaN(num)) continue;
+          const s = calcolaScoreNode(num, p.soglia_ottimo, p.soglia_suff, p.soglia_critica, !!p.inverso);
+          sommaScore    += s * (p.peso ?? 1);
+          pesoPonderato += (p.peso ?? 1);
         }
-      } catch { /* ignora errori bancabilità */ }
-    }
+        if (pesoPonderato > 0) bancabScore = Math.round(sommaScore / pesoPonderato);
+      }
+    } catch { /* ignora errori bancabilità */ }
 
     // 6b. Finanziamenti in corso
     let financing = [];
