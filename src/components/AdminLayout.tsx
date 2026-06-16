@@ -7,7 +7,7 @@ import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
   UserCircle, UsersRound, BarChart3, Settings, TrendingUp, BookUser, Layout, Columns2,
-  Calendar, CheckSquare, ClipboardList, FileBarChart2, Send,
+  Calendar, CheckSquare, ClipboardList, FileBarChart2, Send, Inbox,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -26,6 +26,7 @@ const NAV_SUPER = [
   { to: '/admin/checklist-template', icon: ClipboardList,   label: 'Checklist' },
   { to: '/admin/report',             icon: FileBarChart2,   label: 'Report' },
   { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
+  { to: '/admin/segnalazioni-ricevute', icon: Inbox,        label: 'Segnalazioni Ricevute' },
   { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/statistiche',        icon: BarChart3,       label: 'Statistiche' },
   { to: '/admin/utenti',             icon: UserCog,         label: 'Utenti' },
@@ -45,6 +46,7 @@ const NAV_SEGRETERIA = [
   { to: '/admin/checklist-template', icon: ClipboardList,   label: 'Checklist' },
   { to: '/admin/report',             icon: FileBarChart2,   label: 'Report' },
   { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
+  { to: '/admin/segnalazioni-ricevute', icon: Inbox,        label: 'Segnalazioni Ricevute' },
   { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/statistiche',        icon: BarChart3,       label: 'Statistiche' },
   { to: '/admin/miei-agenti',        icon: UsersRound,      label: 'Miei Agenti' },

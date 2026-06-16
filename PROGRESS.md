@@ -124,3 +124,7 @@
 [2026-06-16 20:33] Avvio sviluppo: analisi reputazionale visura, comparazione bilanci, email banca migliorata
 [2026-06-16 20:36] Scrittura api/analizza-visura.js, AnalisiFinanziariaTab YoY, ReputazioneTab visura signals, send-to-bank improvements
 [2026-06-16 20:43] Completate: api/analizza-visura.js, AnalisiFinanziariaTab YoY, ReputazioneTab visura+modal, send-to-bank profilo+confronto+visura. Avvio build.
+[2026-06-16 20:46] Deploy completato commit cb0cc14: api/analizza-visura.js, YoY bilanci, ReputazioneTab visura modal, send-to-bank profilo+confronto+visura. credifile-eosin.vercel.app
+[2026-06-16 21:05] Inizio implementazione: link pubblico segnalazione + fix Task segnalatori. Piano: migrazione DB, API pubblica, pagina standalone, route, pannello admin, deploy.
+[2026-06-16 21:05] Skill website caricata. Avvio: migrazione DB segnalazioni_pubbliche + inspect_website_project
+[2026-06-16 21:11] Completati: migrazione DB segnalazioni_pubbliche, api/segnalazione-pubblica.js, SegnalazionePublicaPage.tsx, SegnalazioniRicevutePage.tsx, route /segnala + /admin/segnalazioni-ricevute, menu AdminLayout, banner TasksPage. Avvio build.

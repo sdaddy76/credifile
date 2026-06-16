@@ -36,7 +36,8 @@ const STATO_COLOR: Record<string, string> = {
 };
 
 export default function TasksPage() {
-  const { user, isSuperAdmin, isSegreteria } = useAuth();
+  const { user, isSuperAdmin, isSegreteria, role } = useAuth();
+  const isSegnalatore = role === 'segnalatore';
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,6 +113,18 @@ export default function TasksPage() {
         <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <strong>{scadutiCount} task scadut{scadutiCount > 1 ? 'i' : 'o'}</strong> — verifica e aggiorna lo stato
+        </div>
+      )}
+
+      {/* Banner informativo per segnalatori */}
+      {isSegnalatore && !loading && tasks.length === 0 && (
+        <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            Questa sezione mostra le <strong>attività assegnate a te</strong> dall'agente di riferimento
+            sulle pratiche in corso. Al momento non hai task aperte — verranno visualizzate
+            non appena il tuo agente te ne assegnerà una.
+          </span>
         </div>
       )}
 

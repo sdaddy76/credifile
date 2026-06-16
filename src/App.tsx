@@ -36,6 +36,8 @@ import ConsulenteDashboard from "@/pages/consulente/ConsulenteDashboard";
 import NuovoReportWizard from "@/pages/consulente/NuovoReportWizard";
 import ProfiloConsulentePage from "@/pages/consulente/ProfiloConsulentePage";
 import BancaPortalPage from "@/pages/banca/BancaPortalPage";
+import SegnalazionePublicaPage from "@/pages/public/SegnalazionePublicaPage";
+import SegnalazioniRicevutePage from "@/pages/admin/SegnalazioniRicevutePage";
 
 const queryClient = new QueryClient();
 
@@ -62,6 +64,7 @@ const App = () => (
           {/* Portale cliente — pubblico */}
           <Route path="/accesso" element={<ClientAccessPage />} />
           <Route path="/portale/:practiceId" element={<ClientPortalPage />} />
+          <Route path="/segnala" element={<SegnalazionePublicaPage />} />
 
           {/* Auth */}
           <Route path="/login" element={<LoginPage />} />
@@ -103,6 +106,7 @@ const App = () => (
             <Route path="tasks"                      element={<TasksPage />} />
             <Route path="checklist-template"         element={<ChecklistTemplatePage />} />
             <Route path="report"                      element={<ReportPage />} />
+            <Route path="segnalazioni-ricevute"       element={<SegnalazioniRicevutePage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
