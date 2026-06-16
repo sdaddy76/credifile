@@ -336,18 +336,81 @@ export default function PraticaDetailPage() {
 
   const loadScores = async () => {
     if (!id) return;
-    // Score Bancabilità: media semafori da bancabilita_pesi
-    const { data: pesi } = await supabase
-      .from('bancabilita_pesi')
-      .select('semaforo')
-      .eq('practice_id', id);
-    if (pesi && pesi.length > 0) {
-      const scores = (pesi as { semaforo: string }[]).map(p =>
-        p.semaforo === 'verde' ? 100 : p.semaforo === 'giallo' ? 50 : 0
-      );
-      setScoreBancabilita(Math.round(scores.reduce((a, b) => a + b, 0) / scores.length));
+
+    // ── Score Bancabilità ─────────────────────────────────────────────────────
+    // 1. Bilancio più recente per questa pratica
+    const { data: bilancioRow } = await supabase
+      .from('bilanci_kpi')
+      .select('kpi')
+      .eq('practice_id', id)
+      .order('anno_esercizio', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    type KpiAreaMap = Record<string, { valore: number | null }>;
+    const latestKpi = (bilancioRow?.kpi ?? null) as Record<string, KpiAreaMap> | null;
+
+    if (latestKpi) {
+      // 2. Pesi di bancabilità (configurazione globale default, banca_id IS NULL)
+      const { data: pesiRows } = await supabase
+        .from('bancabilita_pesi')
+        .select('kpi_key,kpi_area,peso,soglia_ottimo,soglia_suff,soglia_critica,inverso')
+        .is('banca_id', null)
+        .eq('attivo', true);
+
+      type PesoRow = {
+        kpi_key: string; kpi_area: string; peso: number;
+        soglia_ottimo: number | null; soglia_suff: number | null;
+        soglia_critica: number | null; inverso: boolean;
+      };
+      const pesiList = (pesiRows ?? []) as PesoRow[];
+
+      if (pesiList.length > 0) {
+        // Replica la logica calcolaScore di IndiceBancabilita.tsx
+        const calcScore = (
+          v: number,
+          ottimo: number | null, suff: number | null, critica: number | null,
+          inverso: boolean,
+        ): number => {
+          if (ottimo === null || suff === null || critica === null) return 50;
+          if (!inverso) {
+            if (v >= ottimo)  return 100;
+            if (v <= critica) return 0;
+            if (v >= suff) return 55 + ((v - suff) / (ottimo - suff)) * 45;
+            return ((v - critica) / (suff - critica)) * 55;
+          } else {
+            if (v <= ottimo)  return 100;
+            if (v >= critica) return 0;
+            if (v <= suff) return 55 + ((suff - v) / (suff - ottimo)) * 45;
+            return ((critica - v) / (critica - suff)) * 55;
+          }
+        };
+
+        const kpiScores = pesiList
+          .filter(p => p.peso > 0)
+          .map(p => {
+            const valore = latestKpi[p.kpi_area]?.[p.kpi_key]?.valore ?? null;
+            const score = valore !== null
+              ? Math.round(Math.min(100, Math.max(0,
+                  calcScore(valore, p.soglia_ottimo, p.soglia_suff, p.soglia_critica, p.inverso)
+                )))
+              : null;
+            const contributo = score !== null ? (p.peso * score) / 100 : null;
+            return { peso: p.peso, score, contributo };
+          });
+
+        const disponibili = kpiScores.filter(k => k.score !== null);
+        if (disponibili.length > 0) {
+          const sommaContributi = disponibili.reduce((s, k) => s + (k.contributo ?? 0), 0);
+          const sommaPesi       = disponibili.reduce((s, k) => s + k.peso, 0);
+          if (sommaPesi > 0) {
+            setScoreBancabilita(Math.round((sommaContributi / sommaPesi) * 100));
+          }
+        }
+      }
     }
-    // Score Reputazione: ultimo score_globale da reputational_analyses
+
+    // ── Score Reputazione ─────────────────────────────────────────────────────
     const { data: rep } = await supabase
       .from('reputational_analyses')
       .select('score_globale')
