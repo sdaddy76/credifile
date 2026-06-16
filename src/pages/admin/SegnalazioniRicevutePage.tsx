@@ -25,13 +25,13 @@ interface Segnalazione {
   agente_id?: string | null;
   note_interne?: string | null;
   created_at: string;
-  agente?: { nome: string; cognome: string } | null;
+  agente?: { nome: string; nome_cognome: string } | null;
 }
 
 interface Agente {
   id: string;
   nome: string;
-  cognome: string;
+  nome_cognome: string;
   ruolo: string;
 }
 
@@ -57,9 +57,9 @@ export default function SegnalazioniRicevutePage() {
   const loadAgenti = async () => {
     const { data } = await supabase
       .from('admin_profiles')
-      .select('id, nome, cognome, ruolo')
+      .select('id, nome, nome_cognome, ruolo')
       .in('ruolo', ['agente', 'super_admin'])
-      .order('cognome');
+      .order('nome_cognome');
     setAgenti((data ?? []) as Agente[]);
   };
 
@@ -68,7 +68,7 @@ export default function SegnalazioniRicevutePage() {
     setLoading(true);
     let q = supabase
       .from('segnalazioni_pubbliche')
-      .select('*, agente:agente_id(nome, cognome)')
+      .select('*, agente:agente_id(nome, nome_cognome)')
       .order('created_at', { ascending: false });
     if (filtroStato && filtroStato !== 'tutte') q = q.eq('stato', filtroStato);
     const { data, error } = await q.limit(100);
@@ -188,7 +188,7 @@ export default function SegnalazioniRicevutePage() {
                         </Badge>
                         {seg.agente && (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
-                            <User className="w-3 h-3" /> {seg.agente.nome} {seg.agente.cognome}
+                            <User className="w-3 h-3" /> {seg.agente.nome_cognome}
                           </span>
                         )}
                       </div>
@@ -238,7 +238,7 @@ export default function SegnalazioniRicevutePage() {
                           <SelectContent>
                             {agenti.map(a => (
                               <SelectItem key={a.id} value={a.id} className="text-xs">
-                                {a.nome} {a.cognome} ({a.ruolo})
+                                {a.nome_cognome} ({a.ruolo})
                               </SelectItem>
                             ))}
                           </SelectContent>

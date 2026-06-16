@@ -132,3 +132,5 @@
 [2026-06-16 21:14] Deploy completo commit e24090e. Tutte le feature implementate e online su credifile-eosin.vercel.app
 [2026-06-16 21:46] Avvio: aggiunta colonna file_urls a segnalazioni_pubbliche + rewrite SegnalazionePublicaPage con upload visura/documenti identica a NuovaSegnalazionePage
 [2026-06-16 21:49] Completati: DB file_urls, API con upload base64->Storage, SegnalazionePublicaPage identica a NuovaSegnalazionePage. Avvio build.
+[2026-06-16 21:52] Deploy OK commit f946c22. Pagina pubblica /segnala aggiornata con 4 card (Dati Cliente, Visura, Altri Documenti, Note) + upload file via base64->Storage.
+[2026-06-16 21:52] Deploy f946c22 OK. SegnalazionePublicaPage riscritta con 4 card identiche a NuovaSegnalazionePage + upload file via base64 su Supabase Storage.
