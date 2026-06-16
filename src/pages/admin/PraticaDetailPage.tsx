@@ -1354,9 +1354,18 @@ export default function PraticaDetailPage() {
 
           {/* ── Score Rischio Complessivo ── */}
           {(scoreBancabilita !== null || scoreReputazione !== null) && (() => {
-            const sb = scoreBancabilita ?? 50;
-            const sr = scoreReputazione ?? 50;
-            const scoreComplessivo = Math.round(sb * 0.6 + sr * 0.4);
+            // Calcolo pesato solo sui valori disponibili (non usa valori fantoccio)
+            const hasB = scoreBancabilita !== null;
+            const hasR = scoreReputazione !== null;
+            const pesoB = hasB ? 0.6 : 0;
+            const pesoR = hasR ? 0.4 : 0;
+            const totPeso = pesoB + pesoR;
+            const scoreComplessivo = totPeso > 0
+              ? Math.round(((hasB ? scoreBancabilita! * pesoB : 0) + (hasR ? scoreReputazione! * pesoR : 0)) / totPeso)
+              : 0;
+            // Barre: mostra il valore reale, 0 se assente
+            const barB = hasB ? scoreBancabilita! : 0;
+            const barR = hasR ? scoreReputazione! : 0;
             const gaugeColor = scoreComplessivo >= 70 ? '#22c55e' : scoreComplessivo >= 40 ? '#f59e0b' : '#ef4444';
             const gaugeBg = scoreComplessivo >= 70 ? 'bg-green-50 border-green-200' : scoreComplessivo >= 40 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
             const labelColor = scoreComplessivo >= 70 ? 'text-green-700' : scoreComplessivo >= 40 ? 'text-amber-700' : 'text-red-700';
@@ -1405,7 +1414,7 @@ export default function PraticaDetailPage() {
                       <span className="text-muted-foreground">Bancabilità <span className="text-[10px]">(60%)</span></span>
                       <div className="flex items-center gap-2">
                         <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${sb}%` }} />
+                          <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${barB}%` }} />
                         </div>
                         <span className="font-semibold w-8 text-right">{scoreBancabilita ?? '—'}</span>
                       </div>
@@ -1414,7 +1423,7 @@ export default function PraticaDetailPage() {
                       <span className="text-muted-foreground">Reputazione <span className="text-[10px]">(40%)</span></span>
                       <div className="flex items-center gap-2">
                         <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-purple-500 transition-all" style={{ width: `${sr}%` }} />
+                          <div className="h-full rounded-full bg-purple-500 transition-all" style={{ width: `${barR}%` }} />
                         </div>
                         <span className="font-semibold w-8 text-right">{scoreReputazione ?? '—'}</span>
                       </div>

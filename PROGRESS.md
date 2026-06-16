@@ -118,3 +118,4 @@
 [2026-06-15 23:16] Avvio revisione capillare codice: tsc check + review file modificati
 [2026-06-15 23:16] tsc --noEmit OK (zero errori). Avvio revisione PraticaDetailPage.tsx
 [2026-06-15 23:19] Revisione completata: 3 fix da applicare - dead code update-user-email.js, label agente PratichePage, cast ridondante PraticaDetailPage
+[2026-06-15 23:22] Revisione capillare completata. Fix deployati: dead code update-user-email.js, label Assegna ad Agente/Admin, cast practice.client_id semplificato. tsc zero errori. Commit d844225
