@@ -285,8 +285,9 @@ export function parseCentraleRischi(fullText: string): CRResult {
       usedFin4Idx.add(fin4.idx);
 
       const { nums, idx: numIdx } = fin4;
-      // pdfjs order for Gruppo 2: Utilizzato, Accordato, AccOp, SaldoMedio
-      const [utilizzato, accordato, accordato_operativo, saldo_medio] = nums;
+      // Ordine colonne BDI (da sinistra): Accordato, AccordatoOp, Utilizzato, SaldoMedio
+      // Utilizzato = debito residuo attuale; Accordato = importo iniziale concesso
+      const [accordato, accordato_operativo, utilizzato, saldo_medio] = nums;
 
       // ImportoGarantito dal Gruppo 1 tra catIdx e numIdx
       const g1 = twoNums.find(t => t.idx > catIdx && t.idx < numIdx);

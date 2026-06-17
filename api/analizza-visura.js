@@ -51,12 +51,20 @@ function parseSoci(text) {
 
 // ── Storico sedi ──────────────────────────────────────────────────────────
 function parseSedi(text) {
-  const result = [];
+  const raw = [];
   for (const m of [...text.matchAll(/SEDE\s+LEGALE[:\s]+([^\n\r]{10,120})(?:[^\n\r]{0,60}(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4}))?/gi)])
-    result.push({ indirizzo: m[1].trim(), data_inizio: m[2]??null, tipo: 'sede_legale' });
+    raw.push({ indirizzo: m[1].trim(), data_inizio: m[2]??null, tipo: 'sede_legale' });
   for (const m of [...text.matchAll(/(?:VARIAZIONE|TRASFERIMENTO)\s+(?:DI\s+)?SEDE[:\s]+([^\n\r]{10,120})(?:[^\n\r]{0,60}(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4}))?/gi)])
-    result.push({ indirizzo: m[1].trim(), data_inizio: m[2]??null, tipo: 'variazione' });
-  return result;
+    raw.push({ indirizzo: m[1].trim(), data_inizio: m[2]??null, tipo: 'variazione' });
+  // Deduplicazione: "SEDE LEGALE" appare molte volte nel testo con lo stesso indirizzo.
+  // Manteniamo solo la prima occorrenza per ogni indirizzo normalizzato (primi 50 char).
+  const seen = new Set();
+  return raw.filter(r => {
+    const key = r.indirizzo.toLowerCase().replace(/\s{2,}/g, ' ').trim().substring(0, 50);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // ── Rami d'azienda ────────────────────────────────────────────────────────
