@@ -97,16 +97,16 @@ function parseSoci(raw: string): { soci: Socio[]; sociCFs: Set<string> } {
   const sociCFs = new Set<string>();
 
   // ── STRATEGIA PRINCIPALE: pattern diretto NOME + CF nella stessa sequenza ──
-  // Cattura "D'OFFIZI ALESSIO DFFLSS84H25H501L" in un colpo solo
-  // senza dipendere dalla finestra "prima del CF"
-  const DIRETTO_RE = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{0,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{0,24}){1,3})\s+([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
+  // Cattura sia "D'OFFIZI ALESSIO DFFLSS84H25H501L" che "D'OFFIZI ALESSIO CF DFFLSS84H25H501L"
+  // (l'etichetta "CF" o "Codice Fiscale" tra nome e valore è opzionale)
+  const DIRETTO_RE = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{0,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{0,24}){1,3})\s+(?:C(?:odice)?\s*F(?:iscale)?\s*[:\-]?\s*)?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
   let dm: RegExpExecArray | null;
   while ((dm = DIRETTO_RE.exec(s4)) !== null) {
     const nome = dm[1].replace(/\s{2,}/g, ' ').trim();
     const cf   = dm[2];
     if (seen.has(cf)) continue;
-    // Scarta se il "nome" è in realtà una parola tecnica singola come "CODICE FISCALE"
-    if (/^(?:CODICE|FISCALE|SEZIONE|TIPO|VALORE|QUOTA|SOCI|NOME|COGNOME)$/i.test(nome)) continue;
+    // Scarta se il "nome" catturato è in realtà un'etichetta tecnica
+    if (/^(?:CODICE\s+FISCALE|CODICE|FISCALE|SEZIONE|TIPO|VALORE|QUOTA|SOCI|NOME|COGNOME)\b/i.test(nome)) continue;
     seen.add(cf);
     sociCFs.add(cf);
 
@@ -265,11 +265,17 @@ function parseAmministratori(raw: string, sociCFs: Set<string> = new Set()): Amm
     seenCFs.add(cf);
     const carica = caricaMatch[1].trim();
 
-    // Cerca nome nelle 250 char PRIMA del CF (layout più comune: NOME CF carica)
+    // Cerca nome nelle 250 char PRIMA del CF
+    // Strategia: trova l'ULTIMA sequenza ALL-CAPS che sembra un nome di persona
+    // (funziona anche quando c'è testo minuscolo tra il nome e il CF)
     const beforeCF = s5.substring(Math.max(0, cfm.index - 250), cfm.index);
-    let nome = beforeCF
-      .match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)\s*(?:C(?:odice)?\s*F(?:iscale)?|CF\.?)?\s*$/)?.[1]
-      ?.trim() ?? '';
+    const nameRe   = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{1,24}){1,3})\b/g;
+    const nameMatches = Array.from(beforeCF.matchAll(nameRe));
+    let nome = '';
+    for (let k = nameMatches.length - 1; k >= 0; k--) {
+      const cand = nameMatches[k][1].trim();
+      if (isPersonName(cand)) { nome = cand; break; }
+    }
 
     if (!isPersonName(nome)) {
       // Prova dopo il CF (layout alternativo: CF NOME carica)
@@ -385,12 +391,11 @@ function parseVisura(text: string): VisuraData {
     /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
     /\bCF\b\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
   ]);
-  // Se CF === PIVA (ditta individuale) cerca un CF persona fisica nel testo
+  // Se CF === PIVA (SRL/SPA) restituisce la PIVA — non cercare CF di persona fisica
   const codice_fiscale = (() => {
     if (codice_fiscale_raw && codice_fiscale_raw !== piva) return codice_fiscale_raw;
-    // Fallback: cerca CF alfanumerico 16 char (persona fisica) se non già trovato
-    const cfPF = flat.match(/\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/)?.[1];
-    return cfPF ?? (codice_fiscale_raw !== piva ? codice_fiscale_raw : undefined);
+    // Per aziende, CF coincide con P.IVA: usiamo P.IVA come valore canonico
+    return piva;
   })();
 
   // ── Sede Legale ───────────────────────────────────────────────────────────
@@ -417,7 +422,11 @@ function parseVisura(text: string): VisuraData {
   const telMatch = flat.match(
     /\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s\-]?\d{5,10}|3\d{2}[\s\-]?\d{6,7}))\b/
   );
-  const telefono = telMatch?.[1]?.replace(/\s+/g, ' ').trim();
+  const telefonoRaw = telMatch?.[1]?.replace(/\s+/g, ' ').trim();
+  // Scarta se il numero estratto coincide con la P.IVA (falso positivo frequente)
+  const telefono = (telefonoRaw && piva && telefonoRaw.replace(/[\s\-]/g, '') === piva)
+    ? undefined
+    : telefonoRaw;
 
   // ── Data atto di costituzione ─────────────────────────────────────────────
   const data_costituzione = get([
