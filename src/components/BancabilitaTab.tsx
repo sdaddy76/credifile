@@ -18,6 +18,7 @@ interface BilancioRecord {
   id: string; anno_esercizio: number; ragione_sociale: string;
   is_holding: boolean; kpi: KpiResult; created_at: string;
   ricavi_vendite?: number | null; utile_netto?: number | null;
+  utile_perdita_esercizio?: number | null;
 }
 
 // Chiavi KPI che sono colonne dirette in bilanci_kpi, NON nel JSON kpi
@@ -406,7 +407,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
       // bilancio più recente (può essere assente)
       const { data: kpiRows } = await supabase
         .from('bilanci_kpi')
-        .select('id,anno_esercizio,ragione_sociale,is_holding,kpi,ricavi_vendite,utile_netto,created_at')
+        .select('id,anno_esercizio,ragione_sociale,is_holding,kpi,ricavi_vendite,utile_netto,utile_perdita_esercizio,created_at')
         .eq('practice_id', practiceId)
         .order('anno_esercizio', { ascending: false });
       const bil = (kpiRows ?? []) as BilancioRecord[];
@@ -451,11 +452,11 @@ export default function BancabilitaTab({ practiceId }: Props) {
 
         const enriched = bankReqs.map(req => {
           // 1. Valori assoluti di bilancio: sempre dalla colonna diretta (ricavi_vendite, utile_netto)
-          //    Non dal JSON kpi (che potrebbe contenere 0 o essere assente per questi campi)
+          //    Per utile_netto usa utile_perdita_esercizio come fallback (stessa voce, campo alternativo)
           let actual: number | null = null;
           const absCol = ABSOLUTE_KPI_KEYS[req.kpi_key];
           if (absCol && bil.length > 0) {
-            actual = bil[0][absCol] ?? null;
+            actual = bil[0][absCol] ?? (absCol === 'utile_netto' ? (bil[0].utile_perdita_esercizio ?? null) : null);
           }
           // 2. KPI ratio standard: cerca nel JSON kpi solo se non è un valore assoluto
           if (actual === null) {
@@ -661,28 +662,40 @@ export default function BancabilitaTab({ practiceId }: Props) {
               const hasFail = banca.failCount > 0;
               const noReqs  = total === 0;
 
-              const cardCls = noReqs
+              const hasAtecoFail = banca.atecoPass === false;
+
+              const cardCls = hasAtecoFail || hasFail
+                ? 'border-red-300 bg-red-50'
+                : noReqs
                 ? 'border-gray-200 bg-gray-50'
-                : allPass  ? 'border-green-300 bg-green-50'
-                : hasFail  ? 'border-red-300 bg-red-50'
+                : allPass
+                ? 'border-green-300 bg-green-50'
                 : 'border-amber-300 bg-amber-50';
 
-              const iconBg = noReqs
+              const iconBg = hasAtecoFail || hasFail
+                ? 'bg-red-100 text-red-600'
+                : noReqs
                 ? 'bg-gray-100 text-gray-400'
-                : allPass  ? 'bg-green-100 text-green-600'
-                : hasFail  ? 'bg-red-100 text-red-600'
+                : allPass
+                ? 'bg-green-100 text-green-600'
                 : 'bg-amber-100 text-amber-600';
 
-              const statusText = noReqs
+              const statusText = hasFail
+                ? 'Non bancabile ❌'
+                : hasAtecoFail
+                ? 'ATECO non compatibile ❌'
+                : noReqs
                 ? 'Nessun requisito KPI'
-                : allPass  ? 'Bancabile ✅'
-                : hasFail  ? 'Non bancabile ❌'
+                : allPass
+                ? 'Bancabile ✅'
                 : 'Dati incompleti ⚠️';
 
-              const statusColor = noReqs
+              const statusColor = hasAtecoFail || hasFail
+                ? 'text-red-700 font-semibold'
+                : noReqs
                 ? 'text-gray-500'
-                : allPass  ? 'text-green-700 font-semibold'
-                : hasFail  ? 'text-red-700 font-semibold'
+                : allPass
+                ? 'text-green-700 font-semibold'
                 : 'text-amber-700 font-semibold';
 
               const isOpen = expanded === banca.bankId;
