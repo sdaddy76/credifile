@@ -488,12 +488,25 @@ function parseRighe(righe: string[][]): Transazione[] {
 
   // Deduplicazione: rimuove duplicati esatti (stessa data + importo + descrizione)
   const seen = new Set<string>();
-  return transazioni.filter(t => {
+  const deduped = transazioni.filter(t => {
     const key = `${t.data_valuta}|${t.importo}|${t.descrizione.substring(0, 40)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+
+  // Outlier filter: se l'importo massimo è > 100× il secondo massimo, è quasi
+  // certamente un saldo progressivo estratto erroneamente come importo transazione.
+  // (es. MPS: riga con solo saldo 17.978.187.186,85 senza importo transazione separato)
+  if (deduped.length >= 2) {
+    const sortedDesc = [...deduped].sort((a, b) => b.importo - a.importo);
+    const maxImporto = sortedDesc[0].importo;
+    const secondoMassimo = sortedDesc[1].importo;
+    if (secondoMassimo > 0 && maxImporto / secondoMassimo > 100) {
+      return deduped.filter(t => t.importo <= secondoMassimo * 100);
+    }
+  }
+  return deduped;
 }
 
 /* ─────────────────────────────────────────────

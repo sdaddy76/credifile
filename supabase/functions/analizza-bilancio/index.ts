@@ -121,7 +121,19 @@ function parseBilancio(text: string) {
   const interessi_passivi = e(['Interessi e altri oneri finanziari']);
   const risultato_ante_imposte = e(['Risultato prima delle imposte']);
   const imposte = e(['21) Imposte', '20) Imposte', 'Imposte sul reddito']);
-  const utile_netto = e(['21) Utile (perdita)', 'Utile (perdita) dell\'esercizio']);
+  const utile_netto = e([
+    '21) Utile (perdita)',
+    '22) Utile (perdita)',
+    '23) Utile (perdita)',
+    '24) Utile (perdita)',
+    'Utile (perdita) dell\'esercizio',
+    'Utile netto',
+    'Risultato netto',
+    'Utile dell\'esercizio',
+    'Perdita dell\'esercizio',
+    'Risultato d\'esercizio',
+    'Risultato dell\'esercizio',
+  ]) ?? utile_perdita_esercizio;
 
   // Formato
   const isXbrl = text.includes('tassonomia itcc-ci') || text.includes('Conforme alla tassonomia');
