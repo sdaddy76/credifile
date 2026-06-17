@@ -32,7 +32,7 @@ export default async function handler(req, res) {
 
     // 1. Dati pratica + cliente
     const practices = await fetch(
-      `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=importo_richiesto,motivazione,codice_ateco,clients(ragione_sociale,indirizzo,capitale_sociale_versato)`,
+      `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=importo_richiesto,motivazione,codice_ateco,clients(ragione_sociale,indirizzo,capitale_sociale_versato,codice_ateco)`,
       { headers: h },
     ).then(r => r.json());
     const p = practices?.[0];
@@ -68,8 +68,8 @@ export default async function handler(req, res) {
       { headers: h },
     ).then(r => r.json()).catch(() => []);
 
-    // ATECO della pratica (es. "56.10" o "5610")
-    const practiceAteco = (p.codice_ateco || '').trim().toUpperCase().replace('.', '');
+    // ATECO della pratica: prima da practices, poi da clients (salvato dall'analisi visura)
+    const practiceAteco = (p.codice_ateco || p.clients?.codice_ateco || '').trim().toUpperCase().replace('.', '');
 
     // 4. Score matching per ogni banca
     const matchResults = (banks || []).map(bank => {

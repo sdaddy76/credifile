@@ -433,7 +433,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
         supabase.from('practice_banks').select('id, bank_id').eq('practice_id', practiceId),
         supabase.from('bank_kpi_requirements').select('*').in('bank_id', allIds),
         supabase.from('bank_ateco_requirements').select('*').in('bank_id', allIds),
-        supabase.from('practices').select('codice_ateco').eq('id', practiceId).maybeSingle(),
+        supabase.from('practices').select('codice_ateco, clients(codice_ateco)').eq('id', practiceId).maybeSingle(),
         supabase.from('bank_moduli').select('*').in('bank_id', allIds),
         supabase.from('practice_moduli_compilati').select('*').eq('practice_id', practiceId),
       ]);
@@ -441,7 +441,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
       const assignedMap = new Map((pbRows ?? []).map((r: { id: string; bank_id: string }) => [r.bank_id, r.id]));
       const reqs      = (kpiReqRows  ?? []) as BankKpiReq[];
       const atecoReqs = (atecoReqRows ?? []) as AtecoReq[];
-      const practiceAteco = ((practiceRow?.codice_ateco) ?? '').toUpperCase().trim();
+      const practiceAteco = ((practiceRow?.codice_ateco) || (practiceRow?.clients as {codice_ateco?: string} | null)?.codice_ateco || '').toUpperCase().trim();
       setModuli((moduliRows ?? []) as BankModulo[]);
       setCompilati((compilatiRows ?? []) as CompilatoRecord[]);
 
