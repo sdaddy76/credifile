@@ -11,7 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, Trash2 } from 'lucide-react';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
 interface Segnalazione {
@@ -107,6 +107,15 @@ export default function SegnalazioniRicevutePage() {
   const cambiaStato = async (id: string, stato: string) => {
     await supabase.from('segnalazioni_pubbliche').update({ stato, updated_at: new Date().toISOString() }).eq('id', id);
     setSegnalazioni(prev => prev.map(s => s.id === id ? { ...s, stato } : s));
+  };
+
+  // Elimina segnalazione (solo super admin)
+  const elimina = async (id: string, ragioneSociale: string) => {
+    if (!window.confirm(`Eliminare definitivamente la segnalazione di "${ragioneSociale}"?`)) return;
+    const { error } = await supabase.from('segnalazioni_pubbliche').delete().eq('id', id);
+    if (error) { toast.error('Errore eliminazione: ' + error.message); return; }
+    toast.success('Segnalazione eliminata');
+    setSegnalazioni(prev => prev.filter(s => s.id !== id));
   };
 
   if (!isSuperAdmin && !isSegreteria) {
@@ -236,6 +245,11 @@ export default function SegnalazioniRicevutePage() {
                       {seg.stato !== 'chiusa' && (
                         <button onClick={() => cambiaStato(seg.id, 'chiusa')} className="p-1.5 rounded hover:bg-accent transition-colors" title="Chiudi">
                           <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        </button>
+                      )}
+                      {isSuperAdmin && (
+                        <button onClick={() => elimina(seg.id, seg.ragione_sociale)} className="p-1.5 rounded hover:bg-red-50 transition-colors text-red-500" title="Elimina segnalazione">
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       )}
                     </div>
