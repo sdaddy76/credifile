@@ -455,6 +455,22 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
   const [showVisuraModal,   setShowVisuraModal]   = useState(false);
   const [visuraText,        setVisuraText]        = useState('');
   const [analyzingVisura,   setAnalyzingVisura]   = useState(false);
+  const [visuraStoragePath, setVisuraStoragePath] = useState<string | null>(null);
+
+  // Auto-detect visura già caricata nella pratica
+  useEffect(() => {
+    if (!practiceId) return;
+    (async () => {
+      const { data } = await supabase
+        .from('uploaded_files')
+        .select('storage_path, practice_documents!inner(nome)')
+        .eq('practice_id', practiceId)
+        .ilike('practice_documents.nome', '%visura%')
+        .limit(1)
+        .single();
+      if (data?.storage_path) setVisuraStoragePath(data.storage_path);
+    })();
+  }, [practiceId]);
 
   const loadVisuraData = useCallback(async () => {
     if (!clientId) return;
@@ -476,6 +492,53 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
       await loadVisuraData();
     } catch(e: unknown) { toast.error('Errore: ' + (e instanceof Error ? e.message : String(e))); }
     finally { setAnalyzingVisura(false); }
+  };
+
+  const handleAnalizzaVisuraPDF = async () => {
+    if (!visuraStoragePath) return;
+    setAnalyzingVisura(true);
+    try {
+      // 1. Genera signed URL (5 min)
+      const { data: urlData } = await supabase.storage
+        .from('practice-files')
+        .createSignedUrl(visuraStoragePath, 300);
+      if (!urlData?.signedUrl) throw new Error('Impossibile ottenere URL del file visura');
+
+      // 2. Scarica PDF come ArrayBuffer
+      const resp = await fetch(urlData.signedUrl);
+      if (!resp.ok) throw new Error('Errore download PDF visura');
+      const arrayBuffer = await resp.arrayBuffer();
+
+      // 3. Estrai testo con pdfjs-dist
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.min.mjs',
+        import.meta.url
+      ).href;
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let testo = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        testo += content.items.map((item) => ('str' in item ? (item as { str: string }).str : '')).join(' ') + '\n';
+      }
+      if (testo.trim().length < 50) throw new Error('Testo estratto troppo breve. Il PDF potrebbe essere scansionato (immagine).');
+
+      // 4. Analizza
+      const res = await fetch('/api/analizza-visura', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ practice_id: practiceId, visura_testo: testo }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error ?? 'Errore analisi');
+      toast.success(`Visura analizzata — ${data.sommario?.segnali_warning ?? 0} warning, ${data.sommario?.segnali_positivi ?? 0} positivi`);
+      await loadVisuraData();
+    } catch (e: unknown) {
+      toast.error('Errore: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setAnalyzingVisura(false);
+    }
   };
 
   const loadHistory = useCallback(async () => {
@@ -616,9 +679,17 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => setShowVisuraModal(true)} className="gap-1.5">
-            <FileSearch className="w-3.5 h-3.5" /> Analizza Visura
-          </Button>
+          {visuraStoragePath ? (
+            <Button variant="outline" size="sm" onClick={handleAnalizzaVisuraPDF} disabled={analyzingVisura} className="gap-1.5">
+              {analyzingVisura
+                ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" />Analisi…</>
+                : <><FileSearch className="w-3.5 h-3.5" />Analizza visura caricata</>}
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => setShowVisuraModal(true)} className="gap-1.5">
+              <FileSearch className="w-3.5 h-3.5" /> Analizza Visura
+            </Button>
+          )}
           <Button onClick={handleAnalyze} disabled={loading} className="gap-2">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'Analisi in corso…' : analyses.length > 0 ? 'Aggiorna Analisi' : 'Avvia Analisi'}
@@ -636,7 +707,13 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
                 <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {visuraData.storico_sedi?.length ?? 0} sedi</span>
                 <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {visuraData.storico_amministratori?.length ?? 0} cariche</span>
                 <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" /> {visuraData.passaggi_rami?.length ?? 0} rami</span>
-                <button onClick={() => setShowVisuraModal(true)} className="text-blue-600 hover:underline">aggiorna</button>
+                <button
+                  onClick={() => visuraStoragePath ? handleAnalizzaVisuraPDF() : setShowVisuraModal(true)}
+                  disabled={analyzingVisura}
+                  className="text-blue-600 hover:underline disabled:opacity-50"
+                >
+                  {analyzingVisura ? 'analisi…' : 'aggiorna'}
+                </button>
               </div>
             </CardTitle>
           </CardHeader>
