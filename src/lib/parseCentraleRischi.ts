@@ -243,12 +243,9 @@ export function parseCentraleRischi(fullText: string): CRResult {
         foundCats.push({ cat, idx: cm.index });
     }
     foundCats.sort((a, b) => a.idx - b.idx);
-    const uniqueCats: { cat: string; idx: number }[] = [];
-    const seenC = new Set<string>();
-    for (const fc of foundCats) {
-      if (!seenC.has(fc.cat)) { uniqueCats.push(fc); seenC.add(fc.cat); }
-    }
-    if (!uniqueCats.length) continue;
+    // NON deduplicare per nome: la stessa banca può avere N righe dello stesso tipo
+    // (es. 3 mutui = 3 occorrenze di RISCHI A SCADENZA → tutte vanno tenute)
+    if (!foundCats.length) continue;
 
     // ── 6b. Gruppo 2: 4 numeri consecutivi con ≥1 italiano-migliaia ──
     // pdfjs BDI column order: [Utilizzato, Accordato, AccordatoOp, SaldoMedio]
@@ -277,12 +274,17 @@ export function parseCentraleRischi(fullText: string): CRResult {
       }
     }
 
-    // ── 6d. Accoppia categorie ↔ Gruppo 2 per ordine ──────
-    const N = Math.min(uniqueCats.length, fin4s.length);
-    for (let k = 0; k < N; k++) {
-      const { cat, idx: catIdx } = uniqueCats[k];
-      const { nums, idx: numIdx } = fin4s[k];
+    // ── 6d. Accoppia ogni occorrenza di categoria ↔ fin4 più vicino dopo di essa ──
+    // IMPORTANTE: usare foundCats (non uniqueCats) per gestire N righe dello stesso tipo
+    // Es: 3 × "RISCHI A SCADENZA" → 3 fin4 distinti assegnati in ordine posizionale
+    const usedFin4Idx = new Set<number>();
+    for (const { cat, idx: catIdx } of foundCats) {
+      // Primo fin4 non ancora usato con idx > catIdx (= appare dopo questa categoria)
+      const fin4 = fin4s.find(f => f.idx > catIdx && !usedFin4Idx.has(f.idx));
+      if (!fin4) continue;
+      usedFin4Idx.add(fin4.idx);
 
+      const { nums, idx: numIdx } = fin4;
       // pdfjs order for Gruppo 2: Utilizzato, Accordato, AccOp, SaldoMedio
       const [utilizzato, accordato, accordato_operativo, saldo_medio] = nums;
 
