@@ -125,8 +125,8 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       const [{ data: tpl, error: tplErr }, { data: rel, error: relErr }, { data: client }, { data: practice }] = await Promise.all([
         supabase.from('relazione_templates').select('*').eq('attivo', true).order('nome'),
         supabase.from('relazioni_commerciali').select('*, relazione_templates(*)').eq('practice_id', practiceId).order('updated_at', { ascending: false }),
-        clientId ? supabase.from('clients').select('ragione_sociale,codice_fiscale,partita_iva,piva,indirizzo,codice_ateco').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
-        supabase.from('practices').select('importo,importo_richiesto').eq('id', practiceId).maybeSingle(),
+        clientId ? supabase.from('clients').select('ragione_sociale,codice_fiscale,piva,indirizzo,codice_ateco').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
+        supabase.from('practices').select('importo_richiesto').eq('id', practiceId).maybeSingle(),
       ]);
       if (tplErr) throw tplErr;
       if (relErr) throw relErr;
@@ -143,10 +143,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       setAutoData({
         ragione_sociale: c.ragione_sociale ?? '',
         cf: c.codice_fiscale ?? '',
-        piva: c.partita_iva ?? c.piva ?? '',
+        piva: c.piva ?? '',
         ateco: c.codice_ateco ?? '',
         indirizzo: c.indirizzo ?? '',
-        importo: p.importo ?? p.importo_richiesto ?? null,
+        importo: p.importo_richiesto ?? null,
       });
     } catch (error: any) {
       console.error(error);
@@ -362,7 +362,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       </Card>
 
       {relazioni.length > 0 && (
-        <div className="grid md:grid-cols-[280px_1fr] gap-4">
+        <div className="grid md:grid-cols-[220px_1fr] gap-4">
           <div className="space-y-2">
             {relazioni.map(rel => {
               const badge = statusBadge(rel.status);
@@ -432,7 +432,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                                   </label>
                                 </div>
                                 {question.tipo === 'textarea' ? (
-                                  <Textarea id={question.id} rows={3} disabled={!canEdit || isNa} value={isNa ? '' : (answers[question.id] ?? '')} onChange={e => setAnswer(question.id, e.target.value)} placeholder={isNa ? 'Domanda esclusa dalla relazione' : 'Inserisci risposta...'} />
+                                  <Textarea id={question.id} rows={5} disabled={!canEdit || isNa} value={isNa ? '' : (answers[question.id] ?? '')} onChange={e => setAnswer(question.id, e.target.value)} placeholder={isNa ? 'Domanda esclusa dalla relazione' : 'Inserisci risposta...'} className="resize-y min-h-[100px]" />
                                 ) : (
                                   <Input id={question.id} type={question.tipo === 'number' ? 'number' : 'text'} disabled={!canEdit || isNa} value={isNa ? '' : (answers[question.id] ?? '')} onChange={e => setAnswer(question.id, e.target.value)} placeholder={isNa ? 'Domanda esclusa dalla relazione' : 'Inserisci risposta...'} />
                                 )}
