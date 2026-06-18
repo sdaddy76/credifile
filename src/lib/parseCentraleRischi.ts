@@ -1,23 +1,24 @@
 // ═══════════════════════════════════════════════════════════
-//  PARSER CENTRALE RISCHI - BANCA D'ITALIA  (v6)
+//  PARSER CENTRALE RISCHI - BANCA D'ITALIA  (v7)
 //
-//  BUG ROOT CAUSE (v1-v5):
-//  In pdfjs la stringa pdfjs per ogni sezione banca ha il formato:
-//    "... CR DI FERMO SPA Intermediario:  Crediti per cassa ..."
-//  Il nome banca appare PRIMA di "Intermediario:", non dopo.
-//  I parser v1-v5 cercavano il nome DOPO → zero match → zero righe.
+//  BUG ROOT CAUSE v6: formato ICOR non gestito
+//  Differenze ICOR rispetto al formato standard CR:
 //
-//  STRUTTURA RIGA DATI pdfjs BDI:
-//    "[CATEGORIA]   [0]   [ImpGar]  [testo descrittivo...]
-//     [Utilizzato]   [Accordato]   [AccOp]   [SaldoMedio]"
-//  I numeri appaiono in DUE GRUPPI separati da blocchi di testo:
-//   Gruppo 1 (2 num, dopo categoria): RuoloAff, ImportoGarantito
-//   Gruppo 2 (4 num, dopo testo):     Util, Acc, AccOp, Saldo
+//  1. NOME BANCA: in ICOR il nome viene DOPO "Intermediario:"
+//     Es.: "Intermediario:   BANCA POPOLARE DEL LAZIO SOCIETA' COOPERATIVA"
+//     v6 guardava solo PRIMA → zero match → nessuna banca rilevata.
+//     Fix v7: prova DOPO (tutto-maiuscolo), fallback PRIMA.
 //
-//  STRATEGIA v6:
-//  1. Trova "Intermediario:" → guarda i 150 char PRIMA per il nome banca
-//  2. Cerca 4 numeri consecutivi (≥1 italiano-migliaia) come Gruppo 2
-//  3. Accoppia per ORDINE categorie ↔ Gruppo 2
+//  2. COLONNE NUMERICHE: ICOR ha 6 colonne vs 4 standard
+//     ICOR:    [RuoloAffidato | Accordato | AccOp | Utilizzato | SaldoMedio | ImpGar]
+//     Standard:[Accordato | AccOp | Utilizzato | SaldoMedio]
+//     FOUR_NUM_RE catturava la sequenza partendo da RuoloAff(=0) → mapping errato.
+//     Fix v7: rileva "Ruolo Affidato" in ccText → usa SIX_RE, salta primo numero.
+//
+//  STRATEGIA v7:
+//  1. findBankName: cerca nome DOPO "Intermediario:" (ICOR), poi PRIMA (standard)
+//  2. Sezione 6b: icorMode=true → SIX_RE (skip RuoloAff), false → FOUR_NUM_RE
+//  3. Sezione 6d: importo_garantito = fin4.imp_gar (ICOR) ?? g1.second (standard)
 // ═══════════════════════════════════════════════════════════
 
 export interface CRRiga {
@@ -190,9 +191,18 @@ export function parseCentraleRischi(fullText: string): CRResult {
   let im: RegExpExecArray | null;
 
   const findBankName = (src: string, intermIdx: number): string => {
+    // 1. Prova DOPO "Intermediario:" — formato ICOR/BDI: nome banca tutto maiuscolo nella stessa riga
+    //    Es.: "Intermediario:   BANCA POPOLARE DEL LAZIO SOCIETA' COOPERATIVA"
+    const afterStart = intermIdx + 'Intermediario:'.length;
+    const afterCtx = src.substring(afterStart, afterStart + 200);
+    const afterM = afterCtx.match(/^\s+([A-Z][A-Z '.,\-&()/]{2,79})/);
+    if (afterM) {
+      const n = afterM[1].trim();
+      if (n.length >= 3 && !/^Crediti\s+per|^Garanzie|^Informazioni/i.test(n)) return n;
+    }
+    // 2. Fallback: PRIMA — formato standard CR dove il nome precede "Intermediario:"
+    //    Es.: "...01/04/2026  CR DI FERMO SPA Intermediario: ..."
     const before = src.substring(Math.max(0, intermIdx - 150), intermIdx).trimEnd();
-    // Estrai l'ultima sequenza di sole MAIUSCOLE (nome banca) alla fine del prima-testo
-    // Es.: "...01/04/2026  CR DI FERMO SPA" → "CR DI FERMO SPA"
     const m = before.match(/([A-Z][A-Z '.,\-&()]{2,79})\s*$/);
     return m ? m[1].trim() : '';
   };
@@ -247,18 +257,37 @@ export function parseCentraleRischi(fullText: string): CRResult {
     // (es. 3 mutui = 3 occorrenze di RISCHI A SCADENZA → tutte vanno tenute)
     if (!foundCats.length) continue;
 
-    // ── 6b. Gruppo 2: 4 numeri consecutivi con ≥1 italiano-migliaia ──
-    // pdfjs BDI column order: [Utilizzato, Accordato, AccordatoOp, SaldoMedio]
-    type Fin4 = { idx: number; nums: [number, number, number, number] };
+    // ── 6b. Gruppo numerico: 4 (standard) o 6 (ICOR con colonna Ruolo Affidato) ──
+    // ICOR BDI column order: [RuoloAff(skip), Accordato, AccOp, Utilizzato, SaldoMedio, ImpGar]
+    // Standard BDI column order: [Accordato, AccOp, Utilizzato, SaldoMedio]
+    type Fin4 = { idx: number; nums: [number, number, number, number]; imp_gar?: number };
     const fin4s: Fin4[] = [];
-    FOUR_NUM_RE.lastIndex = 0;
+    const icorMode = /Ruolo\s*Affidato/i.test(ccText);
     let fm: RegExpExecArray | null;
-    while ((fm = FOUR_NUM_RE.exec(ccText)) !== null) {
-      const toks = [fm[1], fm[2], fm[3], fm[4]];
-      if (!toks.some(isItalianThousands)) continue;
-      const nums = toks.map(t => parseNum(t) ?? 0) as [number, number, number, number];
-      fin4s.push({ idx: fm.index, nums });
-      FOUR_NUM_RE.lastIndex = fm.index + fm[0].length;
+
+    if (icorMode) {
+      // ICOR: 6 numeri consecutivi → salta il primo (RuoloAffidato), usa posizioni 1-4, ImpGar=5
+      const SIX_RE = new RegExp(
+        `(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})`,
+        'g'
+      );
+      while ((fm = SIX_RE.exec(ccText)) !== null) {
+        const toks = [fm[1], fm[2], fm[3], fm[4], fm[5], fm[6]];
+        // almeno uno tra Accordato/AccOp/Utilizzato/SaldoMedio deve essere italiano-migliaia
+        if (!toks.slice(1, 5).some(isItalianThousands)) continue;
+        const ns = toks.map(t => parseNum(t) ?? 0);
+        fin4s.push({ idx: fm.index, nums: [ns[1], ns[2], ns[3], ns[4]], imp_gar: ns[5] });
+        SIX_RE.lastIndex = fm.index + fm[0].length;
+      }
+    } else {
+      FOUR_NUM_RE.lastIndex = 0;
+      while ((fm = FOUR_NUM_RE.exec(ccText)) !== null) {
+        const toks = [fm[1], fm[2], fm[3], fm[4]];
+        if (!toks.some(isItalianThousands)) continue;
+        const nums = toks.map(t => parseNum(t) ?? 0) as [number, number, number, number];
+        fin4s.push({ idx: fm.index, nums });
+        FOUR_NUM_RE.lastIndex = fm.index + fm[0].length;
+      }
     }
 
     // ── 6c. Gruppo 1: 2 numeri dopo categoria → ImportoGarantito ──
@@ -289,9 +318,9 @@ export function parseCentraleRischi(fullText: string): CRResult {
       // Utilizzato = debito residuo attuale; Accordato = importo iniziale concesso
       const [accordato, accordato_operativo, utilizzato, saldo_medio] = nums;
 
-      // ImportoGarantito dal Gruppo 1 tra catIdx e numIdx
+      // ImportoGarantito: ICOR lo ha direttamente in fin4.imp_gar; standard usa Gruppo 1 (twoNums)
       const g1 = twoNums.find(t => t.idx > catIdx && t.idx < numIdx);
-      const importo_garantito = g1 ? g1.second : 0;
+      const importo_garantito = fin4.imp_gar !== undefined ? fin4.imp_gar : (g1 ? g1.second : 0);
 
       const ctxStart = Math.max(0, numIdx - 500);
       const ctx = ccText.substring(ctxStart, numIdx + 50);
