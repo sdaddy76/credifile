@@ -18,6 +18,7 @@ import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
 import AnalisiFinanziariaTab from '@/components/AnalisiFinanziariaTab';
 import BancabilitaTab from '@/components/BancabilitaTab';
 import ReputazioneTab from '@/components/ReputazioneTab';
+import RelazioneTab from '@/components/RelazioneTab';
 import { EstrattoConto } from '@/components/EstrattoConto';
 import AmlReportTab from '@/components/AmlReportTab';
 import {
@@ -1660,6 +1661,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="banche-ai">🤖 Banche AI</TabsTrigger>
               <TabsTrigger value="scadenze">📅 Scadenze {deadlines.length > 0 ? `(${deadlines.length})` : ''}</TabsTrigger>
               <TabsTrigger value="genera-doc" onClick={loadDocTemplates}>📝 Genera Doc</TabsTrigger>
+              <TabsTrigger value="relazione">📄 Relazione</TabsTrigger>
               <TabsTrigger value="timeline" onClick={loadActivityLogs}>📋 Timeline</TabsTrigger>
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
               <TabsTrigger value="note" onClick={loadNotes}>💬 Note {notes.length > 0 ? `(${notes.length})` : ''}</TabsTrigger>
@@ -2595,6 +2597,18 @@ export default function PraticaDetailPage() {
                     Azzera
                   </Button>
                 </div>
+              )}
+            </TabsContent>
+
+            {/* ── Tab Relazione Commerciale ── */}
+            <TabsContent value="relazione" className="mt-3">
+              {id && (
+                <RelazioneTab
+                  practiceId={id}
+                  clientId={practice?.client_id ?? ''}
+                  canEdit={canEdit}
+                  role={isSuperAdmin ? 'super_admin' : isSegreteria ? 'segreteria' : isAgente ? 'agente' : isSegnalatore ? 'segnalatore' : ''}
+                />
               )}
             </TabsContent>
 
