@@ -12,7 +12,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Document, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, Packer } from 'docx';
 import jsPDF from 'jspdf';
 import { toast } from 'sonner';
-import { Download, FileText, Loader2, Plus, Save } from 'lucide-react';
+import { Download, FileText, Loader2, Plus, Save, Trash2 } from 'lucide-react';
 
 /* @section: relazione-commerciale-types */
 type Domanda = {
@@ -145,7 +145,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         cf: c.codice_fiscale ?? '',
         piva: c.piva ?? '',
         ateco: c.codice_ateco ?? '',
-        indirizzo: c.indirizzo ?? '',
+        indirizzo: ((c.indirizzo ?? '').split(/[\n\r]/)[0].trim()).substring(0, 150),
         importo: p.importo_richiesto ?? null,
       });
     } catch (error: any) {
@@ -201,6 +201,20 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   };
 
   const setAnswer = (id: string, value: string | null) => setAnswers(prev => ({ ...prev, [id]: value }));
+
+  const handleDeleteRelazione = async (id: string) => {
+    if (!window.confirm('Eliminare questa relazione commerciale?')) return;
+    try {
+      const { error } = await supabase.from('relazioni_commerciali').delete().eq('id', id);
+      if (error) throw error;
+      setRelazioni(prev => prev.filter(r => r.id !== id));
+      if (activeRelazioneId === id) setActiveRelazioneId(null);
+      toast.success('Relazione eliminata');
+    } catch (error: any) {
+      console.error(error);
+      toast.error(`Errore eliminazione: ${error.message ?? error}`);
+    }
+  };
 
   const countAnswered = (section: Sezione) => {
     const total = section.domande.length;
@@ -362,21 +376,35 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       </Card>
 
       {relazioni.length > 0 && (
-        <div className="grid md:grid-cols-[220px_1fr] gap-4">
+        <div className="grid md:grid-cols-[150px_1fr] gap-4">
           <div className="space-y-2">
             {relazioni.map(rel => {
               const badge = statusBadge(rel.status);
               return (
-                <button
+                <div
                   key={rel.id}
-                  type="button"
-                  onClick={() => setActiveRelazioneId(rel.id)}
-                  className={`w-full text-left rounded-lg border p-3 transition ${activeRelazione?.id === rel.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}
+                  className={`relative rounded-lg border transition ${activeRelazione?.id === rel.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}
                 >
-                  <div className="font-medium text-sm">{rel.relazione_templates?.nome ?? 'Template relazione'}</div>
-                  <Badge className={`mt-2 ${badge.className}`}>{badge.label}</Badge>
-                  <div className="text-xs text-muted-foreground mt-2">Aggiornata: {new Date(rel.updated_at).toLocaleString('it-IT')}</div>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveRelazioneId(rel.id)}
+                    className="w-full text-left p-3"
+                  >
+                    <div className="font-medium text-sm pr-5">{rel.relazione_templates?.nome ?? 'Template relazione'}</div>
+                    <Badge className={`mt-2 ${badge.className}`}>{badge.label}</Badge>
+                    <div className="text-xs text-muted-foreground mt-2">Aggiornata: {new Date(rel.updated_at).toLocaleString('it-IT')}</div>
+                  </button>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); handleDeleteRelazione(rel.id); }}
+                      className="absolute top-2 right-2 text-muted-foreground hover:text-destructive transition"
+                      title="Elimina relazione"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>
