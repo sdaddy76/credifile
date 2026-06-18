@@ -174,9 +174,16 @@ export function parseCentraleRischi(fullText: string): CRResult {
 
   if (dateOccs.length) {
     dateOccs.sort((a, b) => a.idx - b.idx);
-    const first  = dateOccs[0];
-    const second = dateOccs.length > 1 ? dateOccs[1] : null;
+    const first = dateOccs[0];
     dataRiferimento = first.label;
+    // Se tutte le occorrenze hanno la stessa data (data ripetuta su ogni pagina, es. ICOR 128pp)
+    // → usa tutto il testo dalla prima occorrenza in poi (non tagliare alla seconda).
+    // Se invece ci sono date diverse (report multi-mese) → usa solo fino alla seconda
+    // occorrenza per isolare il mese più recente.
+    const allSameDate = dateOccs.every(
+      d => d.label.toLowerCase() === first.label.toLowerCase()
+    );
+    const second = !allSameDate && dateOccs.length > 1 ? dateOccs[1] : null;
     workText = second
       ? cleanText.substring(first.idx, second.idx)
       : cleanText.substring(first.idx);
