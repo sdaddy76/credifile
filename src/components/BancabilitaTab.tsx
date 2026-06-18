@@ -34,6 +34,7 @@ interface BankKpiReq {
   kpi_label: string; min_value: number | null; max_value: number | null;
 }
 interface AtecoReq { id: string; bank_id: string; codice: string; tipo: 'incluso' | 'escluso'; descrizione: string | null }
+interface GeoReq  { id: string; bank_id: string; livello: 'provincia' | 'regione'; valore: string; tipo: 'incluso' | 'escluso'; note: string | null }
 interface BankModulo { id: string; bank_id: string; nome: string; descrizione: string | null; file_path: string }
 interface CompilatoRecord { id: string; modulo_id: string; file_path: string; note: string | null; uploaded_at: string }
 interface BancaCheck {
@@ -43,9 +44,36 @@ interface BancaCheck {
   atecoPass: boolean | null;
   atecoInclusi: AtecoReq[];
   atecoEsclusi: AtecoReq[];
-  isAssigned: boolean;        // già assegnata alla pratica
-  practiceBankId?: string;    // id riga practice_banks se assegnata
+  geoPass: boolean | null;
+  geoInclusi: GeoReq[];
+  geoEsclusi: GeoReq[];
+  isAssigned: boolean;
+  practiceBankId?: string;
 }
+
+// Mappatura sigle provincia → nome regione italiana
+const PROV_TO_REGIONE: Record<string, string> = {
+  AG:'Sicilia',CL:'Sicilia',CT:'Sicilia',EN:'Sicilia',ME:'Sicilia',PA:'Sicilia',RG:'Sicilia',SR:'Sicilia',TP:'Sicilia',
+  AN:'Marche',AP:'Marche',FM:'Marche',MC:'Marche',PU:'Marche',
+  AO:"Valle d'Aosta",
+  AQ:'Abruzzo',CH:'Abruzzo',PE:'Abruzzo',TE:'Abruzzo',
+  AT:'Piemonte',AL:'Piemonte',BI:'Piemonte',CN:'Piemonte',NO:'Piemonte',TO:'Piemonte',VB:'Piemonte',VC:'Piemonte',
+  AV:'Campania',BN:'Campania',CE:'Campania',NA:'Campania',SA:'Campania',
+  BA:'Puglia',BAT:'Puglia',BR:'Puglia',FG:'Puglia',LE:'Puglia',TA:'Puglia',
+  BG:'Lombardia',BS:'Lombardia',CO:'Lombardia',CR:'Lombardia',LC:'Lombardia',LO:'Lombardia',MB:'Lombardia',MI:'Lombardia',MN:'Lombardia',PV:'Lombardia',SO:'Lombardia',VA:'Lombardia',
+  BO:'Emilia-Romagna',FE:'Emilia-Romagna',FC:'Emilia-Romagna',MO:'Emilia-Romagna',PR:'Emilia-Romagna',PC:'Emilia-Romagna',RA:'Emilia-Romagna',RE:'Emilia-Romagna',RN:'Emilia-Romagna',
+  BL:'Veneto',PD:'Veneto',RO:'Veneto',TV:'Veneto',VE:'Veneto',VI:'Veneto',VR:'Veneto',
+  BZ:'Trentino-Alto Adige',TN:'Trentino-Alto Adige',
+  CA:'Sardegna',CI:'Sardegna',NU:'Sardegna',OG:'Sardegna',OR:'Sardegna',SS:'Sardegna',SU:'Sardegna',VS:'Sardegna',
+  CB:'Molise',IS:'Molise',
+  CS:'Calabria',CZ:'Calabria',KR:'Calabria',RC:'Calabria',VV:'Calabria',
+  FI:'Toscana',AR:'Toscana',GR:'Toscana',LI:'Toscana',LU:'Toscana',MS:'Toscana',PI:'Toscana',PO:'Toscana',PT:'Toscana',SI:'Toscana',
+  FR:'Lazio',LT:'Lazio',RI:'Lazio',RM:'Lazio',VT:'Lazio',
+  GE:'Liguria',IM:'Liguria',SP:'Liguria',SV:'Liguria',
+  GO:'Friuli-Venezia Giulia',PN:'Friuli-Venezia Giulia',TS:'Friuli-Venezia Giulia',UD:'Friuli-Venezia Giulia',
+  MT:'Basilicata',PZ:'Basilicata',
+  PG:'Umbria',TR:'Umbria',
+};
 
 // ── helpers colore ──────────────────────────────────────────────────────────
 function passColorFill(p: boolean | null): [number,number,number] {
@@ -422,11 +450,12 @@ export default function BancabilitaTab({ practiceId }: Props) {
 
       const allIds = allBanks.map((b: { id: string }) => b.id);
 
-      // banche già assegnate + requisiti KPI/ATECO + ATECO pratica
+      // banche già assegnate + requisiti KPI/ATECO/GEO + pratica
       const [
         { data: pbRows },
         { data: kpiReqRows },
         { data: atecoReqRows },
+        { data: geoReqRows },
         { data: practiceRow },
         { data: moduliRows },
         { data: compilatiRows },
@@ -434,7 +463,8 @@ export default function BancabilitaTab({ practiceId }: Props) {
         supabase.from('practice_banks').select('id, bank_id').eq('practice_id', practiceId),
         supabase.from('bank_kpi_requirements').select('*').in('bank_id', allIds),
         supabase.from('bank_ateco_requirements').select('*').in('bank_id', allIds),
-        supabase.from('practices').select('codice_ateco, clients(codice_ateco)').eq('id', practiceId).maybeSingle(),
+        supabase.from('bank_geo_requirements').select('*').in('bank_id', allIds),
+        supabase.from('practices').select('codice_ateco, clients(codice_ateco, provincia)').eq('id', practiceId).maybeSingle(),
         supabase.from('bank_moduli').select('*').in('bank_id', allIds),
         supabase.from('practice_moduli_compilati').select('*').eq('practice_id', practiceId),
       ]);
@@ -442,7 +472,12 @@ export default function BancabilitaTab({ practiceId }: Props) {
       const assignedMap = new Map((pbRows ?? []).map((r: { id: string; bank_id: string }) => [r.bank_id, r.id]));
       const reqs      = (kpiReqRows  ?? []) as BankKpiReq[];
       const atecoReqs = (atecoReqRows ?? []) as AtecoReq[];
-      const practiceAteco = ((practiceRow?.codice_ateco) || (practiceRow?.clients as {codice_ateco?: string} | null)?.codice_ateco || '').toUpperCase().trim();
+      const geoReqs   = (geoReqRows  ?? []) as GeoReq[];
+      const clientData = practiceRow?.clients as { codice_ateco?: string; provincia?: string } | null;
+      const practiceAteco = ((practiceRow?.codice_ateco) || clientData?.codice_ateco || '').toUpperCase().trim();
+      // Provincia e regione dalla sede legale del cliente
+      const practiceProvincia = (clientData?.provincia || '').toUpperCase().trim();
+      const practiceRegione   = practiceProvincia ? (PROV_TO_REGIONE[practiceProvincia] ?? '') : '';
       setModuli((moduliRows ?? []) as BankModulo[]);
       setCompilati((compilatiRows ?? []) as CompilatoRecord[]);
 
@@ -481,6 +516,32 @@ export default function BancabilitaTab({ practiceId }: Props) {
           if (atecoPass && esclusi.some(a => practiceAteco.startsWith(a.codice.toUpperCase()))) atecoPass = false;
         }
 
+        // Verifica compatibilità geografica (provincia/regione)
+        const geoInclusi = geoReqs.filter(g => g.bank_id === bank.id && g.tipo === 'incluso');
+        const geoEsclusi = geoReqs.filter(g => g.bank_id === bank.id && g.tipo === 'escluso');
+        let geoPass: boolean | null = null;
+        if (geoInclusi.length > 0 || geoEsclusi.length > 0) {
+          if (!practiceProvincia) {
+            // Provincia non disponibile: impossibile valutare
+            geoPass = null;
+          } else {
+            geoPass = true;
+            // Logica inclusi: se ci sono zone ammesse, la pratica deve essere in una di esse
+            if (geoInclusi.length > 0) {
+              const inZona = geoInclusi.some(g =>
+                g.livello === 'provincia' ? g.valore.toUpperCase() === practiceProvincia
+                : g.valore.toLowerCase() === practiceRegione.toLowerCase()
+              );
+              if (!inZona) geoPass = false;
+            }
+            // Logica esclusi: la pratica non deve essere in nessuna zona esclusa
+            if (geoPass !== false && geoEsclusi.some(g =>
+              g.livello === 'provincia' ? g.valore.toUpperCase() === practiceProvincia
+              : g.valore.toLowerCase() === practiceRegione.toLowerCase()
+            )) geoPass = false;
+          }
+        }
+
         return {
           bankId: bank.id, bankName: bank.nome, logoUrl,
           reqs: enriched,
@@ -488,6 +549,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
           failCount: enriched.filter(e => e.pass === false).length,
           ndCount:   enriched.filter(e => e.pass === null).length,
           atecoPass, atecoInclusi: inclusi, atecoEsclusi: esclusi,
+          geoPass, geoInclusi, geoEsclusi,
           isAssigned: assignedMap.has(bank.id),
           practiceBankId: assignedMap.get(bank.id),
         };
@@ -601,12 +663,10 @@ export default function BancabilitaTab({ practiceId }: Props) {
         // presentabile = nessun KO su KPI E ateco non bloccato
         // (banche senza requisiti = nessuna restrizione = ammesse)
         const presentabili = noBilancio
-          ? checks.filter(b => b.atecoPass !== false)
-          : checks.filter(b => b.failCount === 0 && b.ndCount === 0 && b.atecoPass !== false);
-        const parziali = noBilancio
-          ? []
-          : checks.filter(b => b.failCount === 0 && b.ndCount > 0 && b.atecoPass !== false);
-        const nonPres = checks.filter(b => b.failCount > 0 || b.atecoPass === false);
+          ? checks.filter(b => b.atecoPass !== false && b.geoPass !== false)
+          : checks.filter(b => b.failCount === 0 && b.ndCount === 0 && b.atecoPass !== false && b.geoPass !== false);
+        const withNd = checks.filter(b => b.failCount === 0 && b.ndCount > 0 && b.atecoPass !== false && b.geoPass !== false);
+        const nonPres = checks.filter(b => b.failCount > 0 || b.atecoPass === false || b.geoPass === false);
         return (
           <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
             <p className="text-xs font-semibold text-green-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -630,9 +690,9 @@ export default function BancabilitaTab({ practiceId }: Props) {
                 ))}
               </div>
             )}
-            {(parziali.length > 0 || nonPres.length > 0) && (
+            {(withNd.length > 0 || nonPres.length > 0) && (
               <div className="mt-3 pt-3 border-t border-green-200 flex flex-wrap gap-2">
-                {parziali.map(b => (
+                {withNd.map(b => (
                   <div key={b.bankId} className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
                     <BankLogo name={b.bankName} logoUrl={b.logoUrl} size="sm" />
                     <span>{b.bankName}</span>
@@ -663,8 +723,9 @@ export default function BancabilitaTab({ practiceId }: Props) {
               const noReqs  = total === 0;
 
               const hasAtecoFail = banca.atecoPass === false;
+              const hasGeoFail   = banca.geoPass   === false;
 
-              const cardCls = hasAtecoFail || hasFail
+              const cardCls = hasAtecoFail || hasGeoFail || hasFail
                 ? 'border-red-300 bg-red-50'
                 : noReqs
                 ? 'border-gray-200 bg-gray-50'
@@ -672,7 +733,7 @@ export default function BancabilitaTab({ practiceId }: Props) {
                 ? 'border-green-300 bg-green-50'
                 : 'border-amber-300 bg-amber-50';
 
-              const iconBg = hasAtecoFail || hasFail
+              const iconBg = hasAtecoFail || hasGeoFail || hasFail
                 ? 'bg-red-100 text-red-600'
                 : noReqs
                 ? 'bg-gray-100 text-gray-400'
@@ -682,15 +743,19 @@ export default function BancabilitaTab({ practiceId }: Props) {
 
               const statusText = hasFail
                 ? 'Non bancabile ❌'
+                : hasAtecoFail && hasGeoFail
+                ? 'ATECO + Zona non compatibili ❌'
                 : hasAtecoFail
                 ? 'ATECO non compatibile ❌'
+                : hasGeoFail
+                ? 'Zona non operativa ❌'
                 : noReqs
                 ? 'Nessun requisito KPI'
                 : allPass
                 ? 'Bancabile ✅'
                 : 'Dati incompleti ⚠️';
 
-              const statusColor = hasAtecoFail || hasFail
+              const statusColor = hasAtecoFail || hasGeoFail || hasFail
                 ? 'text-red-700 font-semibold'
                 : noReqs
                 ? 'text-gray-500'
@@ -736,6 +801,26 @@ export default function BancabilitaTab({ practiceId }: Props) {
                         <span className="ml-auto text-muted-foreground">
                           {banca.atecoInclusi.length > 0 && `+${banca.atecoInclusi.map(a => a.codice).join(', ')}`}
                           {banca.atecoEsclusi.length > 0 && ` −${banca.atecoEsclusi.map(a => a.codice).join(', ')}`}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Badge ZONA (provincia/regione) */}
+                    {(banca.geoInclusi.length > 0 || banca.geoEsclusi.length > 0) && (
+                      <div className={`mt-2 flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border ${
+                        banca.geoPass === true  ? 'bg-green-50 border-green-200 text-green-800' :
+                        banca.geoPass === false ? 'bg-red-50 border-red-200 text-red-800' :
+                        'bg-amber-50 border-amber-200 text-amber-800'
+                      }`}>
+                        <span className="font-bold">ZONA</span>
+                        <span>
+                          {banca.geoPass === true  ? '✅ operativa' :
+                           banca.geoPass === false ? '❌ non operativa' :
+                           '— provincia pratica mancante'}
+                        </span>
+                        <span className="ml-auto text-muted-foreground truncate max-w-[120px]">
+                          {banca.geoInclusi.length > 0 && `+${banca.geoInclusi.map(g => g.valore).join(', ')}`}
+                          {banca.geoEsclusi.length > 0 && ` −${banca.geoEsclusi.map(g => g.valore).join(', ')}`}
                         </span>
                       </div>
                     )}

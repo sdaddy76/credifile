@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarChart3, Upload, FileDown, Loader2, UserPlus } from 'lucide-react';
+import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarChart3, Upload, FileDown, Loader2, UserPlus, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Bank, BankDocumentRequirement } from '@/lib/types';
@@ -42,6 +42,7 @@ const KPI_CATALOG = [
 ];
 interface KpiReq { id: string; kpi_key: string; kpi_area: string; kpi_label: string; min_value: number | null; max_value: number | null }
 interface AtecoReq { id: string; codice: string; tipo: 'incluso' | 'escluso'; descrizione: string | null }
+interface GeoReq   { id: string; livello: 'provincia' | 'regione'; valore: string; tipo: 'incluso' | 'escluso'; note: string | null }
 interface BankModulo { id: string; nome: string; descrizione: string | null; file_path: string; created_at: string }
 
 const emptyBank = { nome: '', codice: '', contatto: '', email: '', email_invio_banca: '', note: '', attiva: true, logo_url: '' };
@@ -138,6 +139,38 @@ export default function BanchePage() {
     loadAtecoRequirements(bankId);
   }
 
+  // ── ZONE OPERATIVE (provincia/regione) ────────────────────────────────────
+  const [geoRequirements, setGeoRequirements] = useState<Record<string, GeoReq[]>>({});
+  const [showGeoForm,     setShowGeoForm]     = useState<string | null>(null);
+  const [geoFormLivello,  setGeoFormLivello]  = useState<'provincia' | 'regione'>('provincia');
+  const [geoFormValore,   setGeoFormValore]   = useState('');
+  const [geoFormTipo,     setGeoFormTipo]     = useState<'incluso' | 'escluso'>('escluso');
+  const [geoFormNote,     setGeoFormNote]     = useState('');
+
+  async function loadGeoRequirements(bankId: string) {
+    const { data } = await supabase.from('bank_geo_requirements').select('*').eq('bank_id', bankId).order('tipo').order('livello').order('valore');
+    setGeoRequirements(prev => ({ ...prev, [bankId]: data ?? [] }));
+  }
+
+  async function handleSaveGeoReq(bankId: string) {
+    const valore = geoFormValore.trim().toUpperCase();
+    if (!valore) { toast.error('Inserisci il valore (es. RM o Lazio)'); return; }
+    const { error } = await supabase.from('bank_geo_requirements').insert({
+      bank_id: bankId, livello: geoFormLivello, valore, tipo: geoFormTipo,
+      note: geoFormNote.trim() || null,
+    });
+    if (error) { toast.error('Errore salvataggio zona'); return; }
+    toast.success('Zona aggiunta');
+    setShowGeoForm(null); setGeoFormValore(''); setGeoFormTipo('escluso'); setGeoFormNote('');
+    loadGeoRequirements(bankId);
+  }
+
+  async function handleDeleteGeoReq(id: string, bankId: string) {
+    await supabase.from('bank_geo_requirements').delete().eq('id', id);
+    toast.success('Zona rimossa');
+    loadGeoRequirements(bankId);
+  }
+
   // ── MODULI DA COMPILARE ────────────────────────────────────────────────────
   const [bankModuli,      setBankModuli]      = useState<Record<string, BankModulo[]>>({});
   const [showModuloForm,  setShowModuloForm]  = useState<string | null>(null);
@@ -225,6 +258,7 @@ export default function BanchePage() {
     loadRequirements(id);
     loadKpiRequirements(id);
     loadAtecoRequirements(id);
+    loadGeoRequirements(id);
     loadModuli(id);
   };
 
@@ -549,6 +583,93 @@ export default function BanchePage() {
                           <div className="flex gap-2">
                             <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveAtecoReq(b.id)}>Salva</Button>
                             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAtecoForm(null)}>Annulla</Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── Sezione Zone Operative ── */}
+                    <div className="mt-4 border-t border-border pt-3">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5" /> Zone Operative
+                        </p>
+                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                          onClick={() => { setShowGeoForm(b.id); setGeoFormValore(''); setGeoFormTipo('escluso'); setGeoFormLivello('provincia'); setGeoFormNote(''); }}>
+                          <Plus className="w-3 h-3" /> Aggiungi
+                        </Button>
+                      </div>
+
+                      {(geoRequirements[b.id] ?? []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-2">Nessuna zona configurata (operativa ovunque)</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {(['incluso', 'escluso'] as const).map(tipo => {
+                            const items = (geoRequirements[b.id] ?? []).filter(g => g.tipo === tipo);
+                            if (items.length === 0) return null;
+                            return (
+                              <div key={tipo}>
+                                <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${tipo === 'incluso' ? 'text-green-600' : 'text-red-600'}`}>
+                                  {tipo === 'incluso' ? '✅ Zone ammesse' : '❌ Zone escluse'}
+                                </p>
+                                {items.map(g => (
+                                  <div key={g.id} className={`flex items-center gap-2 rounded-lg px-3 py-1.5 mb-1 ${tipo === 'incluso' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                                    <MapPin className={`w-3 h-3 shrink-0 ${tipo === 'incluso' ? 'text-green-700' : 'text-red-700'}`} />
+                                    <code className={`text-sm font-bold ${tipo === 'incluso' ? 'text-green-800' : 'text-red-800'}`}>{g.valore}</code>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${g.livello === 'provincia' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{g.livello}</span>
+                                    {g.note && <span className="text-xs text-muted-foreground flex-1 truncate">{g.note}</span>}
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive ml-auto"
+                                      onClick={() => handleDeleteGeoReq(g.id, b.id)}><Trash2 className="w-3 h-3" /></Button>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {showGeoForm === b.id && (
+                        <div className="mt-3 p-3 bg-accent/30 rounded-lg space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Livello *</Label>
+                              <Select value={geoFormLivello} onValueChange={v => setGeoFormLivello(v as 'provincia' | 'regione')}>
+                                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="provincia">🏙 Provincia (es. RM)</SelectItem>
+                                  <SelectItem value="regione">🗺 Regione (es. Lazio)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Tipo *</Label>
+                              <Select value={geoFormTipo} onValueChange={v => setGeoFormTipo(v as 'incluso' | 'escluso')}>
+                                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="incluso">✅ Ammessa</SelectItem>
+                                  <SelectItem value="escluso">❌ Esclusa</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">{geoFormLivello === 'provincia' ? 'Sigla provincia *' : 'Nome regione *'}</Label>
+                            <Input
+                              placeholder={geoFormLivello === 'provincia' ? 'es. RM, MI, NA' : 'es. Lazio, Lombardia'}
+                              value={geoFormValore} onChange={e => setGeoFormValore(e.target.value)}
+                              className="h-8 text-sm font-mono" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Note (opzionale)</Label>
+                            <Input placeholder="es. Filiale di Roma" value={geoFormNote}
+                              onChange={e => setGeoFormNote(e.target.value)} className="h-8 text-sm" />
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Province: usa la sigla a 2 lettere (RM, MI, NA…). Regioni: nome esatto (Lazio, Lombardia…).
+                          </p>
+                          <div className="flex gap-2">
+                            <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveGeoReq(b.id)}>Salva</Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowGeoForm(null)}>Annulla</Button>
                           </div>
                         </div>
                       )}
