@@ -1,24 +1,24 @@
 // ═══════════════════════════════════════════════════════════
-//  PARSER CENTRALE RISCHI - BANCA D'ITALIA  (v7)
+//  PARSER CENTRALE RISCHI - BANCA D'ITALIA  (v8)
 //
-//  BUG ROOT CAUSE v6: formato ICOR non gestito
-//  Differenze ICOR rispetto al formato standard CR:
+//  FIX v8 (principali):
 //
-//  1. NOME BANCA: in ICOR il nome viene DOPO "Intermediario:"
-//     Es.: "Intermediario:   BANCA POPOLARE DEL LAZIO SOCIETA' COOPERATIVA"
-//     v6 guardava solo PRIMA → zero match → nessuna banca rilevata.
-//     Fix v7: prova DOPO (tutto-maiuscolo), fallback PRIMA.
+//  A. workText multi-mese (sezione 4)
+//     Il report ICOR copre ~36 mesi (mar-26 … apr-23).
+//     v7 usava allSameDate → con date diverse (feb-26 presente) tagliava workText
+//     alla seconda occorrenza "DATA DI RIFERIMENTO" = solo 1 banca (pagina 2).
+//     Fix: scegliere il mese con sort value massimo (più recente), iniziare da
+//     lì e tagliare alla prima data PIÙ VECCHIA successiva.
 //
-//  2. COLONNE NUMERICHE: ICOR ha 6 colonne vs 4 standard
-//     ICOR:    [RuoloAffidato | Accordato | AccOp | Utilizzato | SaldoMedio | ImpGar]
-//     Standard:[Accordato | AccOp | Utilizzato | SaldoMedio]
-//     FOUR_NUM_RE catturava la sequenza partendo da RuoloAff(=0) → mapping errato.
-//     Fix v7: rileva "Ruolo Affidato" in ccText → usa SIX_RE, salta primo numero.
+//  B. fiveMode (sezione 6b)
+//     Alcune banche ICOR (es. BCC Factoring) usano solo 5 colonne numeriche
+//     [RuoloAff | Accordato | AccOp | Utilizzato | ImpGar] senza Saldo Medio.
+//     Aggiunto FIVE_RE con mapping corretto (SaldoMedio=0).
 //
-//  STRATEGIA v7:
+//  FIX v7 (confermati):
 //  1. findBankName: cerca nome DOPO "Intermediario:" (ICOR), poi PRIMA (standard)
-//  2. Sezione 6b: icorMode=true → SIX_RE (skip RuoloAff), false → FOUR_NUM_RE
-//  3. Sezione 6d: importo_garantito = fin4.imp_gar (ICOR) ?? g1.second (standard)
+//  2. icorMode: 6 num consecutivi → SIX_RE (skip RuoloAff)
+//  3. importo_garantito = fin4.imp_gar (ICOR) ?? g1.second (standard)
 // ═══════════════════════════════════════════════════════════
 
 export interface CRRiga {
@@ -168,25 +168,30 @@ export function parseCentraleRischi(fullText: string): CRResult {
     }
   }
 
-  // ── 4. Seleziona primo per posizione (= mese più recente) ─
+  // ── 4. Seleziona il mese più recente (sort value massimo) ─────────────────
+  //
+  //  FIX v8: il report ICOR 128pp copre ~36 mesi (mar-26 … apr-23).
+  //  La struttura è: prima tutte le banche di marzo 2026, poi febbraio 2026, etc.
+  //  v7 usava allSameDate → se una data diversa esisteva (es. feb-26) applicava
+  //  substring(first.idx, second.idx) e tagliava già alla pagina 3 (solo 1 banca).
+  //  Fix: trovare il mese con sort value massimo, usarlo come startIdx e tagliare
+  //  alla prima data PIÙ VECCHIA che compare DOPO startIdx nel testo.
   let dataRiferimento = '';
   let workText = cleanText;
 
   if (dateOccs.length) {
     dateOccs.sort((a, b) => a.idx - b.idx);
-    const first = dateOccs[0];
-    dataRiferimento = first.label;
-    // Se tutte le occorrenze hanno la stessa data (data ripetuta su ogni pagina, es. ICOR 128pp)
-    // → usa tutto il testo dalla prima occorrenza in poi (non tagliare alla seconda).
-    // Se invece ci sono date diverse (report multi-mese) → usa solo fino alla seconda
-    // occorrenza per isolare il mese più recente.
-    const allSameDate = dateOccs.every(
-      d => d.label.toLowerCase() === first.label.toLowerCase()
-    );
-    const second = !allSameDate && dateOccs.length > 1 ? dateOccs[1] : null;
-    workText = second
-      ? cleanText.substring(first.idx, second.idx)
-      : cleanText.substring(first.idx);
+
+    // Mese più recente = sort value massimo
+    const maxSort = Math.max(...dateOccs.map(d => d.sort));
+    const mostRecentOcc = dateOccs.find(d => d.sort === maxSort)!;
+    dataRiferimento = mostRecentOcc.label;
+
+    // Inizia dalla prima occorrenza del mese più recente
+    const startIdx = mostRecentOcc.idx;
+    // Termina alla prima occorrenza di un mese più vecchio che appare DOPO startIdx
+    const firstOlderDate = dateOccs.find(d => d.sort < maxSort && d.idx > startIdx);
+    workText = cleanText.substring(startIdx, firstOlderDate ? firstOlderDate.idx : cleanText.length);
   }
 
   // ── 5. Trova blocchi Intermediario ────────────────────
@@ -264,37 +269,57 @@ export function parseCentraleRischi(fullText: string): CRResult {
     // (es. 3 mutui = 3 occorrenze di RISCHI A SCADENZA → tutte vanno tenute)
     if (!foundCats.length) continue;
 
-    // ── 6b. Gruppo numerico: 4 (standard) o 6 (ICOR con colonna Ruolo Affidato) ──
-    // ICOR BDI column order: [RuoloAff(skip), Accordato, AccOp, Utilizzato, SaldoMedio, ImpGar]
-    // Standard BDI column order: [Accordato, AccOp, Utilizzato, SaldoMedio]
+    // ── 6b. Gruppo numerico: 4 (standard) / 5 (ICOR senza SaldoMedio) / 6 (ICOR con SaldoMedio) ──
+    // ICOR BDI col order (6): [RuoloAff(skip), Accordato, AccOp, Utilizzato, SaldoMedio, ImpGar]
+    // ICOR variante (5): [RuoloAff(skip), Accordato, AccOp, Utilizzato, ImpGar] — es. BCC Factoring
+    // Standard BDI col order (4): [Accordato, AccOp, Utilizzato, SaldoMedio]
     //
-    // DETECTION: in formato ICOR pdfjs emette tutti e 6 i numeri CONSECUTIVI.
-    // In formato standard i numeri sono SPEZZATI in 2 gruppi separati da testo descrittivo
-    // (Gruppo 1: 0+ImpGar subito dopo la categoria; Gruppo 2: 4 num dopo il testo).
-    // → Cerchiamo 6 num consecutivi; se trovati con ≥1 italiano-migliaia in pos 1-4 → ICOR.
+    // DETECTION: cerca prima 6 num consecutivi (ICOR pieno), poi 5 (ICOR senza SaldoMedio),
+    // altrimenti usa FOUR_NUM_RE (standard).
     type Fin4 = { idx: number; nums: [number, number, number, number]; imp_gar?: number };
     const fin4s: Fin4[] = [];
-    const icorDetectRE = new RegExp(
+
+    const sixDetectRE = new RegExp(
       `(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})`
     );
-    const icorDetectM = icorDetectRE.exec(ccText);
-    const icorMode = icorDetectM !== null &&
-      [icorDetectM[2], icorDetectM[3], icorDetectM[4], icorDetectM[5]].some(isItalianThousands);
+    const sixDetectM = sixDetectRE.exec(ccText);
+    const icorMode = sixDetectM !== null &&
+      [sixDetectM[2], sixDetectM[3], sixDetectM[4], sixDetectM[5]].some(isItalianThousands);
+
+    const fiveDetectRE = new RegExp(
+      `(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})`
+    );
+    const fiveDetectM = !icorMode ? fiveDetectRE.exec(ccText) : null;
+    const fiveMode = !icorMode && fiveDetectM !== null &&
+      [fiveDetectM[2], fiveDetectM[3], fiveDetectM[4]].some(isItalianThousands);
+
     let fm: RegExpExecArray | null;
 
     if (icorMode) {
-      // ICOR: 6 numeri consecutivi → salta il primo (RuoloAffidato), usa posizioni 1-4, ImpGar=5
+      // 6 numeri → salta RuoloAff(1), usa Accordato(2), AccOp(3), Util(4), SaldoMedio(5), ImpGar(6)
       const SIX_RE = new RegExp(
         `(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})`,
         'g'
       );
       while ((fm = SIX_RE.exec(ccText)) !== null) {
         const toks = [fm[1], fm[2], fm[3], fm[4], fm[5], fm[6]];
-        // almeno uno tra Accordato/AccOp/Utilizzato/SaldoMedio deve essere italiano-migliaia
         if (!toks.slice(1, 5).some(isItalianThousands)) continue;
         const ns = toks.map(t => parseNum(t) ?? 0);
         fin4s.push({ idx: fm.index, nums: [ns[1], ns[2], ns[3], ns[4]], imp_gar: ns[5] });
         SIX_RE.lastIndex = fm.index + fm[0].length;
+      }
+    } else if (fiveMode) {
+      // 5 numeri → salta RuoloAff(1), usa Accordato(2), AccOp(3), Util(4), ImpGar(5), SaldoMedio=0
+      const FIVE_RE = new RegExp(
+        `(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})`,
+        'g'
+      );
+      while ((fm = FIVE_RE.exec(ccText)) !== null) {
+        const toks = [fm[1], fm[2], fm[3], fm[4], fm[5]];
+        if (!toks.slice(1, 4).some(isItalianThousands)) continue;
+        const ns = toks.map(t => parseNum(t) ?? 0);
+        fin4s.push({ idx: fm.index, nums: [ns[1], ns[2], ns[3], 0], imp_gar: ns[4] });
+        FIVE_RE.lastIndex = fm.index + fm[0].length;
       }
     } else {
       FOUR_NUM_RE.lastIndex = 0;
