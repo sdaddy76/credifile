@@ -1062,21 +1062,27 @@ export default function PraticaDetailPage() {
     }
   };
 
-  // Upload documento da admin (per conto del cliente)
-  const handleAdminUpload = async (docId: string, file: File) => {
+  // Upload documento da admin (per conto del cliente) — supporta selezione multipla
+  const handleAdminUpload = async (docId: string, files: FileList | File[]) => {
     if (!id) return;
-    if (file.size > 30 * 1024 * 1024) { toast.error('File troppo grande. Max 30 MB.'); return; }
+    const fileArray = Array.from(files);
+    const oversized = fileArray.filter(f => f.size > 30 * 1024 * 1024);
+    if (oversized.length > 0) oversized.forEach(f => toast.error(`"${f.name}" troppo grande. Max 30 MB.`));
+    const validFiles = fileArray.filter(f => f.size <= 30 * 1024 * 1024);
+    if (validFiles.length === 0) return;
     setUploadingAdminDoc(docId);
-    const path = `${id}/${docId}/${Date.now()}_${file.name}`;
-    try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch (_e) { /* ignora errori storage */ }
-    await supabase.from('uploaded_files').insert({
-      practice_document_id: docId, practice_id: id,
-      nome_file: file.name, storage_path: path,
-      mime_type: file.type, dimensione: file.size, uploaded_by: 'admin',
-    });
+    for (const file of validFiles) {
+      const path = `${id}/${docId}/${Date.now()}_${file.name}`;
+      try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch (_e) { /* ignora errori storage */ }
+      await supabase.from('uploaded_files').insert({
+        practice_document_id: docId, practice_id: id,
+        nome_file: file.name, storage_path: path,
+        mime_type: file.type, dimensione: file.size, uploaded_by: 'admin',
+      });
+      await propagaDocumentoAltrePratiche(docId, path, file.name, file.type, file.size);
+    }
     await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
-    await propagaDocumentoAltrePratiche(docId, path, file.name, file.type, file.size);
-    toast.success(`"${file.name}" caricato con successo`);
+    toast.success(validFiles.length === 1 ? `"${validFiles[0].name}" caricato con successo` : `${validFiles.length} file caricati con successo`);
     setUploadingAdminDoc(null);
     load();
   };
@@ -1086,27 +1092,32 @@ export default function PraticaDetailPage() {
     if (!window.Dropbox) { toast.error('Dropbox non disponibile'); return; }
     window.Dropbox.choose({
       linkType: 'direct',
-      multiselect: false,
+      multiselect: true,
       extensions: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png'],
       success: async (files) => {
-        if (!files[0] || !id) return;
-        const { link, name, bytes } = files[0];
-        if (bytes > 30 * 1024 * 1024) { toast.error('File troppo grande (max 30 MB)'); return; }
+        if (!files.length || !id) return;
+        const oversized = files.filter(f => f.bytes > 30 * 1024 * 1024);
+        if (oversized.length > 0) oversized.forEach(f => toast.error(`"${f.name}" troppo grande (max 30 MB)`));
+        const validFiles = files.filter(f => f.bytes <= 30 * 1024 * 1024);
+        if (validFiles.length === 0) return;
         setUploadingAdminDoc(docId);
         try {
-          const res  = await fetch(link);
-          const blob = await res.blob();
-          const file = new File([blob], name, { type: blob.type });
-          const path = `${id}/${docId}/${Date.now()}_${name}`;
-          await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
-          await supabase.from('uploaded_files').insert({
-            practice_document_id: docId, practice_id: id,
-            nome_file: name, storage_path: path,
-            mime_type: blob.type, dimensione: bytes, uploaded_by: 'admin',
-          });
+          for (const dbFile of validFiles) {
+            const { link, name, bytes } = dbFile;
+            const res = await fetch(link);
+            const blob = await res.blob();
+            const file = new File([blob], name, { type: blob.type });
+            const path = `${id}/${docId}/${Date.now()}_${name}`;
+            await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
+            await supabase.from('uploaded_files').insert({
+              practice_document_id: docId, practice_id: id,
+              nome_file: name, storage_path: path,
+              mime_type: blob.type, dimensione: bytes, uploaded_by: 'admin',
+            });
+            await propagaDocumentoAltrePratiche(docId, path, name, blob.type, bytes);
+          }
           await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
-          await propagaDocumentoAltrePratiche(docId, path, name, blob.type, bytes);
-          toast.success(`"${name}" importato da Dropbox`);
+          toast.success(validFiles.length === 1 ? `"${validFiles[0].name}" importato da Dropbox` : `${validFiles.length} file importati da Dropbox`);
           load();
         } catch (e) {
           toast.error('Errore importazione da Dropbox');
@@ -1742,10 +1753,10 @@ export default function PraticaDetailPage() {
                               )}
                               {canEdit && (
                                 <div className="shrink-0 flex gap-1">
-                                  <input type="file" className="hidden"
+                                  <input type="file" multiple className="hidden"
                                     ref={el => { adminFileRefs.current[doc.id] = el; }}
                                     accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-                                    onChange={e => { const f = e.target.files?.[0]; if (f) handleAdminUpload(doc.id, f); e.target.value = ''; }}
+                                    onChange={e => { const fs = e.target.files; if (fs && fs.length > 0) handleAdminUpload(doc.id, fs); e.target.value = ''; }}
                                   />
                                   <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
                                     disabled={uploadingAdminDoc === doc.id}
