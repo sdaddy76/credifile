@@ -260,9 +260,19 @@ export function parseCentraleRischi(fullText: string): CRResult {
     // ── 6b. Gruppo numerico: 4 (standard) o 6 (ICOR con colonna Ruolo Affidato) ──
     // ICOR BDI column order: [RuoloAff(skip), Accordato, AccOp, Utilizzato, SaldoMedio, ImpGar]
     // Standard BDI column order: [Accordato, AccOp, Utilizzato, SaldoMedio]
+    //
+    // DETECTION: in formato ICOR pdfjs emette tutti e 6 i numeri CONSECUTIVI.
+    // In formato standard i numeri sono SPEZZATI in 2 gruppi separati da testo descrittivo
+    // (Gruppo 1: 0+ImpGar subito dopo la categoria; Gruppo 2: 4 num dopo il testo).
+    // → Cerchiamo 6 num consecutivi; se trovati con ≥1 italiano-migliaia in pos 1-4 → ICOR.
     type Fin4 = { idx: number; nums: [number, number, number, number]; imp_gar?: number };
     const fin4s: Fin4[] = [];
-    const icorMode = /Ruolo\s*Affidato/i.test(ccText);
+    const icorDetectRE = new RegExp(
+      `(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})\\s+(${NUM_TOK})`
+    );
+    const icorDetectM = icorDetectRE.exec(ccText);
+    const icorMode = icorDetectM !== null &&
+      [icorDetectM[2], icorDetectM[3], icorDetectM[4], icorDetectM[5]].some(isItalianThousands);
     let fm: RegExpExecArray | null;
 
     if (icorMode) {
