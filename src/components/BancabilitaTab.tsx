@@ -491,7 +491,13 @@ export default function BancabilitaTab({ practiceId }: Props) {
           let actual: number | null = null;
           const absCol = ABSOLUTE_KPI_KEYS[req.kpi_key];
           if (absCol && bil.length > 0) {
-            actual = bil[0][absCol] ?? (absCol === 'utile_netto' ? (bil[0].utile_perdita_esercizio ?? null) : null);
+            // Per utile_netto: colonna diretta → utile_perdita_esercizio → kpi JSON
+            const directVal = bil[0][absCol];
+            const fallback1 = absCol === 'utile_netto' ? (bil[0].utile_perdita_esercizio ?? null) : null;
+            const fallback2 = absCol === 'utile_netto'
+              ? ((latestKpi?.redditivita as Record<string,KpiEntry> | undefined)?.utile_netto?.valore ?? null)
+              : null;
+            actual = directVal ?? fallback1 ?? fallback2;
           }
           // 2. KPI ratio standard: cerca nel JSON kpi solo se non è un valore assoluto
           if (actual === null) {

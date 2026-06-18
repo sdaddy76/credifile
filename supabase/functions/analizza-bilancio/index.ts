@@ -272,6 +272,7 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
           ebitdaMargin === null ? 'nd' : ebitdaMargin >= 10 ? 'verde' : ebitdaMargin >= 5 ? 'giallo' : 'rosso'),
         ebitda_eur: kpi('EBITDA (€)', ebitda, fmtEur(ebitda), ebitda === null ? 'nd' : ebitda > 0 ? 'verde' : 'rosso'),
         fatturato: kpi('Fatturato (€)', d.ricavi_vendite, fmtEur(d.ricavi_vendite), d.ricavi_vendite === null ? 'nd' : d.ricavi_vendite > 0 ? 'verde' : 'giallo'),
+        utile_netto: kpi('Utile Netto (€)', d.utile_netto ?? d.utile_perdita_esercizio, fmtEur(d.utile_netto ?? d.utile_perdita_esercizio), (d.utile_netto ?? d.utile_perdita_esercizio) === null ? 'nd' : (d.utile_netto ?? d.utile_perdita_esercizio)! > 0 ? 'verde' : 'rosso'),
       },
       indebitamento: {
         pfn: kpi('PFN (€)', pfn, fmtEur(pfn), pfn <= 0 ? 'verde' : pfn <= (pn ?? 0) ? 'giallo' : 'rosso'),
