@@ -88,7 +88,7 @@ const CF_PF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
 function parseSoci(raw: string): { soci: Socio[]; sociCFs: Set<string> } {
   // Tenta isolamento sezione IV — fallback al testo completo
   const s4 = isolaSezione(raw,
-    /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|soci\s+e\s+titolari|quote\s+sociali|TITOLARI\s+DI\s+QUOTE)/i,
+    /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|soci\s+e\s+titolari|quote\s+sociali|TITOLARI\s+DI\s+QUOTE|composizione\s+societaria)/i,
     /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|rappresentanza|persone\s+che\s+esercitano)/i,
   ) || raw;
 
@@ -120,6 +120,21 @@ function parseSoci(raw: string): { soci: Socio[]; sociCFs: Set<string> } {
       valore:      valMatch?.[1]  ?? '',
       percentuale: percMatch?.[1] ? percMatch[1] + '%' : '',
     });
+  }
+
+  // ── FORMATO InfoCamere tabella soci: NOME  valore  %  [tipo] ↵ CF ─────────
+  // Es.:  ADILETTA SABATO  10.000,00  100 %  proprieta'
+  //       DLTSBT95P19I438D
+  const TABELLA_RE = /^((?:[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]*\s+){1,4}[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]*)\s+([\d.,]+)\s+([\d.,]+)\s*%[^\n]{0,60}\n[^\n]{0,60}?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gm;
+  let tb: RegExpExecArray | null;
+  while ((tb = TABELLA_RE.exec(s4)) !== null) {
+    const cf   = tb[4];
+    const nome = tb[1].replace(/\s{2,}/g, ' ').trim();
+    if (seen.has(cf)) continue;
+    if (/^(?:CODICE\s+FISCALE|SOCIO|TIPO|VALORE|QUOTA|SEZIONE)\b/i.test(nome)) continue;
+    seen.add(cf);
+    sociCFs.add(cf);
+    results.push({ nome, codice_fiscale: cf, valore: tb[2] ?? '', percentuale: tb[3] ? tb[3] + '%' : '' });
   }
 
   // ── FALLBACK: CF trovato senza nome diretto (cerca nome nei 90 char prima) ─
