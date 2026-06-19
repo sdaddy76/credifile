@@ -11,8 +11,8 @@ Deno.serve(async (req) => {
 
     const h = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
 
-    // 1. Dati pratica + cliente
-    const pRes = await fetch(`${SUPABASE_URL}/rest/v1/practices?id=eq.${practice_id}&select=importo_richiesto,motivazione,codice_ateco,clients(ragione_sociale,indirizzo,capitale_sociale_versato)`, { headers: h })
+    // 1. Dati pratica + cliente (codice_ateco è su clients, non su practices)
+    const pRes = await fetch(`${SUPABASE_URL}/rest/v1/practices?id=eq.${practice_id}&select=importo_richiesto,motivazione,clients(ragione_sociale,indirizzo,capitale_sociale_versato,codice_ateco)`, { headers: h })
     const practices = await pRes.json()
     const p = practices?.[0]
     if (!p) return new Response(JSON.stringify({ error: 'Pratica non trovata' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
@@ -52,12 +52,37 @@ Deno.serve(async (req) => {
       return { bankId: bank.id, bankName: bank.nome, score, passCount: pass, failCount: fail, ndCount: reqs.length - pass - fail, details }
     }).sort((a: {score: number}, b: {score: number}) => b.score - a.score)
 
-    // 5. Groq AI per suggerimento narrativo
+    // 5. Groq AI: analisi societaria + suggerimento operativo
+    let analisi_societa = ''
     let aiSuggerimento = ''
+    const ragioneSociale = (p.clients as {ragione_sociale?: string} | null)?.ragione_sociale || 'N/D'
+    const codiceAteco = (p.clients as {codice_ateco?: string} | null)?.codice_ateco || ''
     try {
       const topBanks = matchResults.slice(0, 3).map((b: {bankName: unknown; score: number; passCount: number; failCount: number}) => `${b.bankName} (score ${b.score}%, ${b.passCount} criteri OK, ${b.failCount} NOK)`).join('; ')
       const kpiSummary = kpi ? `fatturato ${kpi.ricavi_vendite || 'ND'}€, patrimonio netto ${kpi.totale_patrimonio_netto || 'ND'}€, utile ${kpi.utile_netto || 'ND'}€` : 'KPI non disponibili'
-      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+
+      // Prima chiamata: analisi societaria
+      const groqRes1 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'llama3-8b-8192',
+          messages: [{
+            role: 'user',
+            content: `Sei un consulente finanziario italiano. Scrivi una breve analisi della situazione societaria in 2-3 frasi.
+Azienda: ${ragioneSociale}, settore ATECO ${codiceAteco || 'non specificato'}, importo richiesto ${p.importo_richiesto || 'ND'}€.
+KPI: ${kpiSummary}
+Includi sempre il nome dell'azienda, il settore ATECO (se disponibile), l'importo e una valutazione sintetica dei KPI.
+Rispondi in italiano, sii diretto.`
+          }],
+          max_tokens: 200
+        })
+      })
+      const groqData1 = await groqRes1.json()
+      analisi_societa = groqData1.choices?.[0]?.message?.content || ''
+
+      // Seconda chiamata: suggerimento operativo
+      const groqRes2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -65,7 +90,7 @@ Deno.serve(async (req) => {
           messages: [{
             role: 'user',
             content: `Sei un consulente finanziario italiano. Analizza questo matching banca-pratica e dai un suggerimento operativo in 2-3 frasi.
-Pratica: importo ${p.importo_richiesto || 'ND'}€, ATECO ${p.codice_ateco || 'ND'}, motivazione: ${p.motivazione || 'ND'}
+Pratica: importo ${p.importo_richiesto || 'ND'}€, ATECO ${codiceAteco || 'non specificato'}, motivazione: ${p.motivazione || 'ND'}
 KPI: ${kpiSummary}
 Banche migliori: ${topBanks}
 Rispondi in italiano, sii diretto e pratico.`
@@ -73,11 +98,11 @@ Rispondi in italiano, sii diretto e pratico.`
           max_tokens: 200
         })
       })
-      const groqData = await groqRes.json()
-      aiSuggerimento = groqData.choices?.[0]?.message?.content || ''
+      const groqData2 = await groqRes2.json()
+      aiSuggerimento = groqData2.choices?.[0]?.message?.content || ''
     } catch { /* ignore AI errors */ }
 
-    return new Response(JSON.stringify({ success: true, matching: matchResults, aiSuggerimento }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ success: true, matching: matchResults, analisi_societa, suggerimento_ai: aiSuggerimento }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   }
