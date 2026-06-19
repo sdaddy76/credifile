@@ -122,10 +122,10 @@ function parseSoci(raw: string): { soci: Socio[]; sociCFs: Set<string> } {
     });
   }
 
-  // ── FORMATO InfoCamere tabella soci: NOME  valore  %  [tipo] ↵ CF ─────────
-  // Es.:  ADILETTA SABATO  10.000,00  100 %  proprieta'
-  //       DLTSBT95P19I438D
-  const TABELLA_RE = /^((?:[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]*\s+){1,4}[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]*)\s+([\d.,]+)\s+([\d.,]+)\s*%[^\n]{0,60}\n[^\n]{0,60}?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gm;
+  // ── FORMATO InfoCamere tabella soci: NOME  valore  %  [tipo]  CF ──────────
+  // pdfjs unisce tutti gli item con spazio, quindi non ci sono \n interni alla pagina.
+  // Es.:  "ADILETTA SABATO 10.000,00 100 % proprieta' DLTSBT95P19I438D"
+  const TABELLA_RE = /\b((?:[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'\-]+\s+){1,3}[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'\-]+)\s+([\d.]+,\d{2})\s+([\d,]+)\s*%(?:\s+\S+){0,3}\s+([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
   let tb: RegExpExecArray | null;
   while ((tb = TABELLA_RE.exec(s4)) !== null) {
     const cf   = tb[4];
