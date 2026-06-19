@@ -268,8 +268,6 @@ function parseAmministratori(raw: string, sociCFs: Set<string> = new Set()): Amm
   while ((cfm = cfReCopy.exec(s5)) !== null) {
     const cf = cfm[1];
     if (seenCFs.has(cf)) continue;
-    // Se il CF è già stato classificato come socio, non aggiungerlo anche come amministratore
-    if (sociCFs.has(cf)) continue;
 
     const winStart = Math.max(0, cfm.index - 350);
     const winEnd   = Math.min(s5.length, cfm.index + cf.length + 350);
