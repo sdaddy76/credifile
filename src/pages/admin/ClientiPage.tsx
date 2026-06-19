@@ -86,11 +86,13 @@ const CF_PF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
  * Ritorna anche il Set dei CF trovati (usato da parseAmministratori per evitare duplicati).
  */
 function parseSoci(raw: string): { soci: Socio[]; sociCFs: Set<string> } {
-  // Tenta isolamento sezione IV — fallback al testo completo
-  const s4 = isolaSezione(raw,
-    /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|soci\s+e\s+titolari|quote\s+sociali|TITOLARI\s+DI\s+QUOTE|composizione\s+societaria)/i,
-    /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|rappresentanza|persone\s+che\s+esercitano)/i,
-  ) || raw;
+  // Tenta isolamento sezione IV — strategia a due livelli:
+  // 1) "composizione societaria" (InfoCamere) — PRIMA, evita che "soci e titolari" del TOC venga matchato prima
+  // 2) pattern generici di sezione IV (senza "soci e titolari" che appare nel sommario)
+  const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|rappresentanza|persone\s+che\s+esercitano)/i;
+  const s4 = isolaSezione(raw, /composizione\s+societaria/i, END_S5)
+          || isolaSezione(raw, /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|quote\s+sociali|TITOLARI\s+DI\s+QUOTE)/i, END_S5)
+          || raw;
 
   const results: Socio[]        = [];
   const seen    = new Set<string>();
