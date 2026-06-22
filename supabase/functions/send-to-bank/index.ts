@@ -157,12 +157,37 @@ serve(async (req) => {
     const notaHtml = note ? `<p style="color:#555;margin-top:12px;"><strong>Note:</strong> ${note}</p>` : '';
 
     const docsHtml = docLinks.length > 0
-      ? docLinks.map(d =>
-          `<li style="margin:8px 0;">` +
-          `<a href="${d.url}" style="color:#2563eb;font-weight:600;">${d.nomeDoc}</a>` +
-          ` <span style="color:#888;font-size:11px;">(${d.nomeFile} — link valido 7 giorni)</span>` +
-          `</li>`,
-        ).join('')
+      ? (() => {
+          // Raggruppa per voce (nomeDoc) mantenendo l'ordine di inserimento
+          const groups: { voce: string; files: { nomeFile: string; url: string }[] }[] = [];
+          const idx: Record<string, number> = {};
+          for (const d of docLinks) {
+            if (idx[d.nomeDoc] === undefined) {
+              idx[d.nomeDoc] = groups.length;
+              groups.push({ voce: d.nomeDoc, files: [] });
+            }
+            groups[idx[d.nomeDoc]].files.push({ nomeFile: d.nomeFile, url: d.url });
+          }
+          return groups.map(g =>
+            `<li style="margin:10px 0;">` +
+            `<strong style="color:#374151;">${g.voce}</strong>` +
+            (g.files.length === 1
+              // voce con un solo file: link inline
+              ? ` — <a href="${g.files[0].url}" style="color:#2563eb;font-weight:600;">${g.files[0].nomeFile}</a>` +
+                `<span style="color:#888;font-size:11px;"> (link valido 7 giorni)</span>`
+              // voce con più file: sublista con nome file come link
+              : `<ul style="margin:4px 0 0 16px;padding:0;list-style:disc;">` +
+                g.files.map(f =>
+                  `<li style="margin:4px 0;">` +
+                  `<a href="${f.url}" style="color:#2563eb;font-weight:600;">${f.nomeFile}</a>` +
+                  ` <span style="color:#888;font-size:11px;">(link valido 7 giorni)</span>` +
+                  `</li>`
+                ).join('') +
+                `</ul>`
+            ) +
+            `</li>`
+          ).join('');
+        })()
       : '<li style="color:#888;">Nessun documento disponibile al momento</li>';
 
     // KPI sezione
