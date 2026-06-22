@@ -89,24 +89,30 @@ serve(async (req) => {
     if (!bankEmail) return new Response(JSON.stringify({ success: false, error: 'Email banca non configurata' }), { headers: CORS });
 
     // 3. File + signed URL
-    const files = await (await fetch(
-      `${SUPA_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`,
+    // FIX: query practice_documents → uploaded_files (uno-a-molti) per avere TUTTI i file per voce.
+    // La direzione opposta (uploaded_files → practice_documents, molti-a-uno) può comprimere
+    // le righe quando più file condividono lo stesso practice_document_id, restituendo solo il primo.
+    const docs = await (await fetch(
+      `${SUPA_URL}/rest/v1/practice_documents?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome,status,uploaded_files(id,nome_file,storage_path)&order=created_at.asc`,
       { headers: H },
     )).json() ?? [];
 
     const docLinks: { nomeDoc: string; nomeFile: string; url: string }[] = [];
-    for (const f of files) {
-      if (!f.storage_path) continue;
-      const encodedPath = f.storage_path.split('/').map((s: string) => encodeURIComponent(s)).join('/');
-      const signRes = await fetch(
-        `${SUPA_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
-        { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
-      );
-      if (signRes.ok) {
-        const signData = await signRes.json();
-        let url = signData?.signedUrl ?? null;
-        if (!url && signData?.signedURL) url = `${SUPA_URL}/storage/v1${signData.signedURL}`;
-        if (url) docLinks.push({ nomeDoc: f.practice_documents?.nome ?? f.nome_file, nomeFile: f.nome_file, url });
+    for (const doc of (Array.isArray(docs) ? docs : [])) {
+      const docNome: string = doc.nome ?? '';
+      for (const f of (doc.uploaded_files ?? [])) {
+        if (!f.storage_path) continue;
+        const encodedPath = (f.storage_path as string).split('/').map((s: string) => encodeURIComponent(s)).join('/');
+        const signRes = await fetch(
+          `${SUPA_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
+          { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
+        );
+        if (signRes.ok) {
+          const signData = await signRes.json();
+          let url: string | null = signData?.signedUrl ?? null;
+          if (!url && signData?.signedURL) url = `${SUPA_URL}/storage/v1${signData.signedURL}`;
+          if (url) docLinks.push({ nomeDoc: docNome || f.nome_file, nomeFile: f.nome_file, url });
+        }
       }
     }
 
