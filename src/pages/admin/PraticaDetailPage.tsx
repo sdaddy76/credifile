@@ -1074,7 +1074,11 @@ export default function PraticaDetailPage() {
     setUploadingAdminDoc(docId);
     for (const file of validFiles) {
       const path = `${id}/${docId}/${Date.now()}_${file.name}`;
-      try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch (_e) { /* ignora errori storage */ }
+      const { error: storErr } = await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
+      if (storErr) {
+        toast.error(`Errore caricamento "${file.name}": ${storErr.message}`);
+        continue;
+      }
       await supabase.from('uploaded_files').insert({
         practice_document_id: docId, practice_id: id,
         nome_file: file.name, storage_path: path,
@@ -1109,7 +1113,8 @@ export default function PraticaDetailPage() {
             const blob = await res.blob();
             const file = new File([blob], name, { type: blob.type });
             const path = `${id}/${docId}/${Date.now()}_${name}`;
-            await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
+            const { error: storErr } = await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
+            if (storErr) throw new Error(`Errore storage per "${name}": ${storErr.message}`);
             await supabase.from('uploaded_files').insert({
               practice_document_id: docId, practice_id: id,
               nome_file: name, storage_path: path,
