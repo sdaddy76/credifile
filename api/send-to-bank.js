@@ -450,17 +450,15 @@ export default async function handler(req, res) {
   </tbody>
 </table>` : '';
 
-    const bancabSection = `
+    // Bancabilità: includi nell'email solo se score >= 80
+    const bancabSection = (bancabScore != null && bancabScore >= 80) ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   🏦 Indice di Bancabilità
 </h3>
 <div style="display:inline-block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 24px;margin-top:8px;text-align:center;">
-  ${bancabScore != null
-    ? `<div style="font-size:36px;font-weight:800;color:${scoreColor(bancabScore)};">${bancabScore.toFixed(0)}<span style="font-size:16px;color:#64748b;">/100</span></div>
-       <div style="font-size:13px;font-weight:600;color:${scoreColor(bancabScore)};margin-top:2px;">${scoreLabel(bancabScore)}</div>`
-    : `<div style="font-size:18px;color:#94a3b8;font-weight:500;">Non calcolato</div>`
-  }
-</div>`;
+  <div style="font-size:36px;font-weight:800;color:${scoreColor(bancabScore)};">${bancabScore.toFixed(0)}<span style="font-size:16px;color:#64748b;">/100</span></div>
+  <div style="font-size:13px;font-weight:600;color:${scoreColor(bancabScore)};margin-top:2px;">${scoreLabel(bancabScore)}</div>
+</div>` : '';
 
     const repSection = rep ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
@@ -493,23 +491,53 @@ export default async function handler(req, res) {
     // ── Profilo aziendale ─────────────────────────────────────────────────
     const anniAttivita = (() => {
       if (!clienteExt.data_costituzione) return null;
-      const founded = new Date(clienteExt.data_costituzione);
-      const years = Math.floor((Date.now() - founded.getTime()) / (365.25*24*3600*1000));
-      return years;
+      // Supporta sia ISO (yyyy-mm-dd) sia formato italiano (gg/mm/aaaa o gg-mm-aaaa)
+      let founded;
+      const raw = String(clienteExt.data_costituzione).trim();
+      const mIT = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(raw);
+      const mISO = /^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/.exec(raw);
+      if (mIT) {
+        // gg/mm/aaaa → costruisce Date con anno, mese(0-based), giorno
+        founded = new Date(parseInt(mIT[3]), parseInt(mIT[2]) - 1, parseInt(mIT[1]));
+      } else if (mISO) {
+        founded = new Date(parseInt(mISO[1]), parseInt(mISO[2]) - 1, parseInt(mISO[3]));
+      } else {
+        founded = new Date(raw);
+      }
+      if (isNaN(founded.getTime())) return null;
+      const years = Math.floor((Date.now() - founded.getTime()) / (365.25 * 24 * 3600 * 1000));
+      return years >= 0 ? years : null;
     })();
-    const profiloSection = (clienteExt.data_costituzione || clienteExt.forma_giuridica || clienteExt.codice_ateco) ? `
+    const profiloSection = (clienteExt.data_costituzione || clienteExt.forma_giuridica || clienteExt.codice_ateco) ? (() => {
+      // Formatta la data costituzione in modo sicuro (supporta gg/mm/aaaa e ISO)
+      let dataCostituzioneFmt = '';
+      if (clienteExt.data_costituzione) {
+        const raw = String(clienteExt.data_costituzione).trim();
+        const mIT = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(raw);
+        const mISO = /^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/.exec(raw);
+        if (mIT) {
+          dataCostituzioneFmt = `${mIT[1].padStart(2,'0')}/${mIT[2].padStart(2,'0')}/${mIT[3]}`;
+        } else if (mISO) {
+          dataCostituzioneFmt = `${mISO[3]}/${mISO[2]}/${mISO[1]}`;
+        } else {
+          const d = new Date(raw);
+          dataCostituzioneFmt = isNaN(d.getTime()) ? raw : d.toLocaleDateString('it-IT');
+        }
+      }
+      return `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   🏢 Profilo Aziendale
 </h3>
 <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
   <tbody>
     ${clienteExt.forma_giuridica ? `<tr><td style="padding:5px 10px;color:#64748b;width:38%;">Forma giuridica</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${clienteExt.forma_giuridica}</td></tr>` : ''}
-    ${clienteExt.data_costituzione ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Data costituzione</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${new Date(clienteExt.data_costituzione).toLocaleDateString('it-IT')}${anniAttivita ? ` <span style="color:#059669;font-size:12px;">(${anniAttivita} anni di attività)</span>` : ''}</td></tr>` : ''}
+    ${dataCostituzioneFmt ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Data costituzione</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${dataCostituzioneFmt}${anniAttivita != null ? ` <span style="color:#059669;font-size:12px;">(${anniAttivita} anni di attività)</span>` : ''}</td></tr>` : ''}
     ${clienteExt.capitale_sociale ? `<tr><td style="padding:5px 10px;color:#64748b;">Capitale sociale</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">€ ${Number(clienteExt.capitale_sociale).toLocaleString('it-IT')}</td></tr>` : ''}
     ${clienteExt.codice_ateco ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Codice ATECO</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${clienteExt.codice_ateco}${clienteExt.ateco_descrizione ? ` — <span style="font-weight:400;color:#475569;">${clienteExt.ateco_descrizione.substring(0,100)}</span>` : ''}</td></tr>` : ''}
-    ${anniAttivita >= 5 ? `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">✅ Azienda consolidata (${anniAttivita} anni)</span></td></tr>` : anniAttivita !== null ? `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">⚠️ Azienda giovane (${anniAttivita} anni)</span></td></tr>` : ''}
+    ${anniAttivita != null ? (anniAttivita >= 5 ? `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">✅ Azienda consolidata (${anniAttivita} anni)</span></td></tr>` : `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">⚠️ Azienda giovane (${anniAttivita} anni)</span></td></tr>`) : ''}
   </tbody>
-</table>` : '';
+</table>`;
+    })() : '';
 
     // ── Confronto bilanci YoY ─────────────────────────────────────────────
     const confrontoSection = (() => {
