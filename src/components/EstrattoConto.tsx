@@ -273,14 +273,32 @@ const KW_TRIBUTI = [
 ];
 
 const KW_FORNITORI = [
-  'FATT', 'FATTURA', 'FT N', 'FORNITORE', 'PRESTAZ', 'SERVIZIO',
-  'CONSULENZ', 'LAVORI', 'APPALTO', 'CANONE', 'NOLEGGIO', 'LOCAZIONE',
-  'AFFITTO', 'UTENZA', 'ENEL', 'ENI', 'A2A', 'IREN', 'HERA', 'LUCE',
-  'GAS', 'ACQUA', 'TELEFONIA', 'TIM', 'VODAFONE', 'WIND', 'FASTWEB',
+  // Fatture e pagamenti
+  'FATT', 'FATTURA', 'FT N', 'FT.', 'SALDO FT', 'SALDO FATT', 'ACCONTO FT', 'ACCONTO FATT',
+  'FORNITORE', 'PRESTAZ', 'SERVIZIO', 'CONSULENZ', 'LAVORI', 'APPALTO',
+  'CANONE', 'NOLEGGIO', 'LOCAZIONE', 'AFFITTO',
+  // Utenze
+  'UTENZA', 'ENEL', 'ENI', 'A2A', 'IREN', 'HERA', 'LUCE', 'GAS', 'ACQUA',
+  'TELEFONIA', 'TIM', 'VODAFONE', 'WIND', 'FASTWEB',
+  // Finanziamenti e assicurazioni
   'ASSICURAZ', 'PREMI ASS', 'LEASING', 'MUTUO', 'RATA',
+  'RIMBORSO FINANZ', 'PAGAMENTO RATA', 'ADD/PREMI',
+  'LOCAZIONI (FITTO', 'FINANZIAMENTI',
+  // Bonifici in uscita e assegni (MPS)
+  'VOSTRA DISPOSIZIONE', 'BON.SEPA TELEMATICO', 'BON. SEPA TELEMATICO',
+  'VOSTRO ASSEGNO', 'ASSEGNO BANCARIO',
+  // RID / SDD / addebiti diretti
+  'ADDEBITO SDD', 'ADDEBITO DIRETTO', 'PAGAMENTI DIVERSI',
   // Pagamenti con carte
   'MASTERCARD', 'VISA', 'PAGAMENTO CARTA', 'PAG CARTA', 'ADDEBITO CARTA',
   'AMERICAN EXPRESS', 'AMEX', 'BANCOMAT',
+];
+
+/** Uscite che NON sono fornitori (prelievi ATM, commissioni, giroconti) */
+const KW_USCITA_ALTRO = [
+  'PRELEVAMENTO', 'PREL. CONT', 'PRELIEVO SELF', 'PRELIEVO ATM',
+  'COMMISSIONI SBF', 'COMMISSIONI COMPETENZE', 'COMPETENZE TRIM',
+  'SPESE TENUTA', 'INTERESSI DEBITORI',
 ];
 
 const KW_CLIENTI_ENTRATA = [
@@ -329,8 +347,13 @@ function classificaTransazione(
 
   // Fornitori → uscita
   if (tipo === 'uscita') {
+    // Prelievi ATM, commissioni bancarie, ecc. → non sono pagamenti fornitori
+    if (KW_USCITA_ALTRO.some(k => d.includes(k))) return 'altro';
+    // Se c'è parola chiave fornitore esplicita
     if (KW_FORNITORI.some(k => d.includes(k))) return 'fornitore';
-    return 'altro';
+    // Default uscite c/c aziendale: bonifici e pagamenti non classificati → fornitore
+    // (quasi mai un'azienda emette bonifici verso se stessa o per motivi ignoti)
+    return 'fornitore';
   }
 
   // Entrate
