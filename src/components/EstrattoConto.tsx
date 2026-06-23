@@ -284,8 +284,34 @@ const KW_FORNITORI = [
 ];
 
 const KW_CLIENTI_ENTRATA = [
-  'ACCREDITO', 'VERSAMENTO', 'INCASSO', 'RIMESSA', 'PAGAMENTO RIC',
+  'ACCREDITO STIPEND', 'INCASSO', 'RIMESSA',
   'BONIFICO IN ENTRATA', 'GIROACCREDITO', 'ACCREDITAMENTO',
+  // Bonifici ricevuti da clienti (MPS: "BONIFICO A VOSTRO FAVORE")
+  'BONIFICO A VOSTRO FAVORE',
+  'PAGAMENTO FATTURA', 'PAGAMENTO FATT', 'PAGAMENTO FT',
+];
+
+/** Parole chiave che indicano movimenti interni / non-clienti in entrata */
+const KW_ENTRATA_ALTRO = [
+  'GIROCONTO', 'GIRO CONTO', 'DISPOSIZIONI DI GIRO', 'GIROCONTO SBF',
+  'VERSAMENTO DI ASSEGNI', 'VERSAMENTO DI CONTANTE', 'VERSAMENTO CONTANTE',
+  'VERS.A/B', 'VERS. CONTANTE', 'SALDO INIZIALE', 'SALDO FINALE',
+  'RIACCREDITO', 'RETTIFICA',
+];
+
+/** Parole chiave che in una riga PDF indicano DARE (uscita) — usate da parseRighe
+ *  quando non c'è separazione esplicita DARE/AVERE */
+const KW_RIGA_DARE = [
+  'VOSTRO ASSEGNO BANCARIO',          // assegno emesso
+  'VOSTRA DISPOSIZIONE A FAVORE',     // bonifico uscita MPS
+  'BON.SEPA TELEMATICO',              // bonifico SEPA uscita
+  'PAGAMENTI DIVERSI',                // addebiti vari
+  'ADDEBITO DIRETTO', 'ADDEBITO SDD', // RID/SDD
+  'PRELEVAMENTO', 'PREL. CONT',       // prelievi ATM
+  'COMMISSIONI SBF', 'COMMISSIONI ',  // spese bancarie
+  'PAGAMENTO RATA', 'RIMBORSO FINANZ',// rate mutuo/finanziamento
+  'ADD/PREMI', 'PREMI ASS',           // premi assicurativi addebito
+  'ADDEBITO RATA', 'ADDEBITO LEASING',
 ];
 
 /** Classifica una transazione in base a parole chiave nella descrizione */
@@ -302,18 +328,21 @@ function classificaTransazione(
   if (KW_TRIBUTI.some(k => d.includes(k))) return 'tributo';
 
   // Fornitori → uscita
-  if (tipo === 'uscita' && KW_FORNITORI.some(k => d.includes(k))) return 'fornitore';
-
-  // Entrate da clienti
-  if (tipo === 'entrata') {
-    if (KW_CLIENTI_ENTRATA.some(k => d.includes(k))) return 'cliente';
-    // Genericamente entrate non classificate = clienti (caso comune)
-    return 'cliente';
-  }
-
-  // Uscite non classificate
   if (tipo === 'uscita') {
     if (KW_FORNITORI.some(k => d.includes(k))) return 'fornitore';
+    return 'altro';
+  }
+
+  // Entrate
+  if (tipo === 'entrata') {
+    // Movimenti interni/neutri → non sono incassi da clienti
+    if (KW_ENTRATA_ALTRO.some(k => d.includes(k))) return 'altro';
+    // Pagamenti ricevuti da clienti (bonifici, fatture pagate)
+    if (KW_CLIENTI_ENTRATA.some(k => d.includes(k))) return 'cliente';
+    // Entrata da bonifico generico senza parole chiave specifiche → cliente
+    if (d.includes('BONIFICO')) return 'cliente';
+    // Versamento assegno, accredito generico
+    if (d.includes('VERSAMENTO') || d.includes('ACCREDITO')) return 'cliente';
     return 'altro';
   }
 
@@ -448,6 +477,17 @@ function parseRighe(righe: string[][]): Transazione[] {
       tipo = 'uscita';
     }
     if (rigaUp.includes(' AVERE ') || rigaUp.includes('ACCREDIT') || rigaUp.includes('ENTRATA') || rigaUp.includes(' A ')) {
+      tipo = 'entrata';
+    }
+
+    // Override con le keyword MPS specifiche di DARE (uscita)
+    // Nel PDF MPS le colonne DARE/AVERE non portano segno separato nei token,
+    // quindi si usa il contenuto descrittivo per determinare la direzione.
+    if (KW_RIGA_DARE.some(k => rigaUp.includes(k))) {
+      tipo = 'uscita';
+    }
+    // "BONIFICO A VOSTRO FAVORE" è sempre entrata (incasso da cliente)
+    if (rigaUp.includes('BONIFICO A VOSTRO FAVORE')) {
       tipo = 'entrata';
     }
 
