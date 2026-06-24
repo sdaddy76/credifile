@@ -1063,6 +1063,20 @@ export default function PraticaDetailPage() {
     }
   };
 
+  // Sanitizza il nome file per Supabase Storage: rimuove caratteri non ammessi nello storage path
+  const sanitizeFileName = (name: string): string => {
+    const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
+    const base = name.slice(0, name.length - ext.length);
+    return base
+      .normalize('NFD')                        // separa accenti dalle lettere (es. à → a + ̀)
+      .replace(/[\u0300-\u036f]/g, '')         // rimuove i diacritici
+      .replace(/[''`´]/g, '')                  // rimuove apostrofi e accenti tipografici
+      .replace(/[^a-zA-Z0-9._\-]/g, '_')       // tutto il resto → underscore
+      .replace(/_+/g, '_')                     // underscore multipli → uno solo
+      .replace(/^_|_$/g, '')                   // rimuove underscore iniziali/finali
+      + ext.toLowerCase();
+  };
+
   // Upload documento da admin (per conto del cliente) — supporta selezione multipla
   const handleAdminUpload = async (docId: string, files: FileList | File[]) => {
     if (!id) return;
@@ -1073,7 +1087,8 @@ export default function PraticaDetailPage() {
     if (validFiles.length === 0) return;
     setUploadingAdminDoc(docId);
     for (const file of validFiles) {
-      const path = `${id}/${docId}/${Date.now()}_${file.name}`;
+      const safeName = sanitizeFileName(file.name);
+      const path = `${id}/${docId}/${Date.now()}_${safeName}`;
       const { error: storErr } = await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
       if (storErr) {
         toast.error(`Errore caricamento "${file.name}": ${storErr.message}`);
@@ -1081,7 +1096,7 @@ export default function PraticaDetailPage() {
       }
       await supabase.from('uploaded_files').insert({
         practice_document_id: docId, practice_id: id,
-        nome_file: file.name, storage_path: path,
+        nome_file: file.name, storage_path: path,      // nome_file resta quello originale (leggibile)
         mime_type: file.type, dimensione: file.size, uploaded_by: 'admin',
       });
       await propagaDocumentoAltrePratiche(docId, path, file.name, file.type, file.size);
@@ -1111,13 +1126,14 @@ export default function PraticaDetailPage() {
             const { link, name, bytes } = dbFile;
             const res = await fetch(link);
             const blob = await res.blob();
-            const file = new File([blob], name, { type: blob.type });
-            const path = `${id}/${docId}/${Date.now()}_${name}`;
+            const safeName = sanitizeFileName(name);
+            const file = new File([blob], safeName, { type: blob.type });
+            const path = `${id}/${docId}/${Date.now()}_${safeName}`;
             const { error: storErr } = await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
             if (storErr) throw new Error(`Errore storage per "${name}": ${storErr.message}`);
             await supabase.from('uploaded_files').insert({
               practice_document_id: docId, practice_id: id,
-              nome_file: name, storage_path: path,
+              nome_file: name, storage_path: path,  // nome_file resta quello originale (leggibile)
               mime_type: blob.type, dimensione: bytes, uploaded_by: 'admin',
             });
             await propagaDocumentoAltrePratiche(docId, path, name, blob.type, bytes);
