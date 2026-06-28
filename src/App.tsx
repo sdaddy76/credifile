@@ -38,6 +38,7 @@ import ProfiloConsulentePage from "@/pages/consulente/ProfiloConsulentePage";
 import BancaPortalPage from "@/pages/banca/BancaPortalPage";
 import SegnalazionePublicaPage from "@/pages/public/SegnalazionePublicaPage";
 import SegnalazioniRicevutePage from "@/pages/admin/SegnalazioniRicevutePage";
+import IntegritaDocumentiPage from "@/pages/admin/IntegritaDocumentiPage";
 
 const queryClient = new QueryClient();
 
@@ -107,6 +108,7 @@ const App = () => (
             <Route path="checklist-template"         element={<ChecklistTemplatePage />} />
             <Route path="report"                      element={<ReportPage />} />
             <Route path="segnalazioni-ricevute"       element={<SegnalazioniRicevutePage />} />
+            <Route path="integrita-documenti"          element={<IntegritaDocumentiPage />} />
           </Route>
 
           <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />

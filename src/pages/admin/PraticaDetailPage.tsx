@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { uploadPracticeFile } from '@/lib/uploadFile';
 import { invokeSendToBank } from '@/lib/sendToBank';
 import { invokeAiMatching } from '@/lib/aiMatching';
 import { Button } from '@/components/ui/button';
@@ -1063,20 +1064,6 @@ export default function PraticaDetailPage() {
     }
   };
 
-  // Sanitizza il nome file per Supabase Storage: rimuove caratteri non ammessi nello storage path
-  const sanitizeFileName = (name: string): string => {
-    const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
-    const base = name.slice(0, name.length - ext.length);
-    return base
-      .normalize('NFD')                        // separa accenti dalle lettere (es. à → a + ̀)
-      .replace(/[\u0300-\u036f]/g, '')         // rimuove i diacritici
-      .replace(/[''`´]/g, '')                  // rimuove apostrofi e accenti tipografici
-      .replace(/[^a-zA-Z0-9._\-]/g, '_')       // tutto il resto → underscore
-      .replace(/_+/g, '_')                     // underscore multipli → uno solo
-      .replace(/^_|_$/g, '')                   // rimuove underscore iniziali/finali
-      + ext.toLowerCase();
-  };
-
   // Upload documento da admin (per conto del cliente) — supporta selezione multipla
   const handleAdminUpload = async (docId: string, files: FileList | File[]) => {
     if (!id) return;
@@ -1086,25 +1073,36 @@ export default function PraticaDetailPage() {
     const validFiles = fileArray.filter(f => f.size <= 30 * 1024 * 1024);
     if (validFiles.length === 0) return;
     setUploadingAdminDoc(docId);
-    for (const file of validFiles) {
-      const safeName = sanitizeFileName(file.name);
-      const path = `${id}/${docId}/${Date.now()}_${safeName}`;
-      const { error: storErr } = await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
-      if (storErr) {
-        toast.error(`Errore caricamento "${file.name}": ${storErr.message}`);
-        continue;
+    let uploadedCount = 0;
+    try {
+      for (const file of validFiles) {
+        const result = await uploadPracticeFile({
+          practiceId: id,
+          practiceDocumentId: docId,
+          file,
+          fileName: file.name,
+          mimeType: file.type,
+          size: file.size,
+          uploadedBy: 'admin',
+        });
+
+        if (result.error || !result.path) {
+          toast.error(`Errore caricamento "${file.name}": ${result.error?.message ?? 'errore sconosciuto'}`);
+          continue;
+        }
+
+        uploadedCount++;
+        await propagaDocumentoAltrePratiche(docId, result.path, result.nomefile_originale, file.type, file.size);
       }
-      await supabase.from('uploaded_files').insert({
-        practice_document_id: docId, practice_id: id,
-        nome_file: file.name, storage_path: path,      // nome_file resta quello originale (leggibile)
-        mime_type: file.type, dimensione: file.size, uploaded_by: 'admin',
-      });
-      await propagaDocumentoAltrePratiche(docId, path, file.name, file.type, file.size);
+
+      if (uploadedCount > 0) {
+        await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
+        toast.success(uploadedCount === 1 ? `File caricato con successo` : `${uploadedCount} file caricati con successo`);
+        load();
+      }
+    } finally {
+      setUploadingAdminDoc(null);
     }
-    await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
-    toast.success(validFiles.length === 1 ? `"${validFiles[0].name}" caricato con successo` : `${validFiles.length} file caricati con successo`);
-    setUploadingAdminDoc(null);
-    load();
   };
 
   // Upload documento da Dropbox (Chooser)
@@ -1122,27 +1120,37 @@ export default function PraticaDetailPage() {
         if (validFiles.length === 0) return;
         setUploadingAdminDoc(docId);
         try {
+          let uploadedCount = 0;
           for (const dbFile of validFiles) {
             const { link, name, bytes } = dbFile;
             const res = await fetch(link);
+            if (!res.ok) throw new Error(`Download Dropbox fallito per "${name}"`);
             const blob = await res.blob();
-            const safeName = sanitizeFileName(name);
-            const file = new File([blob], safeName, { type: blob.type });
-            const path = `${id}/${docId}/${Date.now()}_${safeName}`;
-            const { error: storErr } = await supabase.storage.from('practice-files').upload(path, file, { upsert: false });
-            if (storErr) throw new Error(`Errore storage per "${name}": ${storErr.message}`);
-            await supabase.from('uploaded_files').insert({
-              practice_document_id: docId, practice_id: id,
-              nome_file: name, storage_path: path,  // nome_file resta quello originale (leggibile)
-              mime_type: blob.type, dimensione: bytes, uploaded_by: 'admin',
+            const file = new File([blob], name, { type: blob.type });
+            const result = await uploadPracticeFile({
+              practiceId: id,
+              practiceDocumentId: docId,
+              file,
+              fileName: name,
+              mimeType: blob.type,
+              size: bytes,
+              uploadedBy: 'admin',
             });
-            await propagaDocumentoAltrePratiche(docId, path, name, blob.type, bytes);
+
+            if (result.error || !result.path) {
+              throw new Error(`Errore caricamento "${name}": ${result.error?.message ?? 'errore sconosciuto'}`);
+            }
+
+            uploadedCount++;
+            await propagaDocumentoAltrePratiche(docId, result.path, result.nomefile_originale, blob.type, bytes);
           }
-          await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
-          toast.success(validFiles.length === 1 ? `"${validFiles[0].name}" importato da Dropbox` : `${validFiles.length} file importati da Dropbox`);
-          load();
+          if (uploadedCount > 0) {
+            await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
+            toast.success(uploadedCount === 1 ? `"${validFiles[0].name}" importato da Dropbox` : `${uploadedCount} file importati da Dropbox`);
+            load();
+          }
         } catch (e) {
-          toast.error('Errore importazione da Dropbox');
+          toast.error('Errore importazione da Dropbox: ' + (e instanceof Error ? e.message : String(e)));
         } finally {
           setUploadingAdminDoc(null);
         }

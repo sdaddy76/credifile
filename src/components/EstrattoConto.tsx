@@ -235,7 +235,7 @@ interface Transazione {
   data_contabile?: string;
   importo: number;
   tipo: 'entrata' | 'uscita';
-  categoria: 'cliente' | 'stipendio' | 'fornitore' | 'tributo' | 'altro';
+  categoria: 'incasso_cliente' | 'anticipo_sbf' | 'versamento' | 'altro_entrata' | 'fornitore' | 'rata_finanziamento' | 'tributo' | 'stipendio' | 'spesa_bancaria' | 'prelievo' | 'altro_uscita' | 'cliente' | 'altro';
   descrizione: string;
   beneficiario_ordinante?: string;
   saldo_progressivo?: number;
@@ -249,10 +249,25 @@ interface Kpi {
   uscite_stipendi: number;
   uscite_fornitori: number;
   uscite_tributi: number;
+  uscite_rate_finanziamenti: number;
+  uscite_spese_bancarie: number;
+  uscite_prelievi: number;
   uscite_altro: number;
   saldo_netto: number;
   num_transazioni: number;
   indice_liquidita: number;
+}
+
+interface KpiMensili {
+  mesiAnalizzati: number;
+  mediaIncassiClienti: number;
+  mediaPagamentiFornitori: number;
+  mediaRateFinanziamenti: number;
+  mediaTributi: number;
+  saldoOperativoMedio: number;
+  mesiSaldoNegativo: number;
+  meseIncassiMassimi: { mese: string; valore: number } | null;
+  meseUsciteMassime: { mese: string; valore: number } | null;
 }
 
 /* ─────────────────────────────────────────────
@@ -261,8 +276,7 @@ interface Kpi {
 
 const KW_STIPENDI = [
   'STIPEND', 'SALARIO', 'RETRIBUZ', 'CEDOLINO', 'PAGHE', 'EMOLUMENT',
-  'COMPENSO DIPEND', 'COLLABORATORE', 'COLLABOR', 'F24 PAGHE', 'LAVORO DIPEND',
-  'BUSTA PAGA', 'PAGA MENSILE', 'ACCREDITO STIPEND',
+  'COMPENSO DIPEND', 'BUSTA PAGA', 'PAGA MENSILE', 'LAVORO DIPEND',
 ];
 
 const KW_TRIBUTI = [
@@ -272,49 +286,52 @@ const KW_TRIBUTI = [
   'IMPOSTE', 'TRIBUTO', 'EQUITALIA', 'RISCOSSIONE',
 ];
 
+const KW_RATE_FINANZIAMENTI = [
+  'RIMBORSO FINANZ', 'PAGAMENTO RATA', 'ADDEBITO RATA', 'RATA MUTUO',
+  'RATA FINANZIAMENTO', 'FINANZIAMENTI', 'LEASING', 'MUTUO', 'BANCA IFIS',
+  'IFIS', 'FINDOMESTIC', 'BNL', 'DEUTSCHE BANK', 'AGOS', 'COMPASS',
+  'FIDITALIA', 'SELMA', 'MEDIOCREDITO', 'SANTANDER',
+];
+
+const KW_SPESE_BANCARIE = [
+  'COMMISSIONI', 'COMPETENZE', 'SPESE TENUTA', 'SPESE CONTO', 'SPESE LIQUIDAZIONE',
+  'INTERESSI DEBITORI', 'INTERESSI PASSIVI', 'IMPOSTA BOLLO', 'CANONE CONTO',
+];
+
+const KW_PRELIEVI = [
+  'PRELEVAMENTO', 'PREL. CONT', 'PRELIEVO SELF', 'PRELIEVO ATM', 'PREL CONT',
+];
+
 const KW_FORNITORI = [
-  // Fatture e pagamenti
   'FATT', 'FATTURA', 'FT N', 'FT.', 'SALDO FT', 'SALDO FATT', 'ACCONTO FT', 'ACCONTO FATT',
   'FORNITORE', 'PRESTAZ', 'SERVIZIO', 'CONSULENZ', 'LAVORI', 'APPALTO',
-  'CANONE', 'NOLEGGIO', 'LOCAZIONE', 'AFFITTO',
-  // Utenze
-  'UTENZA', 'ENEL', 'ENI', 'A2A', 'IREN', 'HERA', 'LUCE', 'GAS', 'ACQUA',
-  'TELEFONIA', 'TIM', 'VODAFONE', 'WIND', 'FASTWEB',
-  // Finanziamenti e assicurazioni
-  'ASSICURAZ', 'PREMI ASS', 'LEASING', 'MUTUO', 'RATA',
-  'RIMBORSO FINANZ', 'PAGAMENTO RATA', 'ADD/PREMI',
-  'LOCAZIONI (FITTO', 'FINANZIAMENTI',
-  // Bonifici in uscita e assegni (MPS)
+  'CANONE', 'NOLEGGIO', 'LOCAZIONE', 'AFFITTO', 'UTENZA', 'ENEL', 'ENI', 'A2A',
+  'IREN', 'HERA', 'LUCE', 'GAS', 'ACQUA', 'TELEFONIA', 'TIM', 'VODAFONE',
+  'WIND', 'FASTWEB', 'ASSICURAZ', 'PREMI ASS', 'ADD/PREMI', 'LOCAZIONI (FITTO',
   'VOSTRA DISPOSIZIONE', 'BON.SEPA TELEMATICO', 'BON. SEPA TELEMATICO',
-  'VOSTRO ASSEGNO', 'ASSEGNO BANCARIO',
-  // RID / SDD / addebiti diretti
-  'ADDEBITO SDD', 'ADDEBITO DIRETTO', 'PAGAMENTI DIVERSI',
-  // Pagamenti con carte
-  'MASTERCARD', 'VISA', 'PAGAMENTO CARTA', 'PAG CARTA', 'ADDEBITO CARTA',
-  'AMERICAN EXPRESS', 'AMEX', 'BANCOMAT',
+  'VOSTRO ASSEGNO', 'ASSEGNO BANCARIO', 'ADDEBITO SDD', 'ADDEBITO DIRETTO',
+  'PAGAMENTI DIVERSI', 'MASTERCARD', 'VISA', 'PAGAMENTO CARTA', 'PAG CARTA',
+  'ADDEBITO CARTA', 'AMERICAN EXPRESS', 'AMEX', 'BANCOMAT',
 ];
 
-/** Uscite che NON sono fornitori (prelievi ATM, commissioni, giroconti) */
-const KW_USCITA_ALTRO = [
-  'PRELEVAMENTO', 'PREL. CONT', 'PRELIEVO SELF', 'PRELIEVO ATM',
-  'COMMISSIONI SBF', 'COMMISSIONI COMPETENZE', 'COMPETENZE TRIM',
-  'SPESE TENUTA', 'INTERESSI DEBITORI',
+const KW_INCASSI_CLIENTI = [
+  'BONIFICO A VOSTRO FAVORE', 'BONIFICO IN ENTRATA', 'PAGAMENTO FATTURA',
+  'PAGAMENTO FATT', 'PAGAMENTO FT', 'INCASSO', 'RIMESSA', 'GIROACCREDITO',
+  'ACCREDITAMENTO', 'RI.BA', 'RIBA', 'SDD INCASSO', 'POS ', 'PAGOBANCOMAT',
 ];
 
-const KW_CLIENTI_ENTRATA = [
-  'ACCREDITO STIPEND', 'INCASSO', 'RIMESSA',
-  'BONIFICO IN ENTRATA', 'GIROACCREDITO', 'ACCREDITAMENTO',
-  // Bonifici ricevuti da clienti (MPS: "BONIFICO A VOSTRO FAVORE")
-  'BONIFICO A VOSTRO FAVORE',
-  'PAGAMENTO FATTURA', 'PAGAMENTO FATT', 'PAGAMENTO FT',
+const KW_ANTICIPO_SBF = [
+  'GIROCONTO SBF', 'DISPOSIZIONI DI GIRO', 'ANTICIPO SBF', 'ANTICIPO RI.BA',
+  'ANTICIPO RIBA', 'ACCREDITO SBF', 'PORTAFOGLIO SBF', 'EFFETTI SBF',
 ];
 
-/** Parole chiave che indicano movimenti interni / non-clienti in entrata */
-const KW_ENTRATA_ALTRO = [
-  'GIROCONTO', 'GIRO CONTO', 'DISPOSIZIONI DI GIRO', 'GIROCONTO SBF',
-  'VERSAMENTO DI ASSEGNI', 'VERSAMENTO DI CONTANTE', 'VERSAMENTO CONTANTE',
-  'VERS.A/B', 'VERS. CONTANTE', 'SALDO INIZIALE', 'SALDO FINALE',
-  'RIACCREDITO', 'RETTIFICA',
+const KW_VERSAMENTI = [
+  'VERSAMENTO', 'VERS.', 'VERS A/B', 'VERS.A/B', 'VERSAMENTO DI ASSEGNI',
+  'VERSAMENTO DI CONTANTE', 'VERSAMENTO CONTANTE', 'VERS. CONTANTE',
+];
+
+const KW_ENTRATA_NEUTRA = [
+  'SALDO INIZIALE', 'SALDO FINALE', 'RIACCREDITO', 'RETTIFICA', 'STORNO',
 ];
 
 /** Parole chiave che in una riga PDF indicano DARE (uscita) — usate da parseRighe
@@ -339,37 +356,26 @@ function classificaTransazione(
 ): Transazione['categoria'] {
   const d = descrizione.toUpperCase();
 
-  // Stipendi → sempre uscita (o riaccredito)
-  if (KW_STIPENDI.some(k => d.includes(k))) return 'stipendio';
-
-  // Tributi → quasi sempre uscita
-  if (KW_TRIBUTI.some(k => d.includes(k))) return 'tributo';
-
-  // Fornitori → uscita
-  if (tipo === 'uscita') {
-    // Prelievi ATM, commissioni bancarie, ecc. → non sono pagamenti fornitori
-    if (KW_USCITA_ALTRO.some(k => d.includes(k))) return 'altro';
-    // Se c'è parola chiave fornitore esplicita
-    if (KW_FORNITORI.some(k => d.includes(k))) return 'fornitore';
-    // Default uscite c/c aziendale: bonifici e pagamenti non classificati → fornitore
-    // (quasi mai un'azienda emette bonifici verso se stessa o per motivi ignoti)
-    return 'fornitore';
-  }
-
-  // Entrate
   if (tipo === 'entrata') {
-    // Movimenti interni/neutri → non sono incassi da clienti
-    if (KW_ENTRATA_ALTRO.some(k => d.includes(k))) return 'altro';
-    // Pagamenti ricevuti da clienti (bonifici, fatture pagate)
-    if (KW_CLIENTI_ENTRATA.some(k => d.includes(k))) return 'cliente';
-    // Entrata da bonifico generico senza parole chiave specifiche → cliente
-    if (d.includes('BONIFICO')) return 'cliente';
-    // Versamento assegno, accredito generico
-    if (d.includes('VERSAMENTO') || d.includes('ACCREDITO')) return 'cliente';
-    return 'altro';
+    if (KW_ANTICIPO_SBF.some(k => d.includes(k))) return 'anticipo_sbf';
+    if (KW_VERSAMENTI.some(k => d.includes(k))) return 'versamento';
+    if (KW_ENTRATA_NEUTRA.some(k => d.includes(k))) return 'altro_entrata';
+    if (KW_INCASSI_CLIENTI.some(k => d.includes(k))) return 'incasso_cliente';
+    if (d.includes('BONIFICO')) return 'incasso_cliente';
+    if (d.includes('ACCREDITO')) return 'incasso_cliente';
+    return 'altro_entrata';
   }
 
-  return 'altro';
+  if (KW_STIPENDI.some(k => d.includes(k))) return 'stipendio';
+  if (KW_TRIBUTI.some(k => d.includes(k))) return 'tributo';
+  if (KW_RATE_FINANZIAMENTI.some(k => d.includes(k))) return 'rata_finanziamento';
+  if (KW_SPESE_BANCARIE.some(k => d.includes(k))) return 'spesa_bancaria';
+  if (KW_PRELIEVI.some(k => d.includes(k))) return 'prelievo';
+  if (KW_FORNITORI.some(k => d.includes(k))) return 'fornitore';
+
+  // Default uscite c/c aziendale: bonifici e pagamenti non classificati → fornitore
+  if (d.includes('BONIFICO') || d.includes('ASSEGNO') || d.includes('PAGAMENTO')) return 'fornitore';
+  return 'altro_uscita';
 }
 
 /* ─────────────────────────────────────────────
@@ -576,21 +582,37 @@ function parseRighe(righe: string[][]): Transazione[] {
    KPI CALCULATION
 ───────────────────────────────────────────── */
 
+function isIncassoCliente(categoria: string) {
+  return categoria === 'incasso_cliente' || categoria === 'cliente';
+}
+
+function isAltroEntrata(categoria: string) {
+  return categoria === 'altro_entrata' || categoria === 'altro';
+}
+
+function isAltroUscita(categoria: string) {
+  return categoria === 'altro_uscita' || categoria === 'altro';
+}
+
 function calcolaKpi(transazioni: Transazione[]): Kpi {
   let totale_entrate = 0, totale_uscite = 0;
   let entrate_clienti = 0, uscite_stipendi = 0;
   let uscite_fornitori = 0, uscite_tributi = 0, uscite_altro = 0;
+  let uscite_rate_finanziamenti = 0, uscite_spese_bancarie = 0, uscite_prelievi = 0;
 
   for (const t of transazioni) {
     if (t.tipo === 'entrata') {
       totale_entrate += t.importo;
-      if (t.categoria === 'cliente') entrate_clienti += t.importo;
+      if (isIncassoCliente(t.categoria)) entrate_clienti += t.importo;
     } else {
       totale_uscite += t.importo;
       if (t.categoria === 'stipendio') uscite_stipendi += t.importo;
       else if (t.categoria === 'fornitore') uscite_fornitori += t.importo;
       else if (t.categoria === 'tributo') uscite_tributi += t.importo;
-      else uscite_altro += t.importo;
+      else if (t.categoria === 'rata_finanziamento') uscite_rate_finanziamenti += t.importo;
+      else if (t.categoria === 'spesa_bancaria') uscite_spese_bancarie += t.importo;
+      else if (t.categoria === 'prelievo') uscite_prelievi += t.importo;
+      else if (isAltroUscita(t.categoria)) uscite_altro += t.importo;
     }
   }
 
@@ -601,10 +623,78 @@ function calcolaKpi(transazioni: Transazione[]): Kpi {
     uscite_stipendi,
     uscite_fornitori,
     uscite_tributi,
+    uscite_rate_finanziamenti,
+    uscite_spese_bancarie,
+    uscite_prelievi,
     uscite_altro,
     saldo_netto: totale_entrate - totale_uscite,
     num_transazioni: transazioni.length,
     indice_liquidita: totale_uscite > 0 ? totale_entrate / totale_uscite : 0,
+  };
+}
+
+function monthKeyFromDate(dateStr?: string) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function eachMonthKey(start: string, end: string): string[] {
+  const [sy, sm] = start.split('-').map(Number);
+  const [ey, em] = end.split('-').map(Number);
+  const keys: string[] = [];
+  const d = new Date(sy, sm - 1, 1);
+  const endD = new Date(ey, em - 1, 1);
+  while (d <= endD) {
+    keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    d.setMonth(d.getMonth() + 1);
+  }
+  return keys;
+}
+
+function labelMese(key: string) {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+}
+
+function calcolaKpiMensili(transazioni: Transazione[]): KpiMensili | null {
+  const validKeys = transazioni.map(t => monthKeyFromDate(t.data_valuta)).filter(Boolean) as string[];
+  if (validKeys.length === 0) return null;
+  const range = eachMonthKey(validKeys.sort()[0], validKeys.sort()[validKeys.length - 1]);
+  const byMonth = new Map<string, { incassi: number; fornitori: number; rate: number; tributi: number; uscite: number }>();
+  range.forEach(k => byMonth.set(k, { incassi: 0, fornitori: 0, rate: 0, tributi: 0, uscite: 0 }));
+
+  for (const t of transazioni) {
+    const key = monthKeyFromDate(t.data_valuta);
+    if (!key || !byMonth.has(key)) continue;
+    const m = byMonth.get(key)!;
+    if (t.tipo === 'entrata' && isIncassoCliente(t.categoria)) m.incassi += t.importo;
+    if (t.tipo === 'uscita') {
+      m.uscite += t.importo;
+      if (t.categoria === 'fornitore') m.fornitori += t.importo;
+      else if (t.categoria === 'rata_finanziamento') m.rate += t.importo;
+      else if (t.categoria === 'tributo') m.tributi += t.importo;
+    }
+  }
+
+  const mesi = Math.max(1, range.length);
+  const values = [...byMonth.entries()];
+  const sum = (field: 'incassi' | 'fornitori' | 'rate' | 'tributi') => values.reduce((s, [, v]) => s + v[field], 0);
+  const saldoOperativo = values.map(([mese, v]) => ({ mese, valore: v.incassi - v.fornitori - v.rate - v.tributi }));
+  const incassiMax = values.reduce((best, cur) => cur[1].incassi > best[1].incassi ? cur : best, values[0]);
+  const usciteMax = values.reduce((best, cur) => cur[1].uscite > best[1].uscite ? cur : best, values[0]);
+
+  return {
+    mesiAnalizzati: mesi,
+    mediaIncassiClienti: sum('incassi') / mesi,
+    mediaPagamentiFornitori: sum('fornitori') / mesi,
+    mediaRateFinanziamenti: sum('rate') / mesi,
+    mediaTributi: sum('tributi') / mesi,
+    saldoOperativoMedio: saldoOperativo.reduce((s, v) => s + v.valore, 0) / mesi,
+    mesiSaldoNegativo: saldoOperativo.filter(v => v.valore < 0).length,
+    meseIncassiMassimi: incassiMax ? { mese: labelMese(incassiMax[0]), valore: incassiMax[1].incassi } : null,
+    meseUsciteMassime: usciteMax ? { mese: labelMese(usciteMax[0]), valore: usciteMax[1].uscite } : null,
   };
 }
 
@@ -616,12 +706,27 @@ const fmt = (n: number) =>
   new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
 
 const CATEGORIA_STYLE: Record<string, { label: string; cls: string }> = {
-  cliente:   { label: 'Cliente',    cls: 'bg-blue-100 text-blue-800 border-blue-200' },
-  stipendio: { label: 'Stipendio',  cls: 'bg-purple-100 text-purple-800 border-purple-200' },
-  fornitore: { label: 'Fornitore',  cls: 'bg-orange-100 text-orange-800 border-orange-200' },
-  tributo:   { label: 'Tributo',    cls: 'bg-red-100 text-red-800 border-red-200' },
-  altro:     { label: 'Altro',      cls: 'bg-gray-100 text-gray-600 border-gray-200' },
+  incasso_cliente:     { label: 'Incasso cliente',       cls: 'bg-blue-100 text-blue-800 border-blue-200' },
+  anticipo_sbf:        { label: 'Anticipo SBF',          cls: 'bg-cyan-100 text-cyan-800 border-cyan-200' },
+  versamento:          { label: 'Versamento',            cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+  altro_entrata:       { label: 'Altra entrata',         cls: 'bg-teal-100 text-teal-800 border-teal-200' },
+  fornitore:           { label: 'Fornitore',             cls: 'bg-orange-100 text-orange-800 border-orange-200' },
+  rata_finanziamento:  { label: 'Rata finanziamento',    cls: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
+  tributo:             { label: 'Tributo',               cls: 'bg-red-100 text-red-800 border-red-200' },
+  stipendio:           { label: 'Stipendio',             cls: 'bg-purple-100 text-purple-800 border-purple-200' },
+  spesa_bancaria:      { label: 'Spesa bancaria',        cls: 'bg-slate-100 text-slate-700 border-slate-200' },
+  prelievo:            { label: 'Prelievo',              cls: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+  altro_uscita:        { label: 'Altra uscita',          cls: 'bg-gray-100 text-gray-600 border-gray-200' },
+  // Compatibilità dati già salvati con le vecchie categorie
+  cliente:             { label: 'Incasso cliente',       cls: 'bg-blue-100 text-blue-800 border-blue-200' },
+  altro:               { label: 'Altro (storico)',       cls: 'bg-gray-100 text-gray-600 border-gray-200' },
 };
+
+const CATEGORIE_FILTRO = [
+  'tutti', 'incasso_cliente', 'anticipo_sbf', 'versamento', 'altro_entrata',
+  'fornitore', 'rata_finanziamento', 'tributo', 'stipendio', 'spesa_bancaria',
+  'prelievo', 'altro_uscita', 'cliente', 'altro',
+] as const;
 
 /* ─────────────────────────────────────────────
    MAIN COMPONENT
@@ -630,6 +735,7 @@ const CATEGORIA_STYLE: Record<string, { label: string; cls: string }> = {
 export function EstrattoConto({ practiceId }: Props) {
   const [transazioni, setTransazioni] = useState<Transazione[]>([]);
   const [kpi, setKpi] = useState<Kpi | null>(null);
+  const [kpiMensiliOpen, setKpiMensiliOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parsingCsv, setParsingCsv] = useState(false);
@@ -832,6 +938,7 @@ export function EstrattoConto({ practiceId }: Props) {
   };
 
   const s = salute();
+  const kpiMensili = calcolaKpiMensili(transazioni);
 
   /* ── RENDER ── */
   return (
@@ -841,7 +948,7 @@ export function EstrattoConto({ practiceId }: Props) {
         <div>
           <h3 className="text-base font-semibold text-gray-800">Analisi Estratto Conto</h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Carica il PDF oppure importa il CSV/XLS dall'area clienti della banca per rilevare bonifici, stipendi, fornitori e tributi
+            Carica il PDF oppure importa il CSV/XLS dall'area clienti della banca per rilevare incassi, anticipi SBF, fornitori, rate, tributi e spese bancarie
           </p>
         </div>
         <div className="flex items-center gap-2">

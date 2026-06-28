@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { uploadPracticeFile } from '@/lib/uploadFile';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -204,39 +205,33 @@ export default function ClientPortalPage() {
     if (!practiceId) return;
     setUploadingDoc(docId);
 
-    const ext = file.name.split('.').pop();
-    const path = `${practiceId}/${docId}/${Date.now()}_${file.name}`;
+    try {
+      const result = await uploadPracticeFile({
+        practiceId,
+        practiceDocumentId: docId,
+        file,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+        uploadedBy: 'cliente',
+      });
 
-    // Upload to Supabase Storage
-    const { error: storageError } = await supabase.storage
-      .from('practice-files')
-      .upload(path, file, { cacheControl: '3600', upsert: false });
+      if (result.error || !result.path) {
+        toast.error(`Errore caricamento "${file.name}": ${result.error?.message ?? 'errore sconosciuto'}`);
+        return;
+      }
 
-    if (storageError) {
-      // Storage bucket potrebbe non esistere ancora — salva solo il record
-      console.warn('Storage upload failed, saving record only:', storageError.message);
+      // Aggiorna stato documento
+      await supabase.from('practice_documents').update({
+        status: 'caricato',
+        uploaded_at: new Date().toISOString(),
+      }).eq('id', docId);
+
+      toast.success(`"${file.name}" caricato con successo!`);
+      load();
+    } finally {
+      setUploadingDoc(null);
     }
-
-    // Registra il file nel DB
-    await supabase.from('uploaded_files').insert({
-      practice_document_id: docId,
-      practice_id: practiceId,
-      nome_file: file.name,
-      storage_path: path,
-      mime_type: file.type,
-      dimensione: file.size,
-      uploaded_by: 'cliente',
-    });
-
-    // Aggiorna stato documento
-    await supabase.from('practice_documents').update({
-      status: 'caricato',
-      uploaded_at: new Date().toISOString(),
-    }).eq('id', docId);
-
-    toast.success(`"${file.name}" caricato con successo!`);
-    setUploadingDoc(null);
-    load();
   };
 
   const handleFileSelect = (docId: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -268,40 +263,24 @@ export default function ClientPortalPage() {
     }
     setUploadingFreeDoc(true);
     try {
-      const storagePath = `cliente/${practiceId}/${Date.now()}_${file.name}`;
+      const result = await uploadPracticeFile({
+        practiceId,
+        file,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+        uploadedBy: 'cliente',
+        prefix: 'cliente',
+      });
 
-      const { error: upErr } = await supabase.storage
-        .from('practice-files')
-        .upload(storagePath, file, { cacheControl: '3600', upsert: false });
-
-      if (upErr) {
-        console.warn('Storage upload warning:', upErr.message);
-      }
-
-      const { error: dbErr } = await supabase.from('uploaded_files').insert({
-        practice_id: practiceId,
-        nome_file: file.name,
-        storage_path: storagePath,
-        uploaded_by: 'cliente',
-      } as Record<string, unknown>);
-
-      if (dbErr) {
-        // Se uploaded_by non esiste come colonna, riprova senza
-        if (dbErr.message?.includes('uploaded_by')) {
-          await supabase.from('uploaded_files').insert({
-            practice_id: practiceId,
-            nome_file: file.name,
-            storage_path: storagePath,
-          });
-        } else {
-          throw dbErr;
-        }
+      if (result.error || !result.path) {
+        throw result.error ?? new Error('errore sconosciuto');
       }
 
       toast.success(`"${file.name}" caricato con successo!`);
       load();
     } catch (e) {
-      toast.error('Errore caricamento: ' + String(e));
+      toast.error('Errore caricamento: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setUploadingFreeDoc(false);
     }
