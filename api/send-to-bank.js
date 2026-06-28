@@ -28,6 +28,31 @@ function scoreLabel(s) {
   return 'Basso';
 }
 
+function isFiniteNumber(v) {
+  return typeof v === 'number' && Number.isFinite(v) && !Number.isNaN(v);
+}
+
+function safeNum(v) {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) && !Number.isNaN(n) ? n.toFixed(2) : 'N/D';
+}
+
+function safeFmt(n) {
+  const num = typeof n === 'number' ? n : Number(n);
+  return Number.isFinite(num) && !Number.isNaN(num) ? num.toLocaleString('it-IT') : '—';
+}
+
+function safeSection(content) {
+  if (content == null) return '';
+  const str = String(content).trim();
+  if (!str) return '';
+  if (/\b(?:NaN|Invalid Date|undefined)\b/i.test(str)) return '';
+  const textOnly = str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (!textOnly) return '';
+  if (/^(?:null|Non calcolato|N\/D)$/i.test(textOnly)) return '';
+  return str;
+}
+
 
 // ── calcolaScore (replica IndiceBancabilita.tsx) ───────────────────────────
 function calcolaScoreNode(valore, ottimo, suff, critica, inverso) {
@@ -57,7 +82,7 @@ function flattenKpi(kpiJson) {
       if (valoreNum == null) continue;
       const formatted = entry?.formatted
         ?? (typeof valoreNum === 'number'
-            ? (Number.isInteger(valoreNum) ? String(valoreNum) : valoreNum.toFixed(2))
+            ? (Number.isInteger(valoreNum) ? String(valoreNum) : safeNum(valoreNum))
             : String(valoreNum));
       rows.push({
         label:    entry?.label ?? '—',
@@ -122,7 +147,7 @@ function kpiComment(label, valore, semaforo) {
     case 'PFN / EBITDA':
       if (semaforo === 'verde') return v < 1.5 ? 'Debito finanziario netto ripagabile in meno di 2 anni.' : 'Posizione debitoria sostenibile rispetto ai flussi.';
       if (semaforo === 'giallo') return 'Debito elevato rispetto alla capacità di rimborso.';
-      return `Debito netto critico (${v.toFixed(1)}× EBITDA), sostenibilità a rischio.`;
+      return `Debito netto critico (${safeNum(v)}× EBITDA), sostenibilità a rischio.`;
     case 'DSO (giorni crediti)':
       if (semaforo === 'verde') return 'Incassi rapidi, ottima gestione del credito commerciale.';
       if (semaforo === 'giallo') return `Tempi di incasso da ridurre (${Math.round(v)} gg medi).`;
@@ -386,7 +411,7 @@ export default async function handler(req, res) {
     // Solo KPI verdi (positivi) per l'email alla banca
     const kpiVerdi = kpiRows.filter(k => k.semaforo === 'verde');
 
-    const kpiSection = kpiVerdi.length > 0 ? `
+    const kpiSection = safeSection(kpiVerdi.length > 0 ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   ✅ Punti di Forza — Indicatori Positivi${annoBilancio ? ` (Bilancio ${annoBilancio})` : ''}
 </h3>
@@ -408,20 +433,20 @@ export default async function handler(req, res) {
         `</tr>`;
     }).join('')}
   </tbody>
-</table>` : '';
+</table>` : '');
 
     const generalComment = buildGeneralComment(kpiRows, pratica.clients?.ragione_sociale, annoBilancio);
-    const generalSection = generalComment ? `
+    const generalSection = safeSection(generalComment ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   📝 Valutazione Complessiva
 </h3>
 <div style="background:#f8fafc;border-left:4px solid #1e3a5f;border-radius:4px;padding:14px 16px;margin-top:8px;font-size:13px;color:#374151;line-height:1.6;">
   ${generalComment}
-</div>` : '';
+</div>` : '');
 
 
     // Sezione finanziamenti
-    const finSection = financing.length > 0 ? `
+    const finSection = safeSection(financing.length > 0 ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   💳 Finanziamenti in Corso (${financing.length})
 </h3>
@@ -441,26 +466,28 @@ export default async function handler(req, res) {
       `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
       `<td style="padding:5px 8px;color:#374151;">${f.tipologia || '—'}</td>` +
       `<td style="padding:5px 8px;color:#374151;">${f.banca_finanziaria || '—'}</td>` +
-      `<td style="padding:5px 8px;text-align:right;font-weight:600;color:#1e3a5f;">${f.importo_iniziale != null ? Number(f.importo_iniziale).toLocaleString('it-IT') : '—'}</td>` +
-      `<td style="padding:5px 8px;text-align:right;color:#374151;">${f.rata != null ? Number(f.rata).toLocaleString('it-IT') : '—'}</td>` +
-      `<td style="padding:5px 8px;text-align:right;color:#374151;">${f.debito_residuo != null ? Number(f.debito_residuo).toLocaleString('it-IT') : '—'}</td>` +
+      `<td style="padding:5px 8px;text-align:right;font-weight:600;color:#1e3a5f;">${safeFmt(f.importo_iniziale)}</td>` +
+      `<td style="padding:5px 8px;text-align:right;color:#374151;">${safeFmt(f.rata)}</td>` +
+      `<td style="padding:5px 8px;text-align:right;color:#374151;">${safeFmt(f.debito_residuo)}</td>` +
       `<td style="padding:5px 8px;color:#374151;">${f.tipo_garanzia || '—'}</td>` +
       `</tr>`
     ).join('')}
   </tbody>
-</table>` : '';
+</table>` : '');
 
     // Bancabilità: includi nell'email solo se score >= 80
-    const bancabSection = (bancabScore != null && bancabScore >= 80) ? `
+    const bancabSection = safeSection((bancabScore != null && bancabScore >= 80) ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   🏦 Indice di Bancabilità
 </h3>
 <div style="display:inline-block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 24px;margin-top:8px;text-align:center;">
-  <div style="font-size:36px;font-weight:800;color:${scoreColor(bancabScore)};">${bancabScore.toFixed(0)}<span style="font-size:16px;color:#64748b;">/100</span></div>
+  <div style="font-size:36px;font-weight:800;color:${scoreColor(bancabScore)};">${Math.round(bancabScore)}<span style="font-size:16px;color:#64748b;">/100</span></div>
   <div style="font-size:13px;font-weight:600;color:${scoreColor(bancabScore)};margin-top:2px;">${scoreLabel(bancabScore)}</div>
-</div>` : '';
+</div>` : '');
 
-    const repSection = rep ? `
+    const repScores = rep ? [rep.score_globale, rep.score_societa, rep.score_amm, rep.score_soci] : [];
+    const hasRepScores = repScores.some(s => s != null && Number.isFinite(Number(s)));
+    const repSection = safeSection(hasRepScores ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   🔎 Score Reputazione
 </h3>
@@ -481,12 +508,12 @@ export default async function handler(req, res) {
     ].map((r, i) =>
       `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
       `<td style="padding:6px 10px;color:#374151;">${r.label}</td>` +
-      `<td style="padding:6px 10px;text-align:center;font-weight:700;color:${scoreColor(r.s)};">${r.s != null ? Number(r.s).toFixed(0) + '/100' : 'N/D'}</td>` +
+      `<td style="padding:6px 10px;text-align:center;font-weight:700;color:${scoreColor(r.s)};">${r.s != null && Number.isFinite(Number(r.s)) ? Math.round(Number(r.s)) + '/100' : 'N/D'}</td>` +
       `<td style="padding:6px 10px;text-align:center;font-size:12px;color:${scoreColor(r.s)};">${scoreLabel(r.s)}</td>` +
       `</tr>`,
     ).join('')}
   </tbody>
-</table>` : '';
+</table>` : '');
 
     // ── Profilo aziendale ─────────────────────────────────────────────────
     const anniAttivita = (() => {
@@ -508,7 +535,7 @@ export default async function handler(req, res) {
       const years = Math.floor((Date.now() - founded.getTime()) / (365.25 * 24 * 3600 * 1000));
       return years >= 0 ? years : null;
     })();
-    const profiloSection = (clienteExt.data_costituzione || clienteExt.forma_giuridica || clienteExt.codice_ateco) ? (() => {
+    const profiloSection = safeSection((clienteExt.data_costituzione || clienteExt.forma_giuridica || clienteExt.codice_ateco) ? (() => {
       // Formatta la data costituzione in modo sicuro (supporta gg/mm/aaaa e ISO)
       let dataCostituzioneFmt = '';
       if (clienteExt.data_costituzione) {
@@ -521,9 +548,10 @@ export default async function handler(req, res) {
           dataCostituzioneFmt = `${mISO[3]}/${mISO[2]}/${mISO[1]}`;
         } else {
           const d = new Date(raw);
-          dataCostituzioneFmt = isNaN(d.getTime()) ? raw : d.toLocaleDateString('it-IT');
+          dataCostituzioneFmt = isNaN(d.getTime()) ? '' : d.toLocaleDateString('it-IT');
         }
       }
+      const showDataCostituzione = !!dataCostituzioneFmt && dataCostituzioneFmt !== 'Invalid Date';
       return `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   🏢 Profilo Aziendale
@@ -531,16 +559,16 @@ export default async function handler(req, res) {
 <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
   <tbody>
     ${clienteExt.forma_giuridica ? `<tr><td style="padding:5px 10px;color:#64748b;width:38%;">Forma giuridica</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${clienteExt.forma_giuridica}</td></tr>` : ''}
-    ${dataCostituzioneFmt ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Data costituzione</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${dataCostituzioneFmt}${anniAttivita != null ? ` <span style="color:#059669;font-size:12px;">(${anniAttivita} anni di attività)</span>` : ''}</td></tr>` : ''}
-    ${clienteExt.capitale_sociale ? `<tr><td style="padding:5px 10px;color:#64748b;">Capitale sociale</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">€ ${Number(clienteExt.capitale_sociale).toLocaleString('it-IT')}</td></tr>` : ''}
+    ${showDataCostituzione ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Data costituzione</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${dataCostituzioneFmt}${anniAttivita != null ? ` <span style="color:#059669;font-size:12px;">(${anniAttivita} anni di attività)</span>` : ''}</td></tr>` : ''}
+    ${clienteExt.capitale_sociale ? `<tr><td style="padding:5px 10px;color:#64748b;">Capitale sociale</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">€ ${safeFmt(clienteExt.capitale_sociale)}</td></tr>` : ''}
     ${clienteExt.codice_ateco ? `<tr style="background:#f8fafc;"><td style="padding:5px 10px;color:#64748b;">Codice ATECO</td><td style="padding:5px 10px;font-weight:600;color:#1e293b;">${clienteExt.codice_ateco}${clienteExt.ateco_descrizione ? ` — <span style="font-weight:400;color:#475569;">${clienteExt.ateco_descrizione.substring(0,100)}</span>` : ''}</td></tr>` : ''}
-    ${anniAttivita != null ? (anniAttivita >= 5 ? `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">✅ Azienda consolidata (${anniAttivita} anni)</span></td></tr>` : `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">⚠️ Azienda giovane (${anniAttivita} anni)</span></td></tr>`) : ''}
+    ${showDataCostituzione && anniAttivita != null ? (anniAttivita >= 5 ? `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">✅ Azienda consolidata (${anniAttivita} anni)</span></td></tr>` : `<tr><td style="padding:5px 10px;color:#64748b;">Storicità</td><td style="padding:5px 10px;"><span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">⚠️ Azienda giovane (${anniAttivita} anni)</span></td></tr>`) : ''}
   </tbody>
 </table>`;
-    })() : '';
+    })() : '');
 
     // ── Confronto bilanci YoY ─────────────────────────────────────────────
-    const confrontoSection = (() => {
+    const confrontoSection = safeSection((() => {
       if (bilanciMulti.length < 2) return '';
       const b0 = bilanciMulti[0]; // più recente
       const b1 = bilanciMulti[1]; // precedente
@@ -549,8 +577,11 @@ export default async function handler(req, res) {
       const rows = kpi0.map(k0 => {
         const k1 = kpi1.find(k => k.label === k0.label);
         if (!k1 || k0.valore == null || k1.valore == null) return null;
-        const delta = k0.valore - k1.valore;
-        const pct = k1.valore !== 0 ? ((delta / Math.abs(k1.valore)) * 100) : null;
+        const v0 = Number(k0.valore);
+        const v1 = Number(k1.valore);
+        if (!Number.isFinite(v0) || !Number.isFinite(v1) || Number.isNaN(v0) || Number.isNaN(v1)) return null;
+        const delta = v0 - v1;
+        const pct = v1 !== 0 ? ((delta / Math.abs(v1)) * 100) : null;
         return { label: k0.label, v0: k0.value, v1: k1.value, delta, pct, semaforo0: k0.semaforo };
       }).filter(Boolean).slice(0, 10);
       if (rows.length === 0) return '';
@@ -569,7 +600,7 @@ export default async function handler(req, res) {
     ${rows.map((r, i) => {
       const trendColor = r.delta > 0 ? '#16a34a' : r.delta < 0 ? '#dc2626' : '#64748b';
       const trendIcon = r.delta > 0 ? '▲' : r.delta < 0 ? '▼' : '━';
-      const pctStr = r.pct != null ? `${r.pct > 0 ? '+' : ''}${r.pct.toFixed(1)}%` : '';
+      const pctStr = r.pct != null && Number.isFinite(r.pct) ? `${r.pct > 0 ? '+' : ''}${safeNum(r.pct)}%` : '';
       return `<tr style="background:${i%2===0?'#fff':'#f8fafc'};">` +
         `<td style="padding:5px 10px;color:#374151;">${r.label}</td>` +
         `<td style="padding:5px 10px;text-align:right;color:#64748b;">${r.v1}</td>` +
@@ -579,13 +610,13 @@ export default async function handler(req, res) {
     }).join('')}
   </tbody>
 </table>`;
-    })();
+    })());
 
     // ── Segnali strutturali da visura ─────────────────────────────────────
-    const visuraSection = (() => {
+    const visuraSection = safeSection((() => {
       const vj = clienteExt.visura_json;
-      if (!vj || !vj.segnali_strutturali?.length) return '';
-      const segnali = vj.segnali_strutturali;
+      const segnali = Array.isArray(vj?.segnali_strutturali) ? vj.segnali_strutturali : [];
+      if (!vj || segnali.length === 0) return '';
       const warnings = segnali.filter(s => s.tipo === 'warning');
       const attenzione = segnali.filter(s => s.tipo === 'attenzione');
       const positivi = segnali.filter(s => s.tipo === 'positivo');
@@ -622,8 +653,8 @@ ${[...warnings, ...attenzione, ...positivi].map(s => {
   <p style="margin:4px 0 0;font-size:12px;color:#374151;">${s.descrizione}</p>
 </div>`;
 }).join('')}
-${vj.data_analisi ? `<p style="font-size:10px;color:#94a3b8;margin-top:8px;text-align:right;">Visura analizzata il ${new Date(vj.data_analisi).toLocaleDateString('it-IT')}</p>` : ''}`;
-    })();
+${vj.data_analisi ? (() => { const d = new Date(vj.data_analisi); return isNaN(d.getTime()) ? '' : `<p style="font-size:10px;color:#94a3b8;margin-top:8px;text-align:right;">Visura analizzata il ${d.toLocaleDateString('it-IT')}</p>`; })() : ''}`;
+    })());
 
     const htmlBody = `<!DOCTYPE html>
 <html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
