@@ -1162,6 +1162,65 @@ export function EstrattoConto({ practiceId }: Props) {
             </Card>
           </div>
 
+          {/* KPI Mensili collassabili */}
+          {kpiMensili && (
+            <Card className="border-slate-200 bg-white">
+              <button
+                type="button"
+                onClick={() => setKpiMensiliOpen(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+              >
+                <div>
+                  <CardTitle className="text-sm text-slate-800">KPI Mensili</CardTitle>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Calcolati sull'intervallo date valuta: {kpiMensili.mesiAnalizzati} mesi analizzati
+                  </p>
+                </div>
+                <span className="text-xs font-medium text-slate-500">{kpiMensiliOpen ? 'Nascondi' : 'Mostra'}</span>
+              </button>
+              {kpiMensiliOpen && (
+                <CardContent className="px-4 pb-4 pt-0">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                      <p className="text-[11px] text-blue-600">Media mensile incassi clienti</p>
+                      <p className="text-base font-bold text-blue-800">{fmt(kpiMensili.mediaIncassiClienti)}</p>
+                    </div>
+                    <div className="rounded-lg border border-orange-100 bg-orange-50 p-3">
+                      <p className="text-[11px] text-orange-600">Media mensile pagamenti fornitori</p>
+                      <p className="text-base font-bold text-orange-800">{fmt(kpiMensili.mediaPagamentiFornitori)}</p>
+                    </div>
+                    <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3">
+                      <p className="text-[11px] text-indigo-600">Media mensile rate finanziamenti</p>
+                      <p className="text-base font-bold text-indigo-800">{fmt(kpiMensili.mediaRateFinanziamenti)}</p>
+                    </div>
+                    <div className="rounded-lg border border-red-100 bg-red-50 p-3">
+                      <p className="text-[11px] text-red-600">Media mensile tributi</p>
+                      <p className="text-base font-bold text-red-800">{fmt(kpiMensili.mediaTributi)}</p>
+                    </div>
+                    <div className={`rounded-lg border p-3 ${kpiMensili.saldoOperativoMedio >= 0 ? 'border-green-100 bg-green-50' : 'border-amber-100 bg-amber-50'}`}>
+                      <p className={`text-[11px] ${kpiMensili.saldoOperativoMedio >= 0 ? 'text-green-600' : 'text-amber-600'}`}>Saldo netto operativo medio mensile</p>
+                      <p className={`text-base font-bold ${kpiMensili.saldoOperativoMedio >= 0 ? 'text-green-800' : 'text-amber-800'}`}>{fmt(kpiMensili.saldoOperativoMedio)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-[11px] text-slate-600">Mesi con saldo netto negativo</p>
+                      <p className="text-base font-bold text-slate-800">{kpiMensili.mesiSaldoNegativo}</p>
+                    </div>
+                    <div className="rounded-lg border border-blue-100 bg-white p-3">
+                      <p className="text-[11px] text-blue-600">Mese con incassi massimi</p>
+                      <p className="text-sm font-semibold text-blue-800">{kpiMensili.meseIncassiMassimi?.mese ?? '—'}</p>
+                      <p className="text-[11px] text-blue-600">{fmt(kpiMensili.meseIncassiMassimi?.valore ?? 0)}</p>
+                    </div>
+                    <div className="rounded-lg border border-red-100 bg-white p-3">
+                      <p className="text-[11px] text-red-600">Mese con uscite massime</p>
+                      <p className="text-sm font-semibold text-red-800">{kpiMensili.meseUsciteMassime?.mese ?? '—'}</p>
+                      <p className="text-[11px] text-red-600">{fmt(kpiMensili.meseUsciteMassime?.valore ?? 0)}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+          )}
+
           <Separator />
         </>
       )}
@@ -1184,7 +1243,7 @@ export function EstrattoConto({ practiceId }: Props) {
             </button>
           ))}
           <span className="text-gray-300">|</span>
-          {(['tutti', 'cliente', 'stipendio', 'fornitore', 'tributo', 'altro'] as const).map(v => (
+          {CATEGORIE_FILTRO.map(v => (
             <button
               key={v}
               onClick={() => setFiltroCategoria(v)}
