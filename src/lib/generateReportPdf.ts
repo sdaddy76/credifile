@@ -11,7 +11,16 @@ export interface AiSuggerimento {
   kpi_key: string; kpi_label: string;
   diagnosi: string; azioni: string[]; impatto_atteso: string;
 }
+export interface FinanziamentoItem {
+  istituto: string;
+  tipo: string;
+  importo_residuo: number;
+  rata_mensile?: number | null;
+  scadenza?: string | null;
+  fonte: string;
+}
 export interface ReportData {
+  // campi già esistenti
   ragione_sociale: string; partita_iva?: string; codice_ateco?: string;
   settore?: string; indirizzo?: string;
   anno_bilancio: number;
@@ -21,9 +30,19 @@ export interface ReportData {
   ai_suggerimenti: AiSuggerimento[];
   consulente_nome: string; consulente_email?: string;
   consulente_logo_url?: string | null;
+  // NUOVI — tutti opzionali per retrocompatibilità
+  credifile_logo_url?: string | null;
+  settore_label?: string;
+  benchmark_settore?: Record<string, number | null>;
+  benchmark_aggiornato_il?: string;
+  commento_settore?: string;
+  finanziamenti?: FinanziamentoItem[];
+  rating_bancabile?: 'bancabile' | 'attenzione' | 'non_bancabile';
+  motivi_rating?: string[];
 }
 
 // ── Colori ─────────────────────────────────────────────────────────────────
+type n = number;
 const TEAL:  [n,n,n] = [15, 118, 110];
 const DARK:  [n,n,n] = [30,  41,  59];
 const GRAY:  [n,n,n] = [100,116,139];
@@ -32,14 +51,13 @@ const GREEN: [n,n,n] = [22, 163,  74];
 const RED:   [n,n,n] = [220,  38,  38];
 const AMBER: [n,n,n] = [217,119,   6];
 const LIGHT: [n,n,n] = [241,245,249];
-type n = number;
 
 function ratingInfo(score: number): { label: string; color: [n,n,n] } {
-  if (score >= 85) return { label: 'Eccellente',      color: GREEN };
-  if (score >= 70) return { label: 'Buono',           color: [22,101,52] as [n,n,n] };
-  if (score >= 55) return { label: 'Sufficiente',     color: AMBER };
-  if (score >= 40) return { label: 'Critico',         color: [234,88,12] as [n,n,n] };
-  return               { label: 'Non bancabile',    color: RED };
+  if (score >= 85) return { label: 'Eccellente',    color: GREEN };
+  if (score >= 70) return { label: 'Buono',         color: [22,101,52]   as [n,n,n] };
+  if (score >= 55) return { label: 'Sufficiente',   color: AMBER };
+  if (score >= 40) return { label: 'Critico',       color: [234,88,12]   as [n,n,n] };
+  return               { label: 'Non bancabile', color: RED };
 }
 
 function barColor(score: number): [n,n,n] {
@@ -50,6 +68,13 @@ function barColor(score: number): [n,n,n] {
   return RED;
 }
 
+function ratingBancabileInfo(r?: 'bancabile' | 'attenzione' | 'non_bancabile' | null): { label: string; color: [n,n,n]; bg: [n,n,n] } {
+  if (r === 'bancabile')    return { label: 'BANCABILE',    color: GREEN,        bg: [220,252,231] as [n,n,n] };
+  if (r === 'attenzione')   return { label: 'ATTENZIONE',   color: [146,64,14]   as [n,n,n], bg: [254,243,199] as [n,n,n] };
+  if (r === 'non_bancabile')return { label: 'NON BANCABILE', color: [185,28,28]  as [n,n,n], bg: [254,226,226] as [n,n,n] };
+  return                           { label: 'N/D',           color: GRAY,         bg: LIGHT };
+}
+
 // Carica immagine da URL come base64
 async function loadImageAsBase64(url: string): Promise<string | null> {
   try {
@@ -58,25 +83,26 @@ async function loadImageAsBase64(url: string): Promise<string | null> {
     const blob = await res.blob();
     return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
+      reader.onload  = () => resolve(reader.result as string);
       reader.onerror = () => resolve(null);
       reader.readAsDataURL(blob);
     });
   } catch { return null; }
 }
 
+function fmtEur(v: number): string {
+  return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
+}
+
 export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Blob; base64: string }> {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const W = doc.internal.pageSize.getWidth();
+  const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const W     = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   let y = 0;
 
-  // ── HELPER ──────────────────────────────────────────────────────────────
+  // ── HELPERS ─────────────────────────────────────────────────────────────
   const checkPage = (needed: number) => {
-    if (y + needed > pageH - 20) {
-      doc.addPage();
-      y = 20;
-    }
+    if (y + needed > pageH - 18) { doc.addPage(); y = 18; }
   };
 
   const sectionTitle = (title: string, icon?: string) => {
@@ -90,220 +116,418 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     doc.setTextColor(...DARK);
   };
 
-  // ── PAGINA 1: HEADER ────────────────────────────────────────────────────
-  // Banner intestazione consulente
-  doc.setFillColor(...TEAL);
-  doc.rect(0, 0, W, 36, 'F');
-
-  // Logo consulente (se disponibile)
-  let logoLoaded = false;
-  if (data.consulente_logo_url) {
-    const b64 = await loadImageAsBase64(data.consulente_logo_url);
-    if (b64) {
-      try {
-        doc.addImage(b64, 'PNG', 14, 5, 26, 26);
-        logoLoaded = true;
-      } catch { /* ignora errori logo */ }
+  const drawHorizontalBar = (x: number, barY: number, barW: number, barH: number, pct: number, color: [n,n,n]) => {
+    doc.setFillColor(225, 225, 225);
+    doc.roundedRect(x, barY, barW, barH, 1, 1, 'F');
+    if (pct > 0) {
+      doc.setFillColor(...color);
+      doc.roundedRect(x, barY, barW * Math.min(1, pct), barH, 1, 1, 'F');
     }
+  };
+
+  const addFooter = (pageNum: number, totalPages: number) => {
+    doc.setFillColor(...LIGHT);
+    doc.rect(0, pageH - 12, W, 12, 'F');
+    doc.setTextColor(...GRAY); doc.setFontSize(7); doc.setFont('helvetica', 'normal');
+    doc.text(`Credifile — Report Bancabilità | ${data.consulente_nome}`, 14, pageH - 4.5);
+    doc.text('Riservato e Confidenziale', W / 2, pageH - 4.5, { align: 'center' });
+    doc.text(`Pagina ${pageNum} di ${totalPages}`, W - 14, pageH - 4.5, { align: 'right' });
+  };
+
+  // ── Carica loghi ───────────────────────────────────────────────────────
+  const [consulenteLogo, credifileLogo] = await Promise.all([
+    data.consulente_logo_url ? loadImageAsBase64(data.consulente_logo_url) : Promise.resolve(null),
+    loadImageAsBase64(data.credifile_logo_url ?? 'https://credifile-eosin.vercel.app/logo.png'),
+  ]);
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PAGINA 1 — COPERTINA
+  // ══════════════════════════════════════════════════════════════════════
+
+  // Banner teal h=48mm
+  doc.setFillColor(...TEAL);
+  doc.rect(0, 0, W, 48, 'F');
+
+  // Logo Credifile a sinistra
+  if (credifileLogo) {
+    try { doc.addImage(credifileLogo, 'PNG', 12, 10, 28, 28); } catch { /* ignora */ }
+  } else {
+    doc.setTextColor(...WHITE); doc.setFontSize(9); doc.setFont('helvetica', 'bold');
+    doc.text('CREDIFILE', 14, 26);
   }
-  const textLeft = logoLoaded ? 46 : 14;
+
+  // Testo centrato
   doc.setTextColor(...WHITE);
-  doc.setFontSize(18); doc.setFont('helvetica', 'bold');
-  doc.text('REPORT DI BANCABILITÀ', textLeft, 16);
-  doc.setFontSize(10); doc.setFont('helvetica', 'normal');
-  doc.text(`Consulente: ${data.consulente_nome}`, textLeft, 24);
-  if (data.consulente_email) doc.text(data.consulente_email, textLeft, 30);
+  doc.setFontSize(20); doc.setFont('helvetica', 'bold');
+  doc.text('REPORT DI BANCABILITÀ', W / 2, 18, { align: 'center' });
+  doc.setFontSize(11); doc.setFont('helvetica', 'normal');
+  doc.text(data.ragione_sociale, W / 2, 28, { align: 'center' });
   doc.setFontSize(8.5);
-  doc.text(`Generato il: ${new Date().toLocaleDateString('it-IT')}`, W - 14, 24, { align: 'right' });
+  doc.text(`Bilancio ${data.anno_bilancio}  ·  ${new Date().toLocaleDateString('it-IT')}`, W / 2, 35, { align: 'center' });
 
-  y = 44;
+  // Logo consulente a destra
+  if (consulenteLogo) {
+    try { doc.addImage(consulenteLogo, 'PNG', W - 42, 10, 28, 28); } catch { /* ignora */ }
+  }
 
-  // ── Dati societari ──────────────────────────────────────────────────────
+  y = 56;
+
+  // Box dati societari
   doc.setFillColor(...LIGHT);
-  doc.roundedRect(14, y, W - 28, 22, 2, 2, 'F');
-  doc.setTextColor(...DARK); doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+  doc.roundedRect(14, y, W - 28, 28, 2, 2, 'F');
+  doc.setTextColor(...DARK); doc.setFontSize(12); doc.setFont('helvetica', 'bold');
   doc.text(data.ragione_sociale, 19, y + 8);
   doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...GRAY);
   const infoLine = [
-    data.partita_iva ? `P.IVA: ${data.partita_iva}` : null,
-    data.codice_ateco ? `ATECO: ${data.codice_ateco}` : null,
-    data.settore || null,
-    `Bilancio ${data.anno_bilancio}`,
+    data.partita_iva  ? `P.IVA: ${data.partita_iva}`   : null,
+    data.codice_ateco ? `ATECO: ${data.codice_ateco}`   : null,
+    data.settore_label ?? data.settore ?? null,
   ].filter(Boolean).join('   ·   ');
-  doc.text(infoLine, 19, y + 14);
-  if (data.indirizzo) doc.text(data.indirizzo, 19, y + 19);
-  y += 28;
+  doc.text(infoLine, 19, y + 15);
+  if (data.indirizzo) doc.text(data.indirizzo, 19, y + 21);
 
-  // ── Gauge indice ────────────────────────────────────────────────────────
+  // Box consulente (destra)
+  doc.setTextColor(DARK[0], DARK[1], DARK[2]);
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+  doc.text('Consulente', W - 15, y + 8, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+  doc.text(data.consulente_nome, W - 15, y + 14, { align: 'right' });
+  if (data.consulente_email) doc.text(data.consulente_email, W - 15, y + 20, { align: 'right' });
+
+  y += 34;
+
+  // ── Gauge indice bancabilità ─────────────────────────────────────────
   if (data.indice_bancabilita !== null) {
     const score = data.indice_bancabilita;
     const { label, color } = ratingInfo(score);
-    checkPage(40);
 
-    // Cerchio gauge simulato con archi
-    const cx = W / 2, cy = y + 20;
-    doc.setDrawColor(220, 220, 220); doc.setLineWidth(3);
-    doc.circle(cx, cy, 18);
-    doc.setDrawColor(...color); doc.setLineWidth(3);
-    // Barra piena del cerchio (simulazione semplice)
-    doc.circle(cx, cy, 16);
-
-    doc.setTextColor(...color); doc.setFontSize(22); doc.setFont('helvetica', 'black');
-    doc.text(String(Math.round(score)), cx, cy + 4, { align: 'center' });
+    const cx = W / 2, cy = y + 22;
+    // Cerchio esterno grigio
+    doc.setDrawColor(220, 220, 220); doc.setLineWidth(4);
+    doc.circle(cx, cy, 22);
+    // Cerchio colorato interno
+    doc.setDrawColor(...color); doc.setLineWidth(4);
+    doc.circle(cx, cy, 19);
+    // Numero
+    doc.setTextColor(...color); doc.setFontSize(26); doc.setFont('helvetica', 'black');
+    doc.text(String(Math.round(score)), cx, cy + 5, { align: 'center' });
     doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-    doc.text('/100', cx, cy + 9, { align: 'center' });
+    doc.text('/100', cx, cy + 12, { align: 'center' });
 
-    doc.setFontSize(13); doc.setFont('helvetica', 'bold'); doc.setTextColor(...color);
-    doc.text(`INDICE DI BANCABILITÀ: ${Math.round(score)}/100 — ${label.toUpperCase()}`, W / 2, y + 44, { align: 'center' });
+    y += 50;
 
-    // Barra orizzontale
-    y += 49;
-    const barY = y; const barW = W - 60; const barX = 30; const barH = 5;
+    // Label rating
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(...color);
+    doc.text(`${label.toUpperCase()} — ${Math.round(score)}/100`, W / 2, y, { align: 'center' });
+    y += 6;
+
+    // Barra soglie
+    const barX = 24; const barW = W - 48; const barH = 5;
     doc.setFillColor(230, 230, 230);
-    doc.roundedRect(barX, barY, barW, barH, 2, 2, 'F');
+    doc.roundedRect(barX, y, barW, barH, 2, 2, 'F');
     doc.setFillColor(...barColor(score));
-    doc.roundedRect(barX, barY, barW * (score / 100), barH, 2, 2, 'F');
-    // Etichette soglie
-    doc.setFontSize(6.5); doc.setTextColor(...GRAY);
-    for (const [pct, lbl] of [[0, '0'], [40, '40'], [55, '55'], [70, '70'], [85, '85'], [100, '100']]) {
+    doc.roundedRect(barX, y, barW * (score / 100), barH, 2, 2, 'F');
+    doc.setFontSize(6); doc.setTextColor(...GRAY);
+    for (const [pct, lbl] of [[0,'0'],[40,'40'],[55,'55'],[70,'70'],[85,'85'],[100,'100']]) {
       const px = barX + barW * (Number(pct) / 100);
-      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3);
-      doc.line(px, barY - 1, px, barY + barH + 1);
-      doc.text(String(lbl), px, barY + barH + 4, { align: 'center' });
+      doc.setDrawColor(180,180,180); doc.setLineWidth(0.3);
+      doc.line(px, y - 1, px, y + barH + 1);
+      doc.text(String(lbl), px, y + barH + 4, { align: 'center' });
     }
     y += 14;
   }
 
-  // ── SEZIONE: KPI AZIENDA vs BENCHMARK ───────────────────────────────────
-  sectionTitle('KPI Aziendali vs. Benchmark di Settore', '📊');
+  // ── Box situazione bancabile ─────────────────────────────────────────
+  const rbInfo = ratingBancabileInfo(data.rating_bancabile);
+  checkPage(22);
+  doc.setFillColor(...rbInfo.bg);
+  doc.roundedRect(14, y, W - 28, data.motivi_rating?.length ? 18 + data.motivi_rating.length * 5 : 14, 2, 2, 'F');
+  doc.setDrawColor(...rbInfo.color); doc.setLineWidth(0.8);
+  doc.roundedRect(14, y, W - 28, data.motivi_rating?.length ? 18 + data.motivi_rating.length * 5 : 14, 2, 2, 'S');
+  doc.setTextColor(...rbInfo.color); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+  doc.text(`Profilo ${rbInfo.label}`, 19, y + 7);
+  if (data.indice_bancabilita !== null) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    doc.text(`La società presenta un profilo ${rbInfo.label} con score ${Math.round(data.indice_bancabilita)}/100.`, 19, y + 13);
+  }
+  if (data.motivi_rating?.length) {
+    let my = y + 18;
+    doc.setFontSize(8); doc.setTextColor(...rbInfo.color);
+    for (const m of data.motivi_rating) {
+      doc.text(`• ${m}`, 22, my); my += 5;
+    }
+  }
+  y += (data.motivi_rating?.length ? 22 + data.motivi_rating.length * 5 : 18);
 
-  const kpiRows = data.kpi_scores
-    .filter(k => k.score !== null)
-    .map(k => {
-      const score = k.score!;
-      const scLabel = score >= 70 ? '● OK' : score >= 40 ? '● Attenzione' : '● Critico';
-      const delta = (k.benchmark !== null && k.valore !== null)
-        ? (k.inverso ? k.benchmark - k.valore : k.valore - k.benchmark)
-        : null;
-      return [
-        `${k.kpi_label}`,
-        k.formatted,
-        k.benchmark_formatted || '—',
-        delta !== null ? (delta >= 0 ? `+${delta.toFixed(2)}` : `${delta.toFixed(2)}`) : '—',
-        { content: `${Math.round(score)}/100\n${scLabel}`, styles: { fillColor: score >= 70 ? [220,252,231] : score >= 40 ? [254,243,199] : [254,226,226], textColor: score >= 70 ? [22,101,52] : score >= 40 ? [146,64,14] : [185,28,28], fontStyle: 'bold', cellPadding: 3 } },
-      ];
-    });
+  // ══════════════════════════════════════════════════════════════════════
+  // PAGINA 2 — ANALISI KPI vs BENCHMARK SETTORE
+  // ══════════════════════════════════════════════════════════════════════
+  doc.addPage(); y = 18;
+
+  const settLabel = data.settore_label ?? data.settore ?? 'Media PMI Italiane';
+  const benchDate = data.benchmark_aggiornato_il
+    ? new Date(data.benchmark_aggiornato_il).toLocaleDateString('it-IT')
+    : new Date().toLocaleDateString('it-IT');
+
+  sectionTitle(`Confronto KPI — ${settLabel}`, '📊');
+
+  doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+  doc.text(`Fonte: Mediobanca / Banca d'Italia — benchmark aggiornati al ${benchDate}`, 14, y);
+  y += 7;
+
+  // Tabella KPI completa con confronto benchmark settore
+  const kpiRows = data.kpi_scores.map(k => {
+    const sc        = k.score ?? null;
+    const scLabel   = sc === null ? 'N/D' : sc >= 70 ? '🟢 OK' : sc >= 40 ? '🟡 Att.' : '🔴 Crit.';
+    const benchVal  = data.benchmark_settore?.[k.kpi_label] ?? k.benchmark;
+    const delta     = (benchVal !== null && benchVal !== undefined && k.valore !== null)
+      ? (k.inverso ? benchVal - k.valore : k.valore - benchVal)
+      : null;
+    const deltaStr  = delta !== null
+      ? (delta >= 0 ? `+${Math.abs(delta) >= 100 ? delta.toFixed(0) : delta.toFixed(2)}` : `${Math.abs(delta) >= 100 ? delta.toFixed(0) : delta.toFixed(2)}`)
+      : '—';
+    const benchFmt  = benchVal !== null && benchVal !== undefined
+      ? (Math.abs(benchVal) >= 100 ? benchVal.toFixed(0) : benchVal.toFixed(2))
+      : '—';
+    return [
+      k.kpi_label,
+      k.kpi_area,
+      k.formatted,
+      benchFmt,
+      delta !== null ? deltaStr : '—',
+      sc !== null ? `${Math.round(sc)}/100` : 'N/D',
+      { content: scLabel, styles: {
+        fillColor: sc !== null ? (sc >= 70 ? [220,252,231] : sc >= 40 ? [254,243,199] : [254,226,226]) : [241,245,249],
+        textColor: sc !== null ? (sc >= 70 ? [22,101,52]  : sc >= 40 ? [146,64,14]   : [185,28,28])  : [100,116,139],
+        fontStyle: 'bold', cellPadding: 2,
+      }},
+    ];
+  });
 
   autoTable(doc, {
     startY: y,
-    head: [['KPI', 'Valore Azienda', 'Benchmark Settore', 'Scostamento', 'Score']],
+    head: [['KPI', 'Area', 'Valore Azienda', 'Benchmark', 'Scostamento', 'Score', 'Semaforo']],
     body: kpiRows as Parameters<typeof autoTable>[1]['body'],
-    headStyles: { fillColor: TEAL, textColor: WHITE, fontStyle: 'bold', fontSize: 8 },
-    bodyStyles: { fontSize: 8, textColor: DARK },
-    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 45 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'center', cellWidth: 28 } },
+    headStyles: { fillColor: TEAL, textColor: WHITE, fontStyle: 'bold', fontSize: 7.5 },
+    bodyStyles: { fontSize: 7.5, textColor: DARK },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 38 },
+      1: { cellWidth: 22, textColor: GRAY },
+      2: { halign: 'right', cellWidth: 26 },
+      3: { halign: 'right', cellWidth: 20 },
+      4: { halign: 'right', cellWidth: 22 },
+      5: { halign: 'center', cellWidth: 16 },
+      6: { halign: 'center', cellWidth: 20 },
+    },
     margin: { left: 14, right: 14 },
     theme: 'striped',
   });
-  y = (doc as any).lastAutoTable.finalY + 10;
+  y = (doc as any).lastAutoTable.finalY + 8;
 
-  // ── SEZIONE: TOP 3 / BOTTOM 3 ───────────────────────────────────────────
-  checkPage(50);
-  sectionTitle('Sintesi: Migliori e Peggiori Indicatori', '📋');
+  // Barre KPI visive (progress orizzontali)
+  checkPage(16);
+  doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK);
+  doc.text('Visualizzazione score KPI:', 14, y); y += 5;
+  for (const k of data.kpi_scores.filter(kk => kk.score !== null)) {
+    checkPage(8);
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...DARK);
+    doc.text(k.kpi_label.substring(0, 18), 14, y + 3);
+    drawHorizontalBar(60, y, W - 80, 4, (k.score ?? 0) / 100, barColor(k.score ?? 0));
+    doc.setTextColor(...GRAY);
+    doc.text(`${k.score}/100`, W - 16, y + 3, { align: 'right' });
+    y += 6;
+  }
 
-  // Top 3
-  doc.setFillColor(220, 252, 231);
-  doc.roundedRect(14, y, (W - 34) / 2, 8, 2, 2, 'F');
-  doc.setTextColor(22, 101, 52); doc.setFontSize(9); doc.setFont('helvetica', 'bold');
-  doc.text('✅  TOP 3 — Punti di Forza', 19, y + 5.5);
+  // Legenda
+  checkPage(12);
+  y += 3;
+  doc.setFontSize(7); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+  doc.text('Legenda: 🟢 ≥ 70 OK  |  🟡 40-69 Attenzione  |  🔴 < 40 Critico', 14, y);
+  y += 8;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PAGINA 3 — CONTESTO SETTORE + TOP3 / BOTTOM3
+  // ══════════════════════════════════════════════════════════════════════
+  doc.addPage(); y = 18;
+
+  sectionTitle('Contesto di Settore', '🌐');
+
+  if (data.commento_settore) {
+    const lines = doc.splitTextToSize(data.commento_settore, W - 32) as string[];
+    doc.setTextColor(...DARK); doc.setFontSize(8.5); doc.setFont('helvetica', 'normal');
+    doc.text(lines, 16, y); y += lines.length * 4.5 + 4;
+  } else {
+    doc.setTextColor(...GRAY); doc.setFontSize(8.5); doc.setFont('helvetica', 'italic');
+    const fallbackText = `Il settore ${settLabel} per le PMI italiane mostra caratteristiche di mercato in evoluzione. I dati benchmark sono elaborati su base statistica da fonti Mediobanca e Banca d'Italia.`;
+    const lines = doc.splitTextToSize(fallbackText, W - 32) as string[];
+    doc.text(lines, 16, y); y += lines.length * 4.5 + 4;
+  }
+
+  doc.setFontSize(7); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+  doc.text(`Dati Mediobanca / Banca d'Italia — aggiornati al ${benchDate}`, 14, y);
   y += 10;
 
-  for (const k of data.top3) {
-    checkPage(8);
-    doc.setFillColor(240, 253, 244);
-    doc.roundedRect(14, y, (W - 34) / 2, 7, 1, 1, 'F');
-    doc.setTextColor(22, 101, 52); doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
-    doc.text(k.kpi_label, 18, y + 4.5);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`${k.formatted}  |  Score: ${k.score}/100`, (W - 34) / 2, y + 4.5, { align: 'right' });
+  // ── Top 3 / Bottom 3 ─────────────────────────────────────────────────
+  sectionTitle('Sintesi: Migliori e Peggiori Indicatori', '📋');
+
+  const colW = (W - 34) / 2;
+  const rightX = 14 + colW + 6;
+
+  // Titoli colonne
+  doc.setFillColor(220, 252, 231);
+  doc.roundedRect(14, y, colW, 8, 2, 2, 'F');
+  doc.setTextColor(22, 101, 52); doc.setFontSize(9); doc.setFont('helvetica', 'bold');
+  doc.text('✅  TOP 3 — Punti di Forza', 19, y + 5.5);
+
+  doc.setFillColor(254, 226, 226);
+  doc.roundedRect(rightX, y, colW, 8, 2, 2, 'F');
+  doc.setTextColor(185, 28, 28); doc.setFontSize(9); doc.setFont('helvetica', 'bold');
+  doc.text('⚠  BOTTOM 3 — Aree Critiche', rightX + 4, y + 5.5);
+  y += 10;
+
+  const maxRows = Math.max(data.top3.length, data.bottom3.length);
+  for (let i = 0; i < maxRows; i++) {
+    checkPage(10);
+    const rowH = 8;
+
+    if (data.top3[i]) {
+      const k = data.top3[i];
+      doc.setFillColor(240, 253, 244);
+      doc.roundedRect(14, y, colW, rowH, 1, 1, 'F');
+      doc.setTextColor(22, 101, 52); doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+      doc.text(k.kpi_label, 18, y + 3.5);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+      doc.text(`${k.formatted}  ·  Score: ${k.score}/100`, 18, y + 6.5);
+      const scoreW = colW - 10;
+      drawHorizontalBar(18, y + rowH - 1.5, scoreW - 8, 2, (k.score ?? 0) / 100, GREEN);
+    }
+
+    if (data.bottom3[i]) {
+      const k = data.bottom3[i];
+      doc.setFillColor(255, 241, 242);
+      doc.roundedRect(rightX, y, colW, rowH, 1, 1, 'F');
+      doc.setTextColor(185, 28, 28); doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+      doc.text(k.kpi_label, rightX + 4, y + 3.5);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+      doc.text(`${k.formatted}  ·  Score: ${k.score}/100`, rightX + 4, y + 6.5);
+      drawHorizontalBar(rightX + 4, y + rowH - 1.5, colW - 10, 2, (k.score ?? 0) / 100, RED);
+    }
+    y += rowH + 2;
+  }
+  y += 6;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PAGINA 4 — FINANZIAMENTI IN ESSERE (solo se presenti)
+  // ══════════════════════════════════════════════════════════════════════
+  if (data.finanziamenti && data.finanziamenti.length > 0) {
+    doc.addPage(); y = 18;
+
+    sectionTitle('Finanziamenti in Essere', '🏦');
+
+    const fRows = data.finanziamenti.map(f => [
+      f.istituto,
+      f.tipo,
+      fmtEur(f.importo_residuo),
+      f.rata_mensile != null ? fmtEur(f.rata_mensile) : '—',
+      f.scadenza ?? '—',
+      f.fonte === 'centrale_rischi' ? 'CR' : 'Dichiarato',
+    ]);
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Istituto', 'Tipo', 'Importo Residuo', 'Rata Mensile', 'Scadenza', 'Fonte']],
+      body: fRows,
+      headStyles: { fillColor: TEAL, textColor: WHITE, fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 8, textColor: DARK },
+      columnStyles: {
+        0: { cellWidth: 42 },
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+        4: { halign: 'center' },
+        5: { halign: 'center', cellWidth: 22 },
+      },
+      margin: { left: 14, right: 14 },
+      theme: 'striped',
+    });
+    y = (doc as any).lastAutoTable.finalY + 8;
+
+    // Totali
+    const totResiduo = data.finanziamenti.reduce((s, f) => s + f.importo_residuo, 0);
+    const totRate    = data.finanziamenti.reduce((s, f) => s + (f.rata_mensile ?? 0), 0);
+
+    checkPage(20);
+    doc.setFillColor(...LIGHT);
+    doc.roundedRect(14, y, W - 28, 16, 2, 2, 'F');
+    doc.setTextColor(...DARK); doc.setFontSize(9); doc.setFont('helvetica', 'bold');
+    doc.text(`Totale debito residuo: ${fmtEur(totResiduo)}`, 19, y + 7);
+    if (totRate > 0) doc.text(`Totale rate mensili: ${fmtEur(totRate)}`, 19, y + 13);
+
+    y += 20;
+    doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+    doc.text('DSCR calcolato sui finanziamenti dichiarati / Centrale dei Rischi', 14, y);
     y += 8;
   }
 
-  // Bottom 3 — stessa riga, colonna destra
-  const rightX = 14 + (W - 34) / 2 + 6;
-  let y2 = y - 34; // Torna su per affiancare
-  doc.setFillColor(254, 226, 226);
-  doc.roundedRect(rightX, y2, (W - 34) / 2, 8, 2, 2, 'F');
-  doc.setTextColor(185, 28, 28); doc.setFontSize(9); doc.setFont('helvetica', 'bold');
-  doc.text('❌  BOTTOM 3 — Aree Critiche', rightX + 5, y2 + 5.5);
-  y2 += 10;
-
-  for (const k of data.bottom3) {
-    doc.setFillColor(255, 241, 242);
-    doc.roundedRect(rightX, y2, (W - 34) / 2, 7, 1, 1, 'F');
-    doc.setTextColor(185, 28, 28); doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
-    doc.text(k.kpi_label, rightX + 4, y2 + 4.5);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`${k.formatted}  |  Score: ${k.score}/100`, rightX + (W - 34) / 2 - 2, y2 + 4.5, { align: 'right' });
-    y2 += 8;
-  }
-
-  y = Math.max(y, y2) + 8;
-
-  // ── SEZIONE: RACCOMANDAZIONI AI ─────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════
+  // PAGINA FINALE — RACCOMANDAZIONI AI
+  // ══════════════════════════════════════════════════════════════════════
   if (data.ai_suggerimenti?.length > 0) {
-    checkPage(20);
+    doc.addPage(); y = 18;
+
     sectionTitle('Raccomandazioni per Migliorare la Bancabilità', '🎯');
 
     for (const s of data.ai_suggerimenti) {
-      checkPage(50);
-      // Card KPI
+      checkPage(55);
+
+      // Header card
       doc.setFillColor(254, 243, 199);
-      doc.roundedRect(14, y, W - 28, 7, 2, 2, 'F');
+      doc.roundedRect(14, y, W - 28, 8, 2, 2, 'F');
       doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-      doc.text(`⚠  ${s.kpi_label}`, 18, y + 5);
-      y += 9;
+      doc.text(`⚠  ${s.kpi_label}`, 18, y + 5.5);
+      y += 11;
 
       // Diagnosi
       doc.setTextColor(...DARK); doc.setFontSize(8.5); doc.setFont('helvetica', 'italic');
-      const diagLines = doc.splitTextToSize(s.diagnosi, W - 30) as string[];
+      const diagLines = doc.splitTextToSize(s.diagnosi, W - 32) as string[];
       doc.text(diagLines, 16, y);
-      y += diagLines.length * 4.5 + 3;
+      y += diagLines.length * 4.5 + 4;
 
       // Azioni
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+      checkPage(20);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...DARK);
       doc.text('Azioni raccomandate:', 16, y); y += 5;
       doc.setFont('helvetica', 'normal');
       for (const [i, az] of s.azioni.entries()) {
-        checkPage(12);
-        const azLines = doc.splitTextToSize(`${i + 1}. ${az}`, W - 36) as string[];
+        checkPage(10);
+        const azLines = doc.splitTextToSize(`${i + 1}. ${az}`, W - 38) as string[];
         doc.text(azLines, 20, y);
-        y += azLines.length * 4.5 + 1.5;
+        y += azLines.length * 4.5 + 2;
       }
 
       // Impatto atteso
       checkPage(14);
       doc.setFillColor(236, 254, 255);
-      doc.roundedRect(14, y, W - 28, 9, 1, 1, 'F');
+      doc.roundedRect(14, y, W - 28, 10, 1, 1, 'F');
       doc.setTextColor(14, 116, 144); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
-      doc.text('Impatto atteso:', 18, y + 3.5);
+      doc.text('Impatto atteso:', 18, y + 4);
       doc.setFont('helvetica', 'normal');
-      const impLines = doc.splitTextToSize(s.impatto_atteso, W - 60) as string[];
-      doc.text(impLines, 50, y + 3.5);
-      y += 12;
+      const impLines = doc.splitTextToSize(s.impatto_atteso, W - 62) as string[];
+      doc.text(impLines, 52, y + 4);
+      y += 14;
 
-      y += 5; // spazio tra suggerimenti
+      y += 4;
     }
   }
 
-  // ── FOOTER su tutte le pagine ────────────────────────────────────────────
+  // ── FOOTER su tutte le pagine ─────────────────────────────────────────
   const totalPages = (doc as any).internal.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
-    doc.setFillColor(241, 245, 249);
-    doc.rect(0, pageH - 12, W, 12, 'F');
-    doc.setTextColor(...GRAY); doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
-    doc.text(`Credifile — Report Bancabilità | ${data.consulente_nome}`, 14, pageH - 4.5);
-    doc.text(`Pagina ${i} di ${totalPages}`, W - 14, pageH - 4.5, { align: 'right' });
+    addFooter(i, totalPages);
+    // Mini logo Credifile nel footer al centro se disponibile
+    if (credifileLogo) {
+      try { doc.addImage(credifileLogo, 'PNG', W / 2 - 3, pageH - 11, 6, 6); } catch { /* ignora */ }
+    }
   }
 
   const pdfBlob = doc.output('blob');

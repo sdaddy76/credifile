@@ -136,3 +136,5 @@
 [2026-06-16 21:52] Deploy f946c22 OK. SegnalazionePublicaPage riscritta con 4 card identiche a NuovaSegnalazionePage + upload file via base64 su Supabase Storage.
 [2026-06-17 10:00] Avvio: auto-detect visura camerale da uploaded_files + estrazione testo PDF con pdfjs-dist in ReputazioneTab
 [2026-06-29 16:57] Avvio miglioria analisi reputazionale: CF persone fisiche, storico soci/amm cessati, storico sedi con ricerca eventi negativi per indirizzo
+[2026-06-29 17:04] Analisi reputazionale approfondita completata: CF discriminatore persone fisiche, soggetti cessati da visura_json, analisi storico sedi/indirizzi con eventi negativi. Commit 9da1f37, deploy Vercel + Edge Function Supabase OK.
+[2026-06-29 17:35] Avvio report consulente potenziato: logo Credifile+consulente, 14 KPI, benchmark settore con commento, bancabilità dettagliata, finanziamenti in essere + cron aggiornamento mensile benchmark

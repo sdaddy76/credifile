@@ -5,14 +5,43 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { generateReportPdf } from '@/lib/generateReportPdf';
-import type { KpiScore, AiSuggerimento, ReportData } from '@/lib/generateReportPdf';
+import type { KpiScore, AiSuggerimento, ReportData, FinanziamentoItem } from '@/lib/generateReportPdf';
 import {
   Upload, CheckCircle, Loader2, ArrowLeft, ArrowRight,
   FileText, BarChart2, Brain, Send, Download, ShieldCheck, Clock, Mail,
+  PlusCircle, Trash2, Banknote,
 } from 'lucide-react';
 
 interface KpiEntry { valore: number | null; formatted: string; semaforo: string; label: string }
 type KpiResult = Record<string, Record<string, KpiEntry>>;
+
+// Mappa ATECO → chiave settore benchmark (stessa del componente AnalisiFinanziariaTab)
+const ATECO_SECTOR_MAP: [RegExp, string][] = [
+  [/^0[1-3]/,   'agricoltura'],
+  [/^0[5-9]/,   'estrazione'],
+  [/^[12][0-9]|^3[0-3]/,'manifattura'],
+  [/^35/,       'energia'],
+  [/^3[6-9]/,   'acqua_rifiuti'],
+  [/^4[1-3]/,   'costruzioni'],
+  [/^4[5-7]/,   'commercio'],
+  [/^4[9]|^5[0-3]/,'trasporti'],
+  [/^5[5-6]/,   'ristorazione'],
+  [/^5[8-9]|^6[0-3]/,'ict'],
+  [/^6[4-6]/,   'finanza'],
+  [/^68/,       'immobiliare'],
+  [/^6[9]|^7[0-5]/,'professionali'],
+  [/^7[7-9]|^8[0-2]/,'amministrativi'],
+  [/^86|^87|^88/,'sanita'],
+];
+
+function getAtecoBenchmarkKey(codice: string | null | undefined): string {
+  if (!codice) return 'default';
+  const clean = codice.trim().replace(/[^0-9]/g, '');
+  for (const [re, key] of ATECO_SECTOR_MAP) {
+    if (re.test(clean)) return key;
+  }
+  return 'default';
+}
 
 const KPI_CONFIG: { key: string; area: string; label: string; inverso: boolean; peso: number; ottimo: number; suff: number; critica: number }[] = [
   { key: 'dscr',          area: 'copertura',     label: 'DSCR',              inverso: false, peso: 30, ottimo: 1.25, suff: 1.0,  critica: 0.8 },
@@ -35,6 +64,8 @@ function calcScore(v: number, ottimo: number, suff: number, critica: number, inv
     return ((critica - v) / (critica - suff)) * 55;
   }
 }
+
+const TIPI_FINANZIAMENTO = ['Mutuo','Leasing','Apertura credito','Factoring','Finanziamento chirografario','Altro'];
 
 export default function NuovoReportWizard() {
   const { clientId } = useParams<{ clientId: string }>();
@@ -59,9 +90,24 @@ export default function NuovoReportWizard() {
   const [annoEsercizio, setAnnoEsercizio] = useState<number | null>(null);
   const [ragSociale,   setRagSociale]     = useState('');
 
-  // Step 3: calcolo scores
-  const [kpiScores, setKpiScores] = useState<KpiScore[]>([]);
-  const [indice,    setIndice]    = useState<number | null>(null);
+  // Step 2.5: Finanziamenti
+  const [finanziamenti, setFinanziamenti] = useState<FinanziamentoItem[]>([]);
+  const addFinanziamento = () => setFinanziamenti(prev => [...prev, { istituto: '', tipo: 'Mutuo', importo_residuo: 0, rata_mensile: null, scadenza: null, fonte: 'dichiarato' }]);
+  const removeFinanziamento = (i: number) => setFinanziamenti(prev => prev.filter((_, idx) => idx !== i));
+  const updateFinanziamento = (i: number, field: keyof FinanziamentoItem, value: string | number | null) =>
+    setFinanziamenti(prev => prev.map((f, idx) => idx === i ? { ...f, [field]: value } : f));
+
+  // Step 3: calcolo scores + benchmark
+  const [kpiScores,     setKpiScores]     = useState<KpiScore[]>([]);
+  const [indice,        setIndice]        = useState<number | null>(null);
+  const [benchmarkData, setBenchmarkData] = useState<{
+    settore_label: string;
+    kpi_data: Record<string, number | null>;
+    aggiornato_il: string;
+    commento_settore: string | null;
+  } | null>(null);
+  const [ratingBancabile, setRatingBancabile] = useState<'bancabile' | 'attenzione' | 'non_bancabile' | null>(null);
+  const [motiviRating,    setMotiviRating]    = useState<string[]>([]);
 
   // Step 4: AI suggestions
   const [aiLoading, setAiLoading] = useState(false);
@@ -92,23 +138,16 @@ export default function NuovoReportWizard() {
         setCrClientEmail(data.email ?? '');
       }
     });
-    // Controlla se esiste già un consenso CR accettato per questo cliente
     if (user) {
       supabase.from('consulente_cr_consents')
-        .select('id, status')
-        .eq('consulente_id', user.id)
-        .eq('client_id', clientId)
-        .eq('status', 'accepted')
-        .limit(1)
-        .maybeSingle()
-        .then(({ data: c }) => {
-          if (c) { setCrConsentId(c.id); setCrConsentStatus('accepted'); }
-        });
+        .select('id, status').eq('consulente_id', user.id).eq('client_id', clientId).eq('status', 'accepted')
+        .limit(1).maybeSingle()
+        .then(({ data: c }) => { if (c) { setCrConsentId(c.id); setCrConsentStatus('accepted'); } });
     }
   }
 
-  // Carica profilo consulente per logo
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  // Logo consulente
+  const [logoUrl,    setLogoUrl]    = useState<string | null>(null);
   const [logoLoaded, setLogoLoaded] = useState(false);
   if (!logoLoaded && user) {
     setLogoLoaded(true);
@@ -117,9 +156,9 @@ export default function NuovoReportWizard() {
     });
   }
 
-  // ── STEP 1: Richiedi consenso CR ─────────────────────────────────────────
+  // ── STEP 1: Richiedi consenso CR ────────────────────────────────────
   const richiediConsenso = async () => {
-    if (!crClientEmail.trim()) { toast.error('Inserisci l\'email del cliente per inviare la richiesta'); return; }
+    if (!crClientEmail.trim()) { toast.error('Inserisci email del cliente'); return; }
     setSendingConsent(true);
     try {
       const { data, error } = await supabase.functions.invoke('richiedi-consenso-cr', {
@@ -134,25 +173,19 @@ export default function NuovoReportWizard() {
       if (error || !data?.success) { toast.error(data?.error ?? 'Errore invio richiesta'); return; }
       setCrConsentId(data.consent_id);
       setCrConsentStatus('pending');
-      toast.success(`Richiesta di autorizzazione inviata a ${crClientEmail}`);
+      toast.success(`Richiesta inviata a ${crClientEmail}`);
     } finally { setSendingConsent(false); }
   };
 
   const verificaConsenso = async () => {
     if (!crConsentId) return;
     const { data } = await supabase.from('consulente_cr_consents').select('status').eq('id', crConsentId).maybeSingle();
-    if (data?.status === 'accepted') {
-      setCrConsentStatus('accepted');
-      toast.success('Consenso ricevuto! Puoi procedere con il caricamento della Centrale dei Rischi.');
-    } else if (data?.status === 'declined') {
-      setCrConsentStatus('declined');
-      toast.error('Il cliente ha rifiutato l\'autorizzazione.');
-    } else {
-      toast.info('Consenso ancora in attesa...');
-    }
+    if      (data?.status === 'accepted') { setCrConsentStatus('accepted'); toast.success('Consenso ricevuto!'); }
+    else if (data?.status === 'declined') { setCrConsentStatus('declined'); toast.error('Consenso rifiutato.'); }
+    else    toast.info('Consenso ancora in attesa...');
   };
 
-  // ── STEP 2: analizza bilancio XBRL ──────────────────────────────────────
+  // ── STEP 2: analizza bilancio ────────────────────────────────────────
   const analizzaBilancio = async () => {
     if (!bilancioFile) { toast.error('Seleziona il file bilancio XBRL'); return; }
     setAnalyzingBil(true);
@@ -167,13 +200,18 @@ export default function NuovoReportWizard() {
       setAnnoEsercizio(data.anno_esercizio ?? parseInt(annoStr));
       if (data.ragione_sociale) setRagSociale(data.ragione_sociale);
       toast.success('Bilancio analizzato con successo');
-      computeScores(data.kpi as KpiResult);
-      setStep(3);
+      setStep(2.5 as never); // step finanziamenti
     } finally { setAnalyzingBil(false); }
   };
 
-  // ── STEP 3: calcola scores ───────────────────────────────────────────────
-  const computeScores = (kpi: KpiResult) => {
+  // ── STEP 2.5: gestione step numerazione ─────────────────────────────
+  const stepFinanziamentiNext = () => {
+    if (kpiResult) computeScores(kpiResult);
+    setStep(3);
+  };
+
+  // ── STEP 3: calcola scores + carica benchmark ────────────────────────
+  const computeScores = async (kpi: KpiResult) => {
     const scores: KpiScore[] = KPI_CONFIG.map(cfg => {
       const entry = kpi?.[cfg.area]?.[cfg.key];
       const v = entry?.valore ?? null;
@@ -186,15 +224,47 @@ export default function NuovoReportWizard() {
       };
     });
     setKpiScores(scores);
+
+    // Calcola indice
     const avail = scores.filter(s => s.score !== null);
+    let idx: number | null = null;
     if (avail.length > 0) {
       const tot = avail.reduce((s, k) => s + (k.score! * KPI_CONFIG.find(c => c.key === k.kpi_key)!.peso), 0);
       const wp  = avail.reduce((s, k) => s + KPI_CONFIG.find(c => c.key === k.kpi_key)!.peso, 0);
-      setIndice(Math.round((tot / wp) * 100) / 100);
+      idx = Math.round((tot / wp) * 100) / 100;
+      setIndice(idx);
     }
+
+    // Rating bancabile
+    if (idx !== null) {
+      const rating: 'bancabile' | 'attenzione' | 'non_bancabile' =
+        idx >= 70 ? 'bancabile' : idx >= 55 ? 'attenzione' : 'non_bancabile';
+      setRatingBancabile(rating);
+      const motivi = scores.filter(s => s.score !== null && s.score < 55).map(s => `${s.kpi_label}: score ${s.score}/100`);
+      setMotiviRating(motivi);
+    }
+
+    // Carica benchmark dal DB
+    const atecoBenchKey = getAtecoBenchmarkKey(client?.codice_ateco ?? null);
+    try {
+      const { data: benchRow } = await supabase
+        .from('sector_benchmarks')
+        .select('kpi_data, aggiornato_il, commento_settore, ateco_label')
+        .eq('ateco_macro', atecoBenchKey)
+        .maybeSingle();
+
+      if (benchRow) {
+        setBenchmarkData({
+          settore_label:   benchRow.ateco_label,
+          kpi_data:        benchRow.kpi_data as Record<string, number | null>,
+          aggiornato_il:   benchRow.aggiornato_il,
+          commento_settore: benchRow.commento_settore ?? null,
+        });
+      }
+    } catch { /* usa fallback hardcoded */ }
   };
 
-  // ── STEP 4: AI suggestions ───────────────────────────────────────────────
+  // ── STEP 4: AI suggestions ───────────────────────────────────────────
   const generaSuggerimenti = async () => {
     const sorted = [...kpiScores].filter(k => k.score !== null).sort((a, b) => (a.score ?? 99) - (b.score ?? 99));
     const worst3 = sorted.slice(0, 3);
@@ -219,7 +289,7 @@ export default function NuovoReportWizard() {
     finally { setAiLoading(false); }
   };
 
-  // ── STEP 5: genera PDF ───────────────────────────────────────────────────
+  // ── STEP 5: genera PDF ───────────────────────────────────────────────
   const generaPdf = async () => {
     setGenerating(true);
     try {
@@ -229,18 +299,26 @@ export default function NuovoReportWizard() {
 
       const reportData: ReportData = {
         ragione_sociale: ragSociale,
-        partita_iva: client?.partita_iva ?? undefined,
-        codice_ateco: client?.codice_ateco ?? undefined,
-        settore: client?.settore ?? undefined,
-        indirizzo: client?.indirizzo ?? undefined,
-        anno_bilancio: annoEsercizio ?? parseInt(annoStr),
+        partita_iva:     client?.partita_iva ?? undefined,
+        codice_ateco:    client?.codice_ateco ?? undefined,
+        settore:         client?.settore ?? undefined,
+        indirizzo:       client?.indirizzo ?? undefined,
+        anno_bilancio:   annoEsercizio ?? parseInt(annoStr),
         indice_bancabilita: indice,
-        kpi_scores: kpiScores,
+        kpi_scores:   kpiScores,
         top3, bottom3,
         ai_suggerimenti: aiSugg,
-        consulente_nome: profileNome ?? user?.email ?? 'Consulente',
+        consulente_nome:  profileNome ?? user?.email ?? 'Consulente',
         consulente_email: user?.email ?? undefined,
         consulente_logo_url: logoUrl,
+        // Nuovi campi
+        settore_label:       benchmarkData?.settore_label,
+        benchmark_settore:   benchmarkData?.kpi_data,
+        benchmark_aggiornato_il: benchmarkData?.aggiornato_il,
+        commento_settore:    benchmarkData?.commento_settore ?? undefined,
+        finanziamenti:       finanziamenti.filter(f => f.istituto.trim() !== ''),
+        rating_bancabile:    ratingBancabile ?? undefined,
+        motivi_rating:       motiviRating.length ? motiviRating : undefined,
       };
 
       const { pdfBlob: blob, base64 } = await generateReportPdf(reportData);
@@ -249,17 +327,17 @@ export default function NuovoReportWizard() {
 
       if (user) {
         const { data: saved, error } = await supabase.from('consulente_reports').insert({
-          consulente_id: user.id,
-          client_id: clientId ?? null,
-          client_name: ragSociale,
-          client_email: sendEmail || null,
-          anno_bilancio: annoEsercizio ?? parseInt(annoStr),
-          kpi_data: kpiResult,
-          kpi_scores: kpiScores,
-          ai_suggestions: aiSugg,
+          consulente_id:   user.id,
+          client_id:       clientId ?? null,
+          client_name:     ragSociale,
+          client_email:    sendEmail || null,
+          anno_bilancio:   annoEsercizio ?? parseInt(annoStr),
+          kpi_data:        kpiResult,
+          kpi_scores:      kpiScores,
+          ai_suggestions:  aiSugg,
           indice_bancabilita: indice,
-          top3_kpi: top3,
-          bottom3_kpi: bottom3,
+          top3_kpi:        top3,
+          bottom3_kpi:     bottom3,
         }).select('id').single();
         if (!error && saved) { setReportId(saved.id); setReportSaved(true); }
       }
@@ -296,8 +374,10 @@ export default function NuovoReportWizard() {
     } finally { setSending(false); }
   };
 
-  // ── STEPS UI ─────────────────────────────────────────────────────────────
-  const steps = ['Dati cliente', 'Consenso CR', 'Bilancio XBRL', 'Score KPI', 'AI Suggerimenti', 'Report finale'];
+  // ── STEPS UI ─────────────────────────────────────────────────────────
+  // step numerico: 0-1-2-2.5-3-4-5 → mappa su indice stepper 0-6
+  const stepperIndex = step === (2.5 as never) ? 3 : step > 2 ? (step as number) + 1 : step as number;
+  const steps = ['Dati cliente', 'Consenso CR', 'Bilancio XBRL', 'Finanziamenti', 'Score KPI', 'AI', 'Report'];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50/40 to-slate-50">
@@ -316,11 +396,11 @@ export default function NuovoReportWizard() {
           {steps.map((s, i) => (
             <div key={i} className="flex items-center gap-1 flex-1">
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all
-                ${i < step ? 'bg-teal-600 text-white' : i === step ? 'bg-teal-700 text-white ring-2 ring-teal-300' : 'bg-slate-200 text-slate-400'}`}>
-                {i < step ? <CheckCircle className="w-3.5 h-3.5" /> : i + 1}
+                ${i < stepperIndex ? 'bg-teal-600 text-white' : i === stepperIndex ? 'bg-teal-700 text-white ring-2 ring-teal-300' : 'bg-slate-200 text-slate-400'}`}>
+                {i < stepperIndex ? <CheckCircle className="w-3.5 h-3.5" /> : i + 1}
               </div>
-              <span className={`text-xs font-medium hidden sm:block ${i === step ? 'text-teal-700' : 'text-slate-400'}`}>{s}</span>
-              {i < steps.length - 1 && <div className={`flex-1 h-0.5 ${i < step ? 'bg-teal-500' : 'bg-slate-200'}`} />}
+              <span className={`text-xs font-medium hidden sm:block ${i === stepperIndex ? 'text-teal-700' : 'text-slate-400'}`}>{s}</span>
+              {i < steps.length - 1 && <div className={`flex-1 h-0.5 ${i < stepperIndex ? 'bg-teal-500' : 'bg-slate-200'}`} />}
             </div>
           ))}
         </div>
@@ -359,33 +439,21 @@ export default function NuovoReportWizard() {
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-teal-600" /> Autorizzazione Centrale dei Rischi
             </h2>
-            <p className="text-sm text-slate-500">
-              Prima di caricare i dati della Centrale dei Rischi, è necessaria l'autorizzazione esplicita del cliente
-              ai sensi del GDPR (Reg. UE 2016/679). L'autorizzazione viene inviata via email al cliente con tracciatura IP.
-            </p>
+            <p className="text-sm text-slate-500">Prima di caricare i dati CR è necessaria l'autorizzazione esplicita del cliente (GDPR Reg. UE 2016/679).</p>
 
             {crConsentStatus === 'none' && (
               <div className="space-y-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-600">Email del cliente per la richiesta di autorizzazione</label>
+                  <label className="text-xs font-semibold text-slate-600">Email del cliente</label>
                   <input type="email" className="w-full border rounded-lg px-3 py-2 text-sm mt-0.5 focus:ring-2 ring-teal-400 outline-none"
-                    placeholder="cliente@azienda.it" value={crClientEmail}
-                    onChange={e => setCrClientEmail(e.target.value)} />
+                    placeholder="cliente@azienda.it" value={crClientEmail} onChange={e => setCrClientEmail(e.target.value)} />
                 </div>
                 <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={richiediConsenso} disabled={sendingConsent || !crClientEmail.trim()}>
-                  {sendingConsent
-                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Invio in corso...</>
-                    : <><Mail className="w-4 h-4 mr-2" /> Invia richiesta di autorizzazione</>
-                  }
+                  {sendingConsent ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Invio...</> : <><Mail className="w-4 h-4 mr-2" />Invia richiesta autorizzazione</>}
                 </Button>
-                <div className="border-t pt-3">
-                  <p className="text-xs text-slate-400 text-center">
-                    Se hai già un consenso CR valido per questo cliente puoi procedere direttamente.
-                  </p>
-                  <Button variant="outline" className="w-full mt-2 text-slate-500" onClick={() => setStep(2)}>
-                    Salta (consenso già ottenuto) <ArrowRight className="w-4 h-4 ml-1" />
-                  </Button>
-                </div>
+                <Button variant="outline" className="w-full text-slate-500" onClick={() => setStep(2)}>
+                  Salta (consenso già ottenuto) <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
               </div>
             )}
 
@@ -394,20 +462,12 @@ export default function NuovoReportWizard() {
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
                   <Clock className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-sm font-semibold text-amber-800">Richiesta inviata — in attesa di risposta</p>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      Il cliente (<strong>{crClientEmail}</strong>) ha ricevuto l'email con il link per autorizzare il trattamento.
-                      Il link è valido 30 giorni.
-                    </p>
+                    <p className="text-sm font-semibold text-amber-800">In attesa di risposta</p>
+                    <p className="text-xs text-amber-700 mt-0.5">Email inviata a <strong>{crClientEmail}</strong>. Link valido 30 giorni.</p>
                   </div>
                 </div>
-                <Button variant="outline" className="w-full" onClick={verificaConsenso}>
-                  🔄 Verifica stato consenso
-                </Button>
-                <p className="text-xs text-slate-400 text-center">Puoi procedere al bilancio e caricare la CR in un secondo momento, oppure attendere.</p>
-                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>
-                  Procedi al bilancio <ArrowRight className="w-4 h-4 ml-1" />
-                </Button>
+                <Button variant="outline" className="w-full" onClick={verificaConsenso}>🔄 Verifica stato consenso</Button>
+                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>Procedi al bilancio <ArrowRight className="w-4 h-4 ml-1" /></Button>
               </div>
             )}
 
@@ -417,12 +477,10 @@ export default function NuovoReportWizard() {
                   <CheckCircle className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm font-semibold text-teal-800">Autorizzazione confermata ✓</p>
-                    <p className="text-xs text-teal-700 mt-0.5">Il cliente ha autorizzato il trattamento dei dati CR. Puoi procedere.</p>
+                    <p className="text-xs text-teal-700 mt-0.5">Il cliente ha autorizzato il trattamento dei dati CR.</p>
                   </div>
                 </div>
-                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>
-                  Procedi al bilancio <ArrowRight className="w-4 h-4 ml-1" />
-                </Button>
+                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>Procedi al bilancio <ArrowRight className="w-4 h-4 ml-1" /></Button>
               </div>
             )}
 
@@ -430,11 +488,9 @@ export default function NuovoReportWizard() {
               <div className="space-y-3">
                 <div className="bg-red-50 border border-red-200 rounded-xl p-4">
                   <p className="text-sm font-semibold text-red-700">Autorizzazione rifiutata</p>
-                  <p className="text-xs text-red-600 mt-1">Il cliente ha rifiutato il trattamento dei dati CR. Non è possibile caricare la Centrale dei Rischi.</p>
+                  <p className="text-xs text-red-600 mt-1">Non è possibile caricare la Centrale dei Rischi.</p>
                 </div>
-                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>
-                  Procedi comunque (senza CR) <ArrowRight className="w-4 h-4 ml-1" />
-                </Button>
+                <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setStep(2)}>Procedi comunque (senza CR) <ArrowRight className="w-4 h-4 ml-1" /></Button>
               </div>
             )}
 
@@ -450,18 +506,85 @@ export default function NuovoReportWizard() {
             <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center hover:border-teal-400 transition-colors cursor-pointer"
               onClick={() => bilancioRef.current?.click()}>
               <Upload className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-              {bilancioFile ? (
-                <p className="text-sm font-medium text-teal-700">✅ {bilancioFile.name}</p>
-              ) : (
-                <p className="text-sm text-slate-400">Clicca per selezionare il file XBRL</p>
-              )}
-              <input ref={bilancioRef} type="file" accept=".xbrl,.xml" className="hidden"
-                onChange={e => setBilancioFile(e.target.files?.[0] ?? null)} />
+              {bilancioFile ? <p className="text-sm font-medium text-teal-700">✅ {bilancioFile.name}</p> : <p className="text-sm text-slate-400">Clicca per selezionare il file XBRL</p>}
+              <input ref={bilancioRef} type="file" accept=".xbrl,.xml" className="hidden" onChange={e => setBilancioFile(e.target.files?.[0] ?? null)} />
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
               <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={analizzaBilancio} disabled={!bilancioFile || analyzingBil}>
-                {analyzingBil ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Analisi in corso...</> : 'Analizza bilancio'}
+                {analyzingBil ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analisi in corso...</> : 'Analizza bilancio'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 2.5: Finanziamenti ── */}
+        {step === (2.5 as never) && (
+          <div className="bg-white rounded-xl border p-6 space-y-4">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <Banknote className="w-4 h-4 text-teal-600" /> Finanziamenti in Essere
+            </h2>
+            <p className="text-sm text-slate-500">
+              Inserisci manualmente i finanziamenti attivi dell'azienda (mutui, leasing, fidi, ecc.).
+              Questi dati verranno inclusi nel report finale e usati per calcolare il DSCR.
+            </p>
+
+            {finanziamenti.length === 0 && (
+              <div className="border border-dashed border-slate-200 rounded-xl p-4 text-center text-sm text-slate-400">
+                Nessun finanziamento inserito. Aggiungine uno o passa allo step successivo se non ci sono finanziamenti.
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {finanziamenti.map((f, i) => (
+                <div key={i} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-teal-700">Finanziamento #{i + 1}</span>
+                    <Button variant="ghost" size="sm" className="text-red-400 hover:text-red-600 h-7 w-7 p-0" onClick={() => removeFinanziamento(i)}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500">Istituto bancario</label>
+                      <input className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" placeholder="es. UniCredit"
+                        value={f.istituto} onChange={e => updateFinanziamento(i, 'istituto', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500">Tipo</label>
+                      <select className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5 bg-white"
+                        value={f.tipo} onChange={e => updateFinanziamento(i, 'tipo', e.target.value)}>
+                        {TIPI_FINANZIAMENTO.map(t => <option key={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500">Debito residuo (€)</label>
+                      <input type="number" className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" placeholder="0"
+                        value={f.importo_residuo || ''} onChange={e => updateFinanziamento(i, 'importo_residuo', parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500">Rata mensile (€)</label>
+                      <input type="number" className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" placeholder="—"
+                        value={f.rata_mensile ?? ''} onChange={e => updateFinanziamento(i, 'rata_mensile', e.target.value ? parseFloat(e.target.value) : null)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500">Scadenza</label>
+                      <input type="date" className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5"
+                        value={f.scadenza ?? ''} onChange={e => updateFinanziamento(i, 'scadenza', e.target.value || null)} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <Button variant="outline" className="w-full border-dashed border-teal-300 text-teal-700 hover:bg-teal-50" onClick={addFinanziamento}>
+              <PlusCircle className="w-4 h-4 mr-2" /> Aggiungi finanziamento
+            </Button>
+
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+              <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={stepFinanziamentiNext}>
+                Calcola score KPI <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </div>
@@ -471,12 +594,25 @@ export default function NuovoReportWizard() {
         {step === 3 && (
           <div className="bg-white rounded-xl border p-6 space-y-4">
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><BarChart2 className="w-4 h-4 text-teal-600" /> Score KPI</h2>
+
             {indice !== null && (
               <div className="text-center py-3 bg-gradient-to-br from-teal-50 to-slate-50 rounded-xl border">
                 <div className="text-4xl font-black text-teal-700">{Math.round(indice)}<span className="text-xl text-slate-400">/100</span></div>
                 <div className="text-sm font-semibold text-teal-600 mt-1">Indice di Bancabilità</div>
+                {ratingBancabile && (
+                  <div className={`inline-block mt-2 px-3 py-1 rounded-full text-xs font-bold ${ratingBancabile === 'bancabile' ? 'bg-green-100 text-green-700' : ratingBancabile === 'attenzione' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                    {ratingBancabile === 'bancabile' ? '✅ BANCABILE' : ratingBancabile === 'attenzione' ? '⚠️ ATTENZIONE' : '❌ NON BANCABILE'}
+                  </div>
+                )}
               </div>
             )}
+
+            {benchmarkData && (
+              <div className="bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-700 border border-blue-200">
+                📊 Benchmark settore: <strong>{benchmarkData.settore_label}</strong> — aggiornati al {new Date(benchmarkData.aggiornato_il).toLocaleDateString('it-IT')}
+              </div>
+            )}
+
             <div className="space-y-2">
               {kpiScores.filter(k => k.score !== null).sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map(k => (
                 <div key={k.kpi_key} className="flex items-center gap-3 text-sm">
@@ -490,8 +626,9 @@ export default function NuovoReportWizard() {
                 </div>
               ))}
             </div>
+
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+              <Button variant="outline" onClick={() => setStep(2.5 as never)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
               <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={() => { setStep(4); generaSuggerimenti(); }}>
                 Genera suggerimenti AI <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
@@ -506,7 +643,7 @@ export default function NuovoReportWizard() {
             {aiLoading ? (
               <div className="py-10 text-center">
                 <Loader2 className="w-8 h-8 animate-spin mx-auto text-teal-600 mb-3" />
-                <p className="text-sm text-slate-500">Groq AI sta elaborando le raccomandazioni...</p>
+                <p className="text-sm text-slate-500">AI sta elaborando le raccomandazioni...</p>
               </div>
             ) : aiSugg.length === 0 ? (
               <div className="text-center py-6 text-sm text-slate-400">Nessun suggerimento generato</div>
@@ -548,16 +685,25 @@ export default function NuovoReportWizard() {
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><FileText className="w-4 h-4 text-teal-600" /> Report finale</h2>
             {!pdfBlob ? (
               <div className="text-center py-6">
+                <div className="bg-teal-50 rounded-xl p-4 text-left mb-4 space-y-1 text-xs text-teal-800 border border-teal-200">
+                  <p className="font-bold">Il report includerà:</p>
+                  <p>📄 Copertina con gauge bancabilità e badge rating</p>
+                  <p>📊 Tabella KPI vs benchmark settore {benchmarkData ? `(${benchmarkData.settore_label})` : ''}</p>
+                  <p>🌐 Commento situazione settore</p>
+                  <p>📋 Top 3 / Bottom 3 KPI con barre visive</p>
+                  {finanziamenti.filter(f => f.istituto).length > 0 && <p>🏦 {finanziamenti.filter(f => f.istituto).length} finanziamenti in essere</p>}
+                  <p>🎯 {aiSugg.length} raccomandazioni AI</p>
+                </div>
                 <Button size="lg" className="bg-teal-600 hover:bg-teal-700" onClick={generaPdf} disabled={generating}>
                   {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generazione PDF...</> : '📄 Genera PDF'}
                 </Button>
-                <p className="text-xs text-slate-400 mt-2">Il PDF include logo, KPI, benchmark, top/bottom 3 e suggerimenti AI</p>
               </div>
             ) : (
               <div className="space-y-4">
                 <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 text-center">
                   <CheckCircle className="w-8 h-8 text-teal-600 mx-auto mb-2" />
                   <p className="font-semibold text-teal-800">Report PDF generato{reportSaved ? ' e salvato' : ''}!</p>
+                  <p className="text-xs text-teal-600 mt-1">Report bancabilità completo con benchmark {benchmarkData?.settore_label ?? 'settore'}</p>
                 </div>
                 <Button className="w-full" variant="outline" onClick={scaricaPdf}>
                   <Download className="w-4 h-4 mr-2" /> Scarica PDF
