@@ -134,6 +134,10 @@ interface Report {
   id: string; client_id: string | null; client_name: string;
   anno_bilancio: number | null; indice_bancabilita: number | null; sent_at: string | null; created_at: string;
 }
+interface ConsentStatus {
+  client_id: string;
+  status: 'pending' | 'accepted' | 'declined';
+}
 
 function ratingInfo(score: number) {
   if (score >= 85) return { label: 'Eccellente', cls: 'bg-emerald-100 text-emerald-800' };
@@ -151,6 +155,7 @@ export default function ConsulenteDashboard() {
   const navigate = useNavigate();
   const [clients,  setClients]  = useState<Client[]>([]);
   const [reports,  setReports]  = useState<Report[]>([]);
+  const [consents, setConsents] = useState<ConsentStatus[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [tab,      setTab]      = useState<'clienti' | 'report'>('clienti');
 
@@ -173,12 +178,22 @@ export default function ConsulenteDashboard() {
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const [{ data: cl }, { data: rp }] = await Promise.all([
+    const [{ data: cl }, { data: rp }, { data: cs }] = await Promise.all([
       supabase.from('consulente_clients').select('*').eq('consulente_id', user.id).order('ragione_sociale'),
       supabase.from('consulente_reports').select('id,client_id,client_name,anno_bilancio,indice_bancabilita,sent_at,created_at').eq('consulente_id', user.id).order('created_at', { ascending: false }),
+      supabase.from('consulente_cr_consents').select('client_id, status, created_at').eq('consulente_id', user.id).order('created_at', { ascending: false }),
     ]);
     setClients((cl ?? []) as Client[]);
     setReports((rp ?? []) as Report[]);
+
+    // Per ogni client_id teniamo solo il consenso più recente
+    const consentMap = new Map<string, ConsentStatus>();
+    ((cs ?? []) as Array<{ client_id: string; status: string; created_at: string }>).forEach(c => {
+      if (!consentMap.has(c.client_id)) {
+        consentMap.set(c.client_id, { client_id: c.client_id, status: c.status as ConsentStatus['status'] });
+      }
+    });
+    setConsents(Array.from(consentMap.values()));
     setLoading(false);
   }, [user]);
 
@@ -512,22 +527,51 @@ export default function ConsulenteDashboard() {
               <div className="grid gap-3">
                 {clients.map(c => {
                   const clientReports = reports.filter(r => r.client_id === c.id);
+                  const consent = consents.find(cs => cs.client_id === c.id);
                   return (
                     <div key={c.id} className="bg-white rounded-xl border hover:border-teal-300 transition-colors p-4 flex items-center gap-4">
                       <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center shrink-0">
                         <span className="text-teal-700 font-bold text-sm">{c.ragione_sociale.slice(0, 2).toUpperCase()}</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-slate-800 truncate">{c.ragione_sociale}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-slate-800 truncate">{c.ragione_sociale}</p>
+                          {/* Badge consenso CR */}
+                          {consent?.status === 'accepted' && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-medium shrink-0">
+                              ✅ CR autorizzato
+                            </span>
+                          )}
+                          {consent?.status === 'pending' && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium shrink-0">
+                              🟡 CR in attesa
+                            </span>
+                          )}
+                          {consent?.status === 'declined' && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-medium shrink-0">
+                              ❌ CR rifiutato
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-slate-500">
                           {[c.partita_iva && `P.IVA ${c.partita_iva}`, c.codice_ateco && `ATECO ${c.codice_ateco}`, c.email].filter(Boolean).join(' · ')}
                         </p>
                       </div>
                       <div className="text-xs text-slate-400">{clientReports.length} report</div>
                       <div className="flex gap-2">
-                        <Button size="sm" className="bg-teal-600 hover:bg-teal-700 h-8 text-xs"
+                        <Button
+                          size="sm"
+                          title={consent?.status === 'pending' ? 'In attesa di autorizzazione CR' : undefined}
+                          className={`h-8 text-xs ${
+                            consent?.status === 'accepted'
+                              ? 'bg-green-600 hover:bg-green-700'
+                              : consent?.status === 'pending'
+                              ? 'bg-amber-500 hover:bg-amber-600 opacity-80'
+                              : 'bg-teal-600 hover:bg-teal-700'
+                          }`}
                           onClick={() => navigate(`/consulente/cliente/${c.id}/nuovo-report`)}>
-                          <FileBarChart2 className="w-3.5 h-3.5 mr-1" /> Nuovo report
+                          <FileBarChart2 className="w-3.5 h-3.5 mr-1" />
+                          {consent?.status === 'accepted' ? '✅ Nuovo report' : 'Nuovo report'}
                         </Button>
                         <Button size="sm" variant="ghost" className="h-8 text-red-400 hover:text-red-600 hover:bg-red-50"
                           onClick={() => deleteClient(c.id)}>

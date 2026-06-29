@@ -138,3 +138,5 @@
 [2026-06-29 16:57] Avvio miglioria analisi reputazionale: CF persone fisiche, storico soci/amm cessati, storico sedi con ricerca eventi negativi per indirizzo
 [2026-06-29 17:04] Analisi reputazionale approfondita completata: CF discriminatore persone fisiche, soggetti cessati da visura_json, analisi storico sedi/indirizzi con eventi negativi. Commit 9da1f37, deploy Vercel + Edge Function Supabase OK.
 [2026-06-29 17:35] Avvio report consulente potenziato: logo Credifile+consulente, 14 KPI, benchmark settore con commento, bancabilità dettagliata, finanziamenti in essere + cron aggiornamento mensile benchmark
+[2026-06-29 17:45] Report consulente potenziato completato (commit e9f76cb): PDF 5 pagine A4, logo Credifile+consulente, 7 KPI vs benchmark settore, commento settore, badge bancabilità, finanziamenti in essere. Tabella sector_benchmarks creata + Edge Function update-sector-benchmarks deployata su Supabase.
+[2026-06-29 21:41] Avvio fix sezione consulente: consenso visible in lista clienti + sblocco bilancio post-autorizzazione + accettazione PDF bilancio oltre XBRL

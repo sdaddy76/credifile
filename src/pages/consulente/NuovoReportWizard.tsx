@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import * as pdfjs from 'pdfjs-dist';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -11,6 +12,23 @@ import {
   FileText, BarChart2, Brain, Send, Download, ShieldCheck, Clock, Mail,
   PlusCircle, Trash2, Banknote,
 } from 'lucide-react';
+
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
+
+async function extractPdfTextWizard(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: buf }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i);
+    const ct = await pg.getTextContent();
+    pages.push(ct.items.map((it: unknown) => (it as { str?: string }).str ?? '').join(' '));
+  }
+  return pages.join('\n');
+}
 
 interface KpiEntry { valore: number | null; formatted: string; semaforo: string; label: string }
 type KpiResult = Record<string, Record<string, KpiEntry>>;
@@ -82,9 +100,10 @@ export default function NuovoReportWizard() {
   const [crClientEmail,   setCrClientEmail]   = useState('');
   const [sendingConsent,  setSendingConsent]  = useState(false);
 
-  // Step 2: bilancio XBRL
+  // Step 2: bilancio XBRL o PDF
   const bilancioRef = useRef<HTMLInputElement>(null);
   const [bilancioFile, setBilancioFile]   = useState<File | null>(null);
+  const [bilancioFileType, setBilancioFileType] = useState<'xbrl' | 'pdf' | null>(null);
   const [analyzingBil, setAnalyzingBil]   = useState(false);
   const [kpiResult,    setKpiResult]      = useState<KpiResult | null>(null);
   const [annoEsercizio, setAnnoEsercizio] = useState<number | null>(null);
@@ -187,13 +206,26 @@ export default function NuovoReportWizard() {
 
   // ── STEP 2: analizza bilancio ────────────────────────────────────────
   const analizzaBilancio = async () => {
-    if (!bilancioFile) { toast.error('Seleziona il file bilancio XBRL'); return; }
+    if (!bilancioFile) { toast.error('Seleziona il file bilancio'); return; }
     setAnalyzingBil(true);
     try {
-      const arrayBuf = await bilancioFile.arrayBuffer();
-      const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+      let bilancioTesto: string;
+      const isPdf = bilancioFile.name.toLowerCase().endsWith('.pdf');
+
+      if (isPdf) {
+        // Estrazione testo da PDF con pdfjs
+        bilancioTesto = await extractPdfTextWizard(bilancioFile);
+        if (bilancioTesto.trim().length < 100) {
+          toast.error('PDF non leggibile o scansionato: impossibile estrarre testo');
+          return;
+        }
+      } else {
+        // File XBRL / XML: leggi come testo
+        bilancioTesto = await bilancioFile.text();
+      }
+
       const { data, error } = await supabase.functions.invoke('analizza-bilancio', {
-        body: { file_base64: b64, file_name: bilancioFile.name }
+        body: { bilancio_testo: bilancioTesto }
       });
       if (error || !data?.success) { toast.error(data?.error ?? 'Errore analisi bilancio'); return; }
       setKpiResult(data.kpi as KpiResult);
@@ -501,13 +533,33 @@ export default function NuovoReportWizard() {
         {/* ── STEP 2: Upload bilancio ── */}
         {step === 2 && (
           <div className="bg-white rounded-xl border p-6 space-y-4">
-            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><Upload className="w-4 h-4 text-teal-600" /> Carica Bilancio XBRL</h2>
-            <p className="text-sm text-slate-500">Carica il bilancio depositato in formato XBRL (.xbrl, .xml) per l'analisi automatica dei KPI.</p>
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><Upload className="w-4 h-4 text-teal-600" /> Carica Bilancio</h2>
+            <p className="text-sm text-slate-500">Carica il bilancio in formato XBRL (.xbrl, .xml) oppure PDF (.pdf) per l'analisi automatica dei KPI.</p>
             <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center hover:border-teal-400 transition-colors cursor-pointer"
               onClick={() => bilancioRef.current?.click()}>
               <Upload className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-              {bilancioFile ? <p className="text-sm font-medium text-teal-700">✅ {bilancioFile.name}</p> : <p className="text-sm text-slate-400">Clicca per selezionare il file XBRL</p>}
-              <input ref={bilancioRef} type="file" accept=".xbrl,.xml" className="hidden" onChange={e => setBilancioFile(e.target.files?.[0] ?? null)} />
+              {bilancioFile ? (
+                <div>
+                  <p className="text-sm font-medium text-teal-700">✅ {bilancioFile.name}</p>
+                  {bilancioFileType === 'pdf' && (
+                    <p className="text-xs text-blue-600 mt-1">📄 PDF — analisi testuale</p>
+                  )}
+                  {bilancioFileType === 'xbrl' && (
+                    <p className="text-xs text-teal-600 mt-1">📊 XBRL — analisi strutturata</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">Clicca per selezionare il file XBRL o PDF</p>
+              )}
+              <input ref={bilancioRef} type="file" accept=".xbrl,.xml,.pdf" className="hidden" onChange={e => {
+                const f = e.target.files?.[0] ?? null;
+                setBilancioFile(f);
+                if (f) {
+                  setBilancioFileType(f.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'xbrl');
+                } else {
+                  setBilancioFileType(null);
+                }
+              }} />
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>

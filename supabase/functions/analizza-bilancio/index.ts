@@ -301,7 +301,18 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-  const { practice_id, pdf_text, uploaded_file_id, financing } = await req.json();
+  const body = await req.json();
+  const { practice_id, pdf_text, uploaded_file_id, financing } = body;
+
+  // ── Branch consulente: bilancio_testo senza practice_id ──────────────────
+  // Usato dal NuovoReportWizard quando carica un bilancio PDF o XBRL direttamente
+  const bilancio_testo: string | undefined = body.bilancio_testo;
+  if (bilancio_testo && !practice_id) {
+    const bilData = parseBilancio(bilancio_testo);
+    const { is_holding, kpi } = calcolaKpi(bilData, financing ?? []);
+    return ok({ anno_esercizio: bilData.anno_esercizio, ragione_sociale: bilData.ragione_sociale, kpi, is_holding });
+  }
+
   if (!practice_id || !pdf_text) return fail('practice_id e pdf_text sono obbligatori');
 
   // Parse bilancio
