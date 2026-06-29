@@ -305,14 +305,17 @@ Deno.serve(async (req) => {
   const { practice_id, pdf_text, uploaded_file_id, financing } = body;
 
   // ── Branch consulente: bilancio_testo senza practice_id ──────────────────
-  // Usato dal NuovoReportWizard quando carica un bilancio PDF o XBRL direttamente
+  // Usato dal NuovoReportWizard quando carica un bilancio PDF o XBRL direttamente.
+  // Se bilancio_testo è presente, usa sempre questo branch (anche se practice_id è presente).
   const bilancio_testo: string | undefined = body.bilancio_testo;
-  if (bilancio_testo && !practice_id) {
+  if (bilancio_testo) {
+    if (bilancio_testo.trim().length < 50) return fail('Contenuto bilancio troppo breve o non leggibile');
     const bilData = parseBilancio(bilancio_testo);
     const { is_holding, kpi } = calcolaKpi(bilData, financing ?? []);
     return ok({ anno_esercizio: bilData.anno_esercizio, ragione_sociale: bilData.ragione_sociale, kpi, is_holding });
   }
 
+  // Flusso pratiche standard: practice_id e pdf_text obbligatori
   if (!practice_id || !pdf_text) return fail('practice_id e pdf_text sono obbligatori');
 
   // Parse bilancio
