@@ -357,10 +357,11 @@ export default async function handler(req, res) {
 
     // 6. Indice bancabilità — pesi default (banca_id IS NULL) + override banca specifica + KPI pratica
     let bancabScore = null;
+    let bancabDetails = [];
     try {
       const [pesiDefault, pesiOverride, kpiLatest] = await Promise.all([
-        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=is.null&attivo=eq.true&select=kpi_key,kpi_area,peso,soglia_ottimo,soglia_suff,soglia_critica,inverso`, { headers: H }).then(r => r.json()),
-        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=eq.${encodeURIComponent(bank_id)}&attivo=eq.true&select=kpi_key,kpi_area,peso,soglia_ottimo,soglia_suff,soglia_critica,inverso`, { headers: H }).then(r => r.json()),
+        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=is.null&attivo=eq.true&select=*`, { headers: H }).then(r => r.json()),
+        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=eq.${encodeURIComponent(bank_id)}&attivo=eq.true&select=*`, { headers: H }).then(r => r.json()),
         fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=kpi&order=anno_esercizio.desc&limit=1`, { headers: H }).then(r => r.json()),
       ]);
       // Merge: override banca ha priorità sui default per lo stesso kpi_key
@@ -375,12 +376,27 @@ export default async function handler(req, res) {
         for (const p of pesi) {
           const entry  = kpiObj[p.kpi_area]?.[p.kpi_key];
           const valore = entry?.valore ?? entry?.value ?? null;
-          if (valore == null) continue;
-          const num = typeof valore === 'number' ? valore : parseFloat(valore);
-          if (isNaN(num)) continue;
-          const s = calcolaScoreNode(num, p.soglia_ottimo, p.soglia_suff, p.soglia_critica, !!p.inverso);
-          sommaScore    += s * (p.peso ?? 1);
-          pesoPonderato += (p.peso ?? 1);
+          const num = valore == null ? null : (typeof valore === 'number' ? valore : parseFloat(valore));
+          const soglie = p.soglie && typeof p.soglie === 'object' ? p.soglie : {};
+          const sogliaOttimo  = p.soglia_ottimo  ?? soglie.ottimo  ?? soglie.best   ?? null;
+          const sogliaSuff    = p.soglia_suff    ?? soglie.suff    ?? soglie.minima ?? soglie.minimo ?? soglie.pass ?? null;
+          const sogliaCritica = p.soglia_critica ?? soglie.critica ?? soglie.worst  ?? null;
+          const formatted = entry?.formatted ?? (num != null && Number.isFinite(num) ? safeNum(num) : 'N/D');
+          const s = num != null && Number.isFinite(num) && !Number.isNaN(num)
+            ? calcolaScoreNode(num, sogliaOttimo, sogliaSuff, sogliaCritica, !!p.inverso)
+            : null;
+          if (s != null) {
+            sommaScore    += s * (p.peso ?? 1);
+            pesoPonderato += (p.peso ?? 1);
+          }
+          bancabDetails.push({
+            label: p.kpi_label || entry?.label || p.kpi_key,
+            value: formatted,
+            soglia: sogliaSuff,
+            peso: p.peso ?? 0,
+            inverso: !!p.inverso,
+            score: s,
+          });
         }
         if (pesoPonderato > 0) bancabScore = Math.round(sommaScore / pesoPonderato);
       }
@@ -390,9 +406,27 @@ export default async function handler(req, res) {
     let financing = [];
     if (clientId || practice_id) {
       financing = await fetch(
-        `${SUPABASE_URL}/rest/v1/client_financing?practice_id=eq.${encodeURIComponent(practice_id)}&select=tipologia,banca_finanziaria,importo_iniziale,rata,durata_mesi,debito_residuo,tipo_garanzia,stato_rapporto&order=ordinamento.asc`,
+        `${SUPABASE_URL}/rest/v1/client_financing?practice_id=eq.${encodeURIComponent(practice_id)}&select=tipologia,banca_finanziaria,importo_iniziale,rata,durata_mesi,debito_residuo,tipo_garanzia,stato_rapporto,fonte,accordato,accordato_operativo,utilizzato,saldo_medio,data_riferimento&order=ordinamento.asc`,
         { headers: H },
       ).then(r => r.json()).catch(() => []) ?? [];
+    }
+
+    // 6c. Centrale Rischi — se importata nei finanziamenti, aggiunge una riga spiegabile
+    const crFinancing = financing.filter(f => f.fonte === 'centrale_rischi');
+    if (crFinancing.length > 0) {
+      const accordato = crFinancing.reduce((s, f) => s + (Number(f.accordato_operativo ?? f.accordato) || 0), 0);
+      const utilizzato = crFinancing.reduce((s, f) => s + (Number(f.utilizzato ?? f.debito_residuo) || 0), 0);
+      const ratio = accordato > 0 ? (utilizzato / accordato) * 100 : null;
+      let crScore = null;
+      if (ratio != null) crScore = ratio <= 70 ? 100 : ratio <= 90 ? 70 : 35;
+      bancabDetails.push({
+        label: 'Centrale Rischi — utilizzo affidamenti',
+        value: ratio != null ? `${safeNum(ratio)}% (${safeFmt(utilizzato)} / ${safeFmt(accordato)} €)` : `${crFinancing.length} rapporti importati`,
+        soglia: '≤ 90% utilizzo',
+        peso: 'informativo',
+        inverso: true,
+        score: crScore,
+      });
     }
 
     // ── 7. Componi HTML email ─────────────────────────────────────────────
@@ -484,6 +518,43 @@ export default async function handler(req, res) {
   <div style="font-size:36px;font-weight:800;color:${scoreColor(bancabScore)};">${Math.round(bancabScore)}<span style="font-size:16px;color:#64748b;">/100</span></div>
   <div style="font-size:13px;font-weight:600;color:${scoreColor(bancabScore)};margin-top:2px;">${scoreLabel(bancabScore)}</div>
 </div>` : '');
+
+    const bancabDetailSection = safeSection((bancabScore != null && bancabScore >= 80 && bancabDetails.length > 0) ? `
+<h3 style="color:#1e3a5f;margin-top:18px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  📌 Dettaglio Bancabilità
+</h3>
+<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;border:1px solid #e2e8f0;">
+  <thead>
+    <tr style="background:#f1f5f9;">
+      <th style="text-align:left;padding:6px 7px;color:#475569;font-weight:700;border:1px solid #e2e8f0;">KPI</th>
+      <th style="text-align:right;padding:6px 7px;color:#475569;font-weight:700;border:1px solid #e2e8f0;white-space:nowrap;">Valore azienda</th>
+      <th style="text-align:right;padding:6px 7px;color:#475569;font-weight:700;border:1px solid #e2e8f0;white-space:nowrap;">Soglia minima</th>
+      <th style="text-align:center;padding:6px 7px;color:#475569;font-weight:700;border:1px solid #e2e8f0;white-space:nowrap;">Peso</th>
+      <th style="text-align:center;padding:6px 7px;color:#475569;font-weight:700;border:1px solid #e2e8f0;white-space:nowrap;">Esito</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${bancabDetails.map((d, i) => {
+      const score = d.score != null && Number.isFinite(Number(d.score)) ? Number(d.score) : null;
+      const esito = score == null || score >= 55
+        ? (score != null && score >= 70 ? '✅ Soddisfatto' : '⚠️ Limite')
+        : '❌ Non soddisfatto';
+      const bg = esito.startsWith('✅') ? '#f0fdf4' : esito.startsWith('⚠️') ? '#fffbeb' : '#fef2f2';
+      const color = esito.startsWith('✅') ? '#166534' : esito.startsWith('⚠️') ? '#92400e' : '#991b1b';
+      const soglia = d.soglia == null
+        ? 'N/D'
+        : (typeof d.soglia === 'string' ? d.soglia : `${d.inverso ? '≤' : '≥'} ${safeFmt(d.soglia)}`);
+      const peso = typeof d.peso === 'number' ? `${safeNum(d.peso)}%` : d.peso;
+      return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
+        `<td style="padding:5px 7px;color:#374151;border:1px solid #e2e8f0;font-weight:600;">${d.label}</td>` +
+        `<td style="padding:5px 7px;text-align:right;color:#1e293b;border:1px solid #e2e8f0;white-space:nowrap;">${d.value}</td>` +
+        `<td style="padding:5px 7px;text-align:right;color:#475569;border:1px solid #e2e8f0;white-space:nowrap;">${soglia}</td>` +
+        `<td style="padding:5px 7px;text-align:center;color:#475569;border:1px solid #e2e8f0;white-space:nowrap;">${peso}</td>` +
+        `<td style="padding:5px 7px;text-align:center;border:1px solid #e2e8f0;background:${bg};color:${color};font-weight:700;white-space:nowrap;">${esito}</td>` +
+        `</tr>`;
+    }).join('')}
+  </tbody>
+</table>` : '');
 
     const repScores = rep ? [rep.score_globale, rep.score_societa, rep.score_amm, rep.score_soci] : [];
     const hasRepScores = repScores.some(s => s != null && Number.isFinite(Number(s)));
@@ -676,6 +747,7 @@ ${generalSection}
 ${confrontoSection}
 ${finSection}
 ${bancabSection}
+${bancabDetailSection}
 ${repSection}
 <div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #1e3a5f;">
   ${agentNome ? `Pratica gestita da: <strong>${agentNome}</strong>${agentEmail ? ` — <a href="mailto:${agentEmail}" style="color:#2563eb;">${agentEmail}</a>` : ''}<br>` : ''}

@@ -248,7 +248,7 @@ export default function PraticaDetailPage() {
   };
 
   // ── STORICO EMAIL BANCHE ─────────────────────────────────────────────────
-  interface EmailLog { id: string; bank_nome?: string; destinatari?: string[]; cc?: string[]; oggetto?: string; stato: string; sent_by_nome?: string; created_at: string; }
+  interface EmailLog { id: string; bank_nome?: string; destinatari?: string[]; cc?: string[]; oggetto?: string; stato: string; sent_by_nome?: string; created_at: string; opened_at?: string | null; delivered_at?: string | null; }
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
   const [loadingEmailLog, setLoadingEmailLog] = useState(false);
 
@@ -1695,7 +1695,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="log">Storico Stati</TabsTrigger>
               <TabsTrigger value="note" onClick={loadNotes}>💬 Note {notes.length > 0 ? `(${notes.length})` : ''}</TabsTrigger>
               <TabsTrigger value="task" onClick={loadPracticeTasks}>✅ Task {practiceTasks.filter(t=>t.stato!=='completata').length > 0 ? `(${practiceTasks.filter(t=>t.stato!=='completata').length})` : ''}</TabsTrigger>
-              <TabsTrigger value="email-log" onClick={loadEmailLog}>📧 Email Inviate</TabsTrigger>
+              <TabsTrigger value="email-log" onClick={loadEmailLog}>📨 Storico</TabsTrigger>
               <TabsTrigger value="checklist" onClick={loadChecklist}>📋 Checklist {checklistItems.length > 0 ? `(${checklistItems.filter(i=>i.completata).length}/${checklistItems.length})` : ''}</TabsTrigger>
               <TabsTrigger value="estratto-conto">📊 Estratto Conto</TabsTrigger>
             </TabsList>
