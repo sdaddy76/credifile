@@ -2804,10 +2804,10 @@ export default function PraticaDetailPage() {
               })}
             </TabsContent>
 
-            {/* ── Tab Storico Email Inviate ── */}
+            {/* ── Tab Storico Invii Banca ── */}
             <TabsContent value="email-log" className="mt-3 space-y-3">
               <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-semibold flex items-center gap-1.5"><Mail className="w-4 h-4 text-blue-500"/>Storico Email Inviate alle Banche</h3>
+                <h3 className="text-sm font-semibold flex items-center gap-1.5"><Mail className="w-4 h-4 text-blue-500"/>Storico Invii Banca</h3>
                 <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={loadEmailLog} disabled={loadingEmailLog}>
                   <RefreshCw className={`w-3 h-3 ${loadingEmailLog ? 'animate-spin' : ''}`}/> Aggiorna
                 </Button>
@@ -2815,28 +2815,53 @@ export default function PraticaDetailPage() {
               {loadingEmailLog && <div className="flex justify-center py-6"><div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"/></div>}
               {!loadingEmailLog && emailLogs.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  <Mail className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessuna email inviata per questa pratica
+                  <Mail className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessun invio banca registrato per questa pratica
                 </div>
               )}
-              {emailLogs.map(log => (
-                <div key={log.id} className="rounded-lg border border-border p-3 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{log.bank_nome ?? 'Banca'}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{log.oggetto}</p>
-                    </div>
-                    <Badge className={`text-[10px] shrink-0 ${log.stato === 'inviata' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {log.stato}
-                    </Badge>
-                  </div>
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                    {log.destinatari && <span>A: {log.destinatari.join(', ')}</span>}
-                    {log.cc && log.cc.length > 0 && <span>CC: {log.cc.join(', ')}</span>}
-                    {log.sent_by_nome && <span>👤 {log.sent_by_nome}</span>}
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3"/>{new Date(log.created_at).toLocaleString('it-IT', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
-                  </div>
+              {!loadingEmailLog && emailLogs.length > 0 && (
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-xs text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">Data invio</th>
+                        <th className="px-3 py-2 text-left font-medium">Banca</th>
+                        <th className="px-3 py-2 text-left font-medium">Oggetto</th>
+                        <th className="px-3 py-2 text-left font-medium">Stato</th>
+                        <th className="px-3 py-2 text-left font-medium">Aperta il</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border bg-card">
+                      {emailLogs.map(log => {
+                        const statusClass = log.stato === 'consegnata' ? 'bg-emerald-100 text-emerald-800'
+                          : log.stato === 'aperta' ? 'bg-blue-100 text-blue-800'
+                          : log.stato === 'cliccata' ? 'bg-indigo-100 text-indigo-800'
+                          : log.stato === 'rimbalzata' || log.stato === 'spam' || log.stato === 'errore' ? 'bg-red-100 text-red-800'
+                          : 'bg-amber-100 text-amber-800';
+                        return (
+                          <tr key={log.id} className="align-top">
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                              {new Date(log.created_at).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
+                            </td>
+                            <td className="px-3 py-2 min-w-[150px]">
+                              <div className="font-medium text-foreground">{log.bank_nome ?? 'Banca'}</div>
+                              {log.destinatari && <div className="text-[11px] text-muted-foreground">A: {log.destinatari.join(', ')}</div>}
+                              {log.cc && log.cc.length > 0 && <div className="text-[11px] text-muted-foreground">CC: {log.cc.join(', ')}</div>}
+                            </td>
+                            <td className="px-3 py-2 min-w-[220px] text-xs text-muted-foreground">{log.oggetto ?? '—'}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              <Badge className={`text-[10px] ${statusClass}`}>{log.stato}</Badge>
+                              {log.delivered_at && <div className="mt-1 text-[11px] text-emerald-700">Consegnata: {new Date(log.delivered_at).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</div>}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                              {log.opened_at ? new Date(log.opened_at).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
+              )}
             </TabsContent>
 
             {/* ── CHECKLIST DOCUMENTALE ──────────────────────────────────── */}
