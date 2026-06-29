@@ -21,11 +21,21 @@ interface SubjectResult {
   nome: string; tipo: string; score: number;
   news: NewsItem[]; signals: Signal[]; newsRischio: NewsItem[];
   totalNewsFetched?: number;
+  cessato?: boolean;
+}
+interface AddressResult {
+  indirizzo: string;
+  signals: Signal[];
+  news: NewsItem[];
+  score_delta: number;
 }
 interface Risultati {
   societa: SubjectResult;
   amministratori: SubjectResult[];
   soci: SubjectResult[];
+  amm_cessati?: SubjectResult[];
+  soci_cessati?: SubjectResult[];
+  indirizzi?: AddressResult[];
   generato_il: string;
 }
 interface ExcludedSignal {
@@ -367,6 +377,158 @@ function SubjectCard({
   );
 }
 
+// ─── Card soggetto cessato (solo lettura, badge grigio) ──────────────────────
+function SubjectCardCessato({ result }: { result: SubjectResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const negSignals = result.signals.filter(s => s.weight < 0);
+  const posSignals = result.signals.filter(s => s.weight > 0);
+  const allNews    = result.news ?? [];
+  const badge      = scoreBadge(result.score);
+  const Icon       = result.tipo === 'socio' ? Users : User;
+  const tipoLabel  = result.tipo === 'amministratore' ? 'Amm. cessato' : 'Socio cessato';
+
+  const grouped: Record<string, Signal[]> = {};
+  for (const s of negSignals) {
+    if (!grouped[s.category]) grouped[s.category] = [];
+    if (!grouped[s.category].find(x => x.text === s.text)) grouped[s.category].push(s);
+  }
+
+  return (
+    <Card className="border border-slate-200 bg-slate-50/50 opacity-90">
+      <CardContent className="p-4">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 bg-slate-200">
+            <Icon className="w-4 h-4 text-slate-500" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-semibold text-sm text-slate-700">{result.nome}</p>
+              <span className="text-xs text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">{tipoLabel}</span>
+              <Badge className="text-xs bg-slate-200 text-slate-600">Cessato</Badge>
+              <Badge className={`text-xs ${badge.color} opacity-70`}>{badge.label}</Badge>
+              <span className="text-xs font-bold px-2 py-0.5 rounded border border-slate-300 text-slate-600">
+                {result.score}/100
+              </span>
+              {result.totalNewsFetched !== undefined && (
+                <span className="text-[10px] text-muted-foreground/60">
+                  {result.totalNewsFetched} fonti analizzate
+                </span>
+              )}
+            </div>
+
+            {negSignals.length > 0 && (
+              <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-[10px] font-semibold text-amber-700 mb-1.5">⚠️ Segnali rilevati (soggetto non più attivo — verifica manuale)</p>
+                <div className="space-y-1">
+                  {Object.entries(grouped).map(([cat, sigs]) => (
+                    <div key={cat} className="flex flex-wrap items-center gap-1">
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-full">{cat}</span>
+                      {sigs.map((s, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-200">
+                          <AlertTriangle className="w-3 h-3 text-amber-500" />
+                          {s.text}
+                          <span className="ml-0.5 font-bold text-amber-600">{s.weight}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {posSignals.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {posSignals.map((s, i) => <SignalBadge key={i} signal={s} />)}
+              </div>
+            )}
+
+            {negSignals.length === 0 && (
+              <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Nessun segnale rilevato per questo soggetto cessato
+              </p>
+            )}
+
+            {allNews.length > 0 && (
+              <div className="mt-2">
+                <button className="text-xs text-primary underline" onClick={() => setExpanded(e => !e)}>
+                  {expanded ? 'Nascondi notizie' : `Mostra ${allNews.length} notizie trovate`}
+                </button>
+                {expanded && (
+                  <div className="mt-2 space-y-2">
+                    {allNews.map((n, i) => (
+                      <div key={i} className="text-xs bg-muted/40 rounded p-2 space-y-0.5">
+                        <a href={n.link} target="_blank" rel="noopener noreferrer"
+                          className="font-medium text-primary hover:underline flex items-start gap-1 leading-tight">
+                          {n.title.substring(0, 110)}{n.title.length > 110 ? '…' : ''}
+                          <ExternalLink className="w-3 h-3 shrink-0 mt-0.5" />
+                        </a>
+                        {n.snippet && <p className="text-muted-foreground line-clamp-2">{n.snippet.substring(0, 160)}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Card analisi indirizzo ───────────────────────────────────────────────────
+function AddressCard({ result }: { result: AddressResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasSignals = result.signals.length > 0;
+
+  return (
+    <div className={`rounded-lg border p-3 ${hasSignals ? 'border-amber-300 bg-amber-50/40' : 'border-border bg-muted/20'}`}>
+      <div className="flex items-start gap-2">
+        <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${hasSignals ? 'text-amber-600' : 'text-muted-foreground'}`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-foreground truncate">{result.indirizzo}</p>
+          {hasSignals ? (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {result.signals.map((s, i) => (
+                <span key={i} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300">
+                  <AlertTriangle className="w-3 h-3" />
+                  {s.text}
+                  <span className="font-bold">{s.weight}</span>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-green-600 mt-0.5 flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Nessun evento negativo rilevato
+            </p>
+          )}
+          {result.news.length > 0 && (
+            <div className="mt-1.5">
+              <button className="text-xs text-primary underline" onClick={() => setExpanded(e => !e)}>
+                {expanded ? 'Nascondi fonti' : `${result.news.length} fonte${result.news.length > 1 ? 'i' : ''} trovata`}
+              </button>
+              {expanded && (
+                <div className="mt-1.5 space-y-1.5">
+                  {result.news.map((n, i) => (
+                    <div key={i} className="text-xs bg-white rounded p-2 border border-amber-200">
+                      <a href={n.link} target="_blank" rel="noopener noreferrer"
+                        className="font-medium text-primary hover:underline flex items-start gap-1">
+                        {n.title.substring(0, 100)}
+                        <ExternalLink className="w-3 h-3 shrink-0 mt-0.5" />
+                      </a>
+                      {n.snippet && <p className="text-muted-foreground mt-0.5 line-clamp-2">{n.snippet.substring(0, 150)}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Modale esclusione segnale ────────────────────────────────────────────────
 function ExcludeModal({
   signal,
@@ -675,7 +837,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
             <ShieldAlert className="w-4 h-4 text-primary" /> Analisi Reputazionale
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Ricerca su Google News + DuckDuckGo · 7 query parallele per soggetto · 9 categorie di rischio
+            Ricerca su Google News + DuckDuckGo · CF/PIVA come discriminatore · Soggetti cessati · Analisi indirizzi · 9 categorie di rischio
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -950,6 +1112,53 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
               />
             ))}
           </div>
+
+          {/* Soggetti cessati */}
+          {((r.amm_cessati ?? []).length > 0 || (r.soci_cessati ?? []).length > 0) && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Soggetti Cessati (storico visura)
+                </p>
+                <Badge className="text-[10px] bg-slate-200 text-slate-600">Solo informativo — non incide sullo score</Badge>
+              </div>
+              <div className="bg-slate-50/60 rounded-lg border border-slate-200 p-3 space-y-1.5">
+                <p className="text-[10px] text-muted-foreground flex items-center gap-1.5 mb-2">
+                  <Info className="w-3 h-3 shrink-0" />
+                  I segnali rilevati per soggetti non più attivi sono informativi. Valuta se pertinenti prima di avviare una nuova analisi aggiornata.
+                </p>
+                {(r.amm_cessati ?? []).map((a, i) => (
+                  <SubjectCardCessato key={`amm_cess_${i}`} result={a} />
+                ))}
+                {(r.soci_cessati ?? []).map((s, i) => (
+                  <SubjectCardCessato key={`soci_cess_${i}`} result={s} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Analisi indirizzi/sedi */}
+          {(r.indirizzi ?? []).length > 0 && (
+            <Card className="border-border/60">
+              <CardHeader className="pb-2 pt-3 px-4">
+                <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-indigo-500" />
+                  🏢 Analisi Indirizzi / Sedi
+                  <span className="ml-auto font-normal text-[10px] text-muted-foreground/60">
+                    Non modifica lo score globale · solo avvisi
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-3 space-y-2">
+                {(r.indirizzi ?? []).map((ind, i) => (
+                  <AddressCard key={i} result={ind} />
+                ))}
+                <p className="text-[10px] text-muted-foreground/50 pt-1">
+                  Ricerca eventi negativi (sequestri, attività abusive, blitz) associati agli indirizzi della società e delle sedi storiche.
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Footer */}
           <p className="text-[10px] text-muted-foreground/50 text-right">

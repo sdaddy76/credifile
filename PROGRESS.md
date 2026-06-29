@@ -135,3 +135,4 @@
 [2026-06-16 21:52] Deploy OK commit f946c22. Pagina pubblica /segnala aggiornata con 4 card (Dati Cliente, Visura, Altri Documenti, Note) + upload file via base64->Storage.
 [2026-06-16 21:52] Deploy f946c22 OK. SegnalazionePublicaPage riscritta con 4 card identiche a NuovaSegnalazionePage + upload file via base64 su Supabase Storage.
 [2026-06-17 10:00] Avvio: auto-detect visura camerale da uploaded_files + estrazione testo PDF con pdfjs-dist in ReputazioneTab
+[2026-06-29 16:57] Avvio miglioria analisi reputazionale: CF persone fisiche, storico soci/amm cessati, storico sedi con ricerca eventi negativi per indirizzo
