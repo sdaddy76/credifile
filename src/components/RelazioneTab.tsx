@@ -101,6 +101,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [compilingAi, setCompilingAi] = useState(false);
 
   const activeRelazione = useMemo(
     () => relazioni.find(r => r.id === activeRelazioneId) ?? relazioni[0] ?? null,
@@ -201,6 +202,27 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   };
 
   const setAnswer = (id: string, value: string | null) => setAnswers(prev => ({ ...prev, [id]: value }));
+
+  const compilaConAI = async () => {
+    if (!activeRelazione || !activeTemplate) return toast.error('Crea o seleziona una relazione prima di usare l’AI');
+    setCompilingAi(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('genera-relazione-ai', {
+        body: { practice_id: practiceId }
+      });
+      if (error) throw error;
+      if (data?.answers) {
+        setAnswers(prev => ({ ...prev, ...data.answers }));
+        toast.success('Relazione compilata con AI! Verifica e completa le sezioni mancanti.');
+      } else {
+        toast.error(data?.error ?? 'Nessuna risposta AI ricevuta');
+      }
+    } catch (e: any) {
+      toast.error('Errore compilazione AI: ' + (e.message ?? e));
+    } finally {
+      setCompilingAi(false);
+    }
+  };
 
   const handleDeleteRelazione = async (id: string) => {
     if (!window.confirm('Eliminare questa relazione commerciale?')) return;
@@ -421,6 +443,12 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                     {activeRelazione.docx_url && <Button size="sm" variant="outline" onClick={() => downloadGenerated(activeRelazione.docx_url)}><Download className="w-4 h-4 mr-1" />DOCX</Button>}
                     {activeRelazione.pdf_url && <Button size="sm" variant="outline" onClick={() => downloadGenerated(activeRelazione.pdf_url)}><Download className="w-4 h-4 mr-1" />PDF</Button>}
                     {canEdit && <Button size="sm" variant="outline" onClick={() => saveDraft()} disabled={saving}><Save className="w-4 h-4 mr-1" />Salva</Button>}
+                    {canEdit && activeTemplate && (
+                      <Button size="sm" variant="outline" onClick={compilaConAI} disabled={compilingAi} className="gap-2 border-purple-200 text-purple-700 hover:bg-purple-50">
+                        {compilingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>🤖</span>}
+                        {compilingAi ? 'Analisi in corso...' : 'Compila con AI'}
+                      </Button>
+                    )}
                     {canEdit && <Button size="sm" onClick={generaDocumento} disabled={generating}>{generating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileText className="w-4 h-4 mr-1" />}Genera DOCX + PDF</Button>}
                   </div>
                 </div>

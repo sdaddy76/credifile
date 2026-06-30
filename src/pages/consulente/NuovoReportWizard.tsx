@@ -6,12 +6,14 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { generateReportPdf } from '@/lib/generateReportPdf';
+import jsPDF from 'jspdf';
+import { Document, Paragraph, TextRun, HeadingLevel, Packer } from 'docx';
 import { parseCentraleRischi } from '@/lib/parseCentraleRischi';
 import type { KpiScore, AiSuggerimento, ReportData, FinanziamentoItem } from '@/lib/generateReportPdf';
 import {
   Upload, CheckCircle, Loader2, ArrowLeft, ArrowRight,
   FileText, BarChart2, Brain, Send, Download, ShieldCheck, Clock, Mail,
-  PlusCircle, Trash2, Banknote,
+  PlusCircle, Trash2, Banknote, Save,
 } from 'lucide-react';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -86,6 +88,84 @@ function calcScore(v: number, ottimo: number, suff: number, critica: number, inv
 
 const TIPI_FINANZIAMENTO = ['Mutuo','Leasing','Apertura credito','Factoring','Finanziamento chirografario','Altro'];
 
+
+type RelazioneAnswers = Record<string, string>;
+
+type RelazioneDomanda = { id: string; testo: string; tipo: 'text' | 'textarea'; obbligatoria?: boolean };
+type RelazioneSezione = { id: string; titolo: string; domande: RelazioneDomanda[] };
+
+const RELAZIONE_SEZIONI: RelazioneSezione[] = [
+  { id: 'presentazione_azienda', titolo: 'Presentazione Azienda', domande: [
+    { id: 'presentazione_storia', tipo: 'textarea', testo: 'Sintesi della storia imprenditoriale e dei soci/amministratori. Indicare chi ha funzioni chiave nel business.' },
+    { id: 'presentazione_continuita', tipo: 'textarea', testo: 'Eventuale presenza in azienda della famiglia per continuità aziendale. Temi successori.' },
+    { id: 'presentazione_trasformazioni', tipo: 'textarea', testo: 'Eventuali trasformazioni societarie avvenute nella storia della società.' },
+    { id: 'presentazione_attivita', tipo: 'textarea', testo: 'Precisa descrizione dell’attività svolta, prodotti, mercati/settori di sbocco e clienti di riferimento.' },
+    { id: 'presentazione_competitors', tipo: 'textarea', testo: 'Principali competitors e vantaggi competitivi dell’azienda.' },
+  ]},
+  { id: 'analisi_reputazionale', titolo: 'Analisi Qualitativa / Reputazionale', domande: [
+    { id: 'rep_compagine', tipo: 'textarea', testo: 'La società è stata costituita dagli attuali soci o si rileva un cambio nella compagine societaria?' },
+    { id: 'rep_precedente', tipo: 'textarea', testo: 'L’attuale attività è stata rilevata da una società precedente? Come andava? Eventuali fallimenti/concordati?' },
+    { id: 'rep_acquisizioni', tipo: 'textarea', testo: 'La società ha mai acquisito/affittato rami d’azienda di altre società?' },
+    { id: 'rep_quote_terze', tipo: 'textarea', testo: 'Quote dirette o indirette in società terze riconducibili ai soci. Fatturato e rapporti con la richiedente.' },
+    { id: 'rep_conservatorie', tipo: 'textarea', testo: 'Eventuali eventi di conservatoria sulle persone fisiche legate alla società.' },
+    { id: 'rep_collegate', tipo: 'textarea', testo: 'Le società collegate/controllate sono attive? Problematiche relative a liquidazioni o procedure?' },
+    { id: 'rep_negativita', tipo: 'textarea', testo: 'Analisi reputazionale soci/amministratori. Pregiudizievoli, decreti ingiuntivi, protesti, procedure concorsuali.' },
+    { id: 'rep_gruppo', tipo: 'textarea', testo: 'Eventuale presenza di gruppo giuridico/economico. Altre società degli stessi UBO (es. immobiliare di famiglia).' },
+  ]},
+  { id: 'clienti_mercati', titolo: 'Clienti e Mercati', domande: [
+    { id: 'clienti_descrizione', tipo: 'textarea', testo: 'Descrizione clienti, concentrazioni con % rilevante (dal 10% in su), modalità e tempi di incasso.' },
+    { id: 'clienti_settori', tipo: 'textarea', testo: 'Principali settori serviti. Per aziende su commessa: portafoglio ordini.' },
+    { id: 'clienti_export', tipo: 'textarea', testo: '% export e Paesi con indicazione % dei più rilevanti (dal 10% in su).' },
+  ]},
+  { id: 'fornitori', titolo: 'Fornitori', domande: [
+    { id: 'fornitori_concentrazioni', tipo: 'textarea', testo: 'Concentrazioni rilevanti lato fornitori (dal 10% in su). Dipendenza da materie prime specifiche.' },
+    { id: 'fornitori_pagamento', tipo: 'textarea', testo: 'Modalità e tempi medi di pagamento fornitori.' },
+    { id: 'fornitori_import', tipo: 'textarea', testo: '% quota import con indicazione Paesi principali.' },
+  ]},
+  { id: 'finalita_operazione', titolo: 'Finalità dell’Operazione', domande: [
+    { id: 'finalita_descrizione', tipo: 'textarea', testo: 'Descrizione precisa della finalità (liquidità/investimento). Se investimento: importo totale, parte finanziata, copertura.' },
+    { id: 'finalita_vantaggio', tipo: 'textarea', testo: 'Descrizione del vantaggio dell’investimento e volumi/redditività attesi.' },
+    { id: 'finalita_coerenza', tipo: 'textarea', testo: 'L’investimento è coerente con il piano di crescita? Capacità di generazione di cassa per il servizio del debito?' },
+    { id: 'finalita_commissioni', tipo: 'text', testo: 'Commissioni di mediazione applicate (% e importo €).' },
+  ]},
+  { id: 'aspetti_bilancio', titolo: 'Aspetti Rilevanti di Bilancio', domande: [
+    { id: 'bilancio_analisi', tipo: 'textarea', testo: 'Breve analisi dell’ultimo bilancio. Voci più significative e variazioni di fatturato nell’ultimo triennio.' },
+    { id: 'bilancio_sede', tipo: 'text', testo: 'La sede produttiva/commerciale è di proprietà, in leasing o in affitto?' },
+    { id: 'bilancio_crediti_debiti', tipo: 'textarea', testo: 'In caso di bilancio abbreviato: dettaglio delle voci di crediti e debiti.' },
+  ]},
+  { id: 'eventi_straordinari', titolo: 'Eventi Straordinari', domande: [
+    { id: 'straordinari_operazioni', tipo: 'textarea', testo: 'Eventuali operazioni straordinarie sul capitale o modifiche societarie previste dalla proprietà.' },
+    { id: 'straordinari_investimenti', tipo: 'textarea', testo: 'Eventuali futuri investimenti di rilievo (immobili, impianti) con modalità di finanziamento.' },
+  ]},
+  { id: 'impegni_finanziari_tributari', titolo: 'Impegni Finanziari e Tributari', domande: [
+    { id: 'finanziario_impegni', tipo: 'textarea', testo: 'Voci significative a livello di impegni finanziari: prestiti obbligazionari soci, finanziamenti soci, crediti/debiti tributari.' },
+    { id: 'finanziario_tributario', tipo: 'textarea', testo: 'Debiti tributari: accertamenti, rateizzazioni in essere, situazione con l’Agenzia delle Entrate.' },
+    { id: 'finanziario_banche', tipo: 'textarea', testo: 'Dettaglio banche e affidamenti in essere: fidi a breve e medio-lungo termine, garanzie rilasciate.' },
+  ]},
+  { id: 'note_visita', titolo: 'Note Relative alla Visita', domande: [
+    { id: 'visita_sede', tipo: 'textarea', testo: 'Indicazione sintetica della sede: dove si trova, se produzione e commerciale sono nello stesso posto, sedi secondarie.' },
+    { id: 'visita_stato_immobile', tipo: 'textarea', testo: 'Stato dell’immobile o delle unità immobiliari.' },
+    { id: 'visita_logistica', tipo: 'textarea', testo: 'Situazione logistica. Zone industriali, snodi stradali/ferroviari.' },
+    { id: 'visita_disponibilita', tipo: 'text', testo: 'Disponibilità dell’imprenditore a fornire informazioni.' },
+  ]},
+  { id: 'esperienza_pregressa', titolo: 'Esperienza Pregressa con il Cliente', domande: [
+    { id: 'pregressa_contatti', tipo: 'textarea', testo: 'Eventuali contatti precedenti con il mediatore e/o la banca. Richieste pregresse ed esito.' },
+    { id: 'pregressa_erogati', tipo: 'textarea', testo: 'Finanziamenti già erogati: se ancora in essere o chiusi, andamentale.' },
+  ]},
+  { id: 'foto_aziendali', titolo: 'Foto Aziendali (opzionale)', domande: [
+    { id: 'foto_note', tipo: 'textarea', testo: 'Note sulle foto aziendali allegate. Descrivere brevemente cosa mostrano (NO foto da siti web).' },
+  ]},
+];
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function NuovoReportWizard() {
   const { clientId } = useParams<{ clientId: string }>();
   const { user, profileNome } = useAuth();
@@ -143,6 +223,14 @@ export default function NuovoReportWizard() {
   const [sending,     setSending]     = useState(false);
   const [reportSaved, setReportSaved] = useState(false);
   const [reportId,    setReportId]    = useState<string | null>(null);
+
+  // Step 6: relazione commerciale opzionale
+  const [bilancioTestoRelazione, setBilancioTestoRelazione] = useState('');
+  const [crTestoRelazione, setCrTestoRelazione] = useState('');
+  const [relazioneLoading, setRelazioneLoading] = useState(false);
+  const [relazioneAnswers, setRelazioneAnswers] = useState<RelazioneAnswers>({});
+  const [relazionePdfBlob, setRelazionePdfBlob] = useState<Blob | null>(null);
+  const [relazioneDocxBlob, setRelazioneDocxBlob] = useState<Blob | null>(null);
 
   // Carica info cliente
   const [client, setClient] = useState<{
@@ -227,6 +315,8 @@ export default function NuovoReportWizard() {
         bilancioTesto = await bilancioFile.text();
       }
 
+      setBilancioTestoRelazione(bilancioTesto);
+
       const { data, error } = await supabase.functions.invoke('analizza-bilancio', {
         body: { bilancio_testo: bilancioTesto }
       });
@@ -249,6 +339,7 @@ export default function NuovoReportWizard() {
         return;
       }
 
+      setCrTestoRelazione(testo);
       const crResult = parseCentraleRischi(testo);
       const finanziamentiCR: FinanziamentoItem[] = crResult.righe
         .filter(riga => riga.utilizzato > 0)
@@ -454,10 +545,102 @@ export default function NuovoReportWizard() {
     } finally { setSending(false); }
   };
 
+
+  const updateRelazioneAnswer = (id: string, value: string) => {
+    setRelazioneAnswers(prev => ({ ...prev, [id]: value }));
+    setRelazionePdfBlob(null);
+    setRelazioneDocxBlob(null);
+  };
+
+  const generaRelazioneAI = async () => {
+    setRelazioneLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('genera-relazione-ai', {
+        body: {
+          consulente_mode: true,
+          ragione_sociale: ragSociale || client?.ragione_sociale,
+          piva: client?.partita_iva ?? undefined,
+          ateco: client?.codice_ateco ?? undefined,
+          importo: undefined,
+          finalita: undefined,
+          kpi_scores: kpiScores,
+          finanziamenti: finanziamenti.filter(f => f.istituto.trim() !== ''),
+          bilancio_testo: bilancioTestoRelazione,
+          cr_testo: crTestoRelazione,
+        }
+      });
+      if (error) throw error;
+      if (data?.answers) {
+        setRelazioneAnswers(data.answers as RelazioneAnswers);
+        toast.success('Relazione commerciale compilata con AI. Controlla e integra le risposte prima di scaricare.');
+      } else {
+        toast.error(data?.error ?? 'Nessuna risposta AI ricevuta');
+      }
+    } catch (error: any) {
+      toast.error(`Errore generazione relazione: ${error.message ?? error}`);
+    } finally {
+      setRelazioneLoading(false);
+    }
+  };
+
+  const buildRelazioneDocx = async () => {
+    const children: any[] = [
+      new Paragraph({ text: 'RELAZIONE COMMERCIALE', heading: HeadingLevel.TITLE }),
+      new Paragraph({ children: [new TextRun({ text: `${ragSociale || client?.ragione_sociale || 'Cliente'} — ${new Date().toLocaleDateString('it-IT')}`, italics: true })] }),
+    ];
+    RELAZIONE_SEZIONI.forEach(section => {
+      children.push(new Paragraph({ text: section.titolo, heading: HeadingLevel.HEADING_1 }));
+      section.domande.forEach(q => {
+        children.push(new Paragraph({ text: q.testo, heading: HeadingLevel.HEADING_2 }));
+        children.push(new Paragraph({ children: [new TextRun(relazioneAnswers[q.id]?.trim() || 'Non fornito')] }));
+      });
+    });
+    return Packer.toBlob(new Document({ sections: [{ properties: {}, children }] }));
+  };
+
+  const buildRelazionePdf = () => {
+    const doc = new jsPDF();
+    let y = 18;
+    const addPageIfNeeded = (needed = 10) => { if (y + needed > 280) { doc.addPage(); y = 18; } };
+    const addText = (text: string, size = 10, bold = false) => {
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.setFontSize(size);
+      const lines = doc.splitTextToSize(text || ' ', 180);
+      addPageIfNeeded(lines.length * 5 + 4);
+      doc.text(lines, 15, y);
+      y += lines.length * 5 + 3;
+    };
+    addText('RELAZIONE COMMERCIALE', 17, true);
+    addText(`${ragSociale || client?.ragione_sociale || 'Cliente'} — ${new Date().toLocaleDateString('it-IT')}`, 10);
+    RELAZIONE_SEZIONI.forEach(section => {
+      addText(section.titolo, 14, true);
+      section.domande.forEach(q => {
+        addText(q.testo, 11, true);
+        addText(relazioneAnswers[q.id]?.trim() || 'Non fornito', 10);
+      });
+    });
+    return doc.output('blob');
+  };
+
+  const preparaDownloadRelazione = async () => {
+    const docx = await buildRelazioneDocx();
+    const pdf = buildRelazionePdf();
+    setRelazioneDocxBlob(docx);
+    setRelazionePdfBlob(pdf);
+    if (user && reportId) {
+      await supabase.from('relazioni_commerciali').insert({
+        consulente_report_id: reportId,
+        status: 'generata',
+        risposte: relazioneAnswers,
+      });
+    }
+    toast.success('Relazione pronta per il download');
+  };
+
   // ── STEPS UI ─────────────────────────────────────────────────────────
-  // step numerico: 0-1-2-2.5-3-4-5 → mappa su indice stepper 0-6
+  // step numerico: 0-1-2-2.5-3-4-5-6 → mappa su indice stepper 0-7
   const stepperIndex = step === (2.5 as never) ? 3 : step > 2 ? (step as number) + 1 : step as number;
-  const steps = ['Dati cliente', 'Consenso CR', 'Bilancio XBRL', 'Finanziamenti', 'Score KPI', 'AI', 'Report'];
+  const steps = ['Dati cliente', 'Consenso CR', 'Bilancio XBRL/PDF', 'Finanziamenti', 'Score KPI', 'AI', 'Report', 'Relazione'];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50/40 to-slate-50">
@@ -848,6 +1031,9 @@ export default function NuovoReportWizard() {
                 <Button className="w-full" variant="outline" onClick={scaricaPdf}>
                   <Download className="w-4 h-4 mr-2" /> Scarica PDF
                 </Button>
+                <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => setStep(6)}>
+                  📄 Relazione Commerciale opzionale <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
                 <div className="border-t pt-4 space-y-2">
                   <label className="text-xs font-semibold text-slate-600">Invia via email a:</label>
                   <div className="flex gap-2">
@@ -866,6 +1052,74 @@ export default function NuovoReportWizard() {
             {!pdfBlob && (
               <Button variant="outline" onClick={() => setStep(4)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
             )}
+          </div>
+        )}
+
+
+        {/* ── STEP 6: Relazione Commerciale opzionale ── */}
+        {step === 6 && (
+          <div className="bg-white rounded-xl border p-6 space-y-4">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><FileText className="w-4 h-4 text-purple-600" /> Relazione Commerciale (opzionale)</h2>
+            <p className="text-sm text-slate-500">
+              Genera una relazione commerciale professionale da allegare al report o da inviare alla banca. L’AI compilerà automaticamente le sezioni dai dati elaborati.
+            </p>
+            <div className="rounded-xl border border-purple-200 bg-purple-50 p-4 text-xs text-purple-800 space-y-1">
+              <p><strong>Output:</strong> PDF e DOCX scaricabili dal consulente.</p>
+              <p><strong>Foto aziendale:</strong> sezione opzionale; usare solo foto fornite dall’azienda, non immagini prese da siti web.</p>
+            </div>
+
+            {Object.keys(relazioneAnswers).length === 0 ? (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button className="flex-1 bg-purple-600 hover:bg-purple-700" onClick={generaRelazioneAI} disabled={relazioneLoading}>
+                  {relazioneLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analisi in corso...</> : '🤖 Genera con AI'}
+                </Button>
+                <Button variant="outline" className="flex-1" onClick={() => navigate('/consulente')}>Salta</Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                  {RELAZIONE_SEZIONI.map(section => (
+                    <details key={section.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3" open={section.id === 'presentazione_azienda'}>
+                      <summary className="cursor-pointer text-sm font-bold text-slate-800">{section.titolo}</summary>
+                      <div className="mt-3 space-y-3">
+                        {section.domande.map(q => (
+                          <div key={q.id}>
+                            <label className="text-xs font-semibold text-slate-600">{q.testo}</label>
+                            {q.tipo === 'textarea' ? (
+                              <textarea className="mt-1 min-h-[92px] w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                                value={relazioneAnswers[q.id] ?? ''} onChange={e => updateRelazioneAnswer(q.id, e.target.value)} />
+                            ) : (
+                              <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                                value={relazioneAnswers[q.id] ?? ''} onChange={e => updateRelazioneAnswer(q.id, e.target.value)} />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <Button variant="outline" onClick={preparaDownloadRelazione}>
+                    <Save className="w-4 h-4 mr-2" /> Prepara PDF + DOCX
+                  </Button>
+                  <Button variant="outline" onClick={generaRelazioneAI} disabled={relazioneLoading}>
+                    {relazioneLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Brain className="w-4 h-4 mr-2" />} Rigenera con AI
+                  </Button>
+                  <Button disabled={!relazionePdfBlob} onClick={() => relazionePdfBlob && downloadBlob(relazionePdfBlob, `Relazione_Commerciale_${(ragSociale || 'Cliente').replace(/\s+/g, '_')}.pdf`)}>
+                    <Download className="w-4 h-4 mr-2" /> Scarica PDF Relazione
+                  </Button>
+                  <Button disabled={!relazioneDocxBlob} onClick={() => relazioneDocxBlob && downloadBlob(relazioneDocxBlob, `Relazione_Commerciale_${(ragSociale || 'Cliente').replace(/\s+/g, '_')}.docx`)}>
+                    <Download className="w-4 h-4 mr-2" /> Scarica DOCX
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" onClick={() => setStep(5)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
+              <Button variant="outline" className="flex-1" onClick={() => navigate('/consulente')}>Fine</Button>
+            </div>
           </div>
         )}
       </div>
