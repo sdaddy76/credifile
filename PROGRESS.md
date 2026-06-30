@@ -140,3 +140,4 @@
 [2026-06-29 17:35] Avvio report consulente potenziato: logo Credifile+consulente, 14 KPI, benchmark settore con commento, bancabilità dettagliata, finanziamenti in essere + cron aggiornamento mensile benchmark
 [2026-06-29 17:45] Report consulente potenziato completato (commit e9f76cb): PDF 5 pagine A4, logo Credifile+consulente, 7 KPI vs benchmark settore, commento settore, badge bancabilità, finanziamenti in essere. Tabella sector_benchmarks creata + Edge Function update-sector-benchmarks deployata su Supabase.
 [2026-06-29 21:41] Avvio fix sezione consulente: consenso visible in lista clienti + sblocco bilancio post-autorizzazione + accettazione PDF bilancio oltre XBRL
+[2026-06-29 21:49] Fix sezione consulente completato (commit 99887fd): badge CR autorizzato/in attesa/rifiutato in lista clienti, pulsante Nuovo Report verde se autorizzato, bilancio accetta PDF+XBRL con parser pdfjs, branch consulente in analizza-bilancio senza practice_id. Deploy Vercel OK.

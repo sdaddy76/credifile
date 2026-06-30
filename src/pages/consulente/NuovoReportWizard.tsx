@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { generateReportPdf } from '@/lib/generateReportPdf';
+import { parseCentraleRischi } from '@/lib/parseCentraleRischi';
 import type { KpiScore, AiSuggerimento, ReportData, FinanziamentoItem } from '@/lib/generateReportPdf';
 import {
   Upload, CheckCircle, Loader2, ArrowLeft, ArrowRight,
@@ -110,6 +111,8 @@ export default function NuovoReportWizard() {
   const [ragSociale,   setRagSociale]     = useState('');
 
   // Step 2.5: Finanziamenti
+  const crFileInputRef = useRef<HTMLInputElement>(null);
+  const [importandoCR, setImportandoCR] = useState(false);
   const [finanziamenti, setFinanziamenti] = useState<FinanziamentoItem[]>([]);
   const addFinanziamento = () => setFinanziamenti(prev => [...prev, { istituto: '', tipo: 'Mutuo', importo_residuo: 0, rata_mensile: null, scadenza: null, fonte: 'dichiarato' }]);
   const removeFinanziamento = (i: number) => setFinanziamenti(prev => prev.filter((_, idx) => idx !== i));
@@ -236,7 +239,52 @@ export default function NuovoReportWizard() {
     } finally { setAnalyzingBil(false); }
   };
 
-  // ── STEP 2.5: gestione step numerazione ─────────────────────────────
+  // ── STEP 2.5: gestione finanziamenti ────────────────────────────────
+  const importaDaCR = async (file: File) => {
+    setImportandoCR(true);
+    try {
+      const testo = await extractPdfTextWizard(file);
+      if (testo.trim().length < 100) {
+        toast.error('PDF Centrale Rischi non leggibile o scansionato');
+        return;
+      }
+
+      const crResult = parseCentraleRischi(testo);
+      const finanziamentiCR: FinanziamentoItem[] = crResult.righe
+        .filter(riga => riga.utilizzato > 0)
+        .map(riga => {
+          const categoria = (riga.categoria ?? '').toLowerCase();
+          const tipo = categoria.includes('leasing')
+            ? 'Leasing'
+            : categoria.includes('mutuo') || categoria.includes('scadenza')
+              ? 'Mutuo'
+              : 'Apertura credito';
+
+          return {
+            istituto: riga.banca,
+            tipo,
+            importo_residuo: riga.utilizzato,
+            rata_mensile: null,
+            scadenza: null,
+            fonte: 'centrale_rischi',
+          };
+        });
+
+      setFinanziamenti(prev => {
+        const importedInstitutes = new Set(finanziamentiCR.map(f => f.istituto.trim().toLowerCase()));
+        const keepExisting = prev.filter(f => f.fonte !== 'centrale_rischi' || !importedInstitutes.has(f.istituto.trim().toLowerCase()));
+        return [...keepExisting, ...finanziamentiCR];
+      });
+
+      toast.success(`Importati ${finanziamentiCR.length} finanziamenti dalla Centrale Rischi`);
+    } catch (error) {
+      console.error('Errore import Centrale Rischi', error);
+      toast.error('Errore durante l’importazione della Centrale Rischi');
+    } finally {
+      setImportandoCR(false);
+    }
+  };
+
   const stepFinanziamentiNext = () => {
     if (kpiResult) computeScores(kpiResult);
     setStep(3);
@@ -581,6 +629,39 @@ export default function NuovoReportWizard() {
               Questi dati verranno inclusi nel report finale e usati per calcolare il DSCR.
             </p>
 
+            <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-4 space-y-3">
+              <div>
+                <p className="text-sm font-bold text-teal-900">📄 Importa da Centrale Rischi</p>
+                <p className="text-xs text-teal-700 mt-1">
+                  Carica il PDF della CR per importare automaticamente i finanziamenti in essere.
+                </p>
+              </div>
+              <input
+                ref={crFileInputRef}
+                type="file"
+                accept=".pdf"
+                className="hidden"
+                onChange={async e => {
+                  const file = e.target.files?.[0] ?? null;
+                  e.target.value = '';
+                  if (file) await importaDaCR(file);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="border-teal-300 text-teal-700 hover:bg-teal-100"
+                onClick={() => crFileInputRef.current?.click()}
+                disabled={importandoCR}
+              >
+                {importandoCR ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analisi CR in corso...</>
+                ) : (
+                  <>🔄 Importa Centrale Rischi (PDF)</>
+                )}
+              </Button>
+            </div>
+
             {finanziamenti.length === 0 && (
               <div className="border border-dashed border-slate-200 rounded-xl p-4 text-center text-sm text-slate-400">
                 Nessun finanziamento inserito. Aggiungine uno o passa allo step successivo se non ci sono finanziamenti.
@@ -591,7 +672,14 @@ export default function NuovoReportWizard() {
               {finanziamenti.map((f, i) => (
                 <div key={i} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-teal-700">Finanziamento #{i + 1}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-teal-700">Finanziamento #{i + 1}</span>
+                      {f.fonte === 'centrale_rischi' ? (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">📊 CR</span>
+                      ) : (
+                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600">✏️ Dichiarato</span>
+                      )}
+                    </div>
                     <Button variant="ghost" size="sm" className="text-red-400 hover:text-red-600 h-7 w-7 p-0" onClick={() => removeFinanziamento(i)}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
