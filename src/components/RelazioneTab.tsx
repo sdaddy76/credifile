@@ -181,21 +181,37 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     }
   };
 
+  const saveDraftWithAnswers = async (answersToSave: Record<string, string | null>, silent = true) => {
+    if (!activeRelazione) return;
+    const updatedAt = new Date().toISOString();
+    try {
+      const { error } = await supabase
+        .from('relazioni_commerciali')
+        .update({
+          risposte: answersToSave,
+          updated_at: updatedAt,
+          status: activeRelazione.status === 'generata' ? 'generata' : 'bozza',
+        })
+        .eq('id', activeRelazione.id);
+      if (error) throw error;
+      setRelazioni(prev => prev.map(r =>
+        r.id === activeRelazione.id
+          ? { ...r, risposte: answersToSave, updated_at: updatedAt }
+          : r
+      ));
+      if (!silent) toast.success('Bozza salvata');
+    } catch (error: any) {
+      console.error('Errore salvataggio draft AI:', error);
+      if (!silent) toast.error(`Errore salvataggio: ${error.message ?? error}`);
+      throw error;
+    }
+  };
+
   const saveDraft = async (silent = false) => {
     if (!activeRelazione) return;
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from('relazioni_commerciali')
-        .update({ risposte: answers, updated_at: new Date().toISOString(), status: activeRelazione.status === 'generata' ? 'generata' : 'bozza' })
-        .eq('id', activeRelazione.id);
-      if (error) throw error;
-      setRelazioni(prev => prev.map(r => r.id === activeRelazione.id ? { ...r, risposte: answers, updated_at: new Date().toISOString() } : r));
-      if (!silent) toast.success('Bozza salvata');
-    } catch (error: any) {
-      console.error(error);
-      toast.error(`Errore salvataggio: ${error.message ?? error}`);
-      throw error;
+      await saveDraftWithAnswers(answers, silent);
     } finally {
       setSaving(false);
     }
@@ -211,8 +227,22 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         body: { practice_id: practiceId }
       });
       if (error) throw error;
-      if (data?.answers) {
-        setAnswers(prev => ({ ...prev, ...data.answers }));
+      if (data?.answers && typeof data.answers === 'object') {
+        console.log('[AI] answers ricevute:', Object.keys(data.answers).length, 'campi');
+        console.log('[AI] primo campo:', Object.entries(data.answers)[0]);
+        const normalizedAnswers = Object.entries(data.answers).reduce<Record<string, string | null>>((acc, [key, value]) => {
+          if (value === null || value === undefined) {
+            acc[key] = null;
+          } else if (typeof value === 'string') {
+            acc[key] = value;
+          } else {
+            acc[key] = JSON.stringify(value);
+          }
+          return acc;
+        }, {});
+        const newAnswers = { ...answers, ...normalizedAnswers };
+        setAnswers(newAnswers);
+        await saveDraftWithAnswers(newAnswers);
         toast.success('Relazione compilata con AI! Verifica e completa le sezioni mancanti.');
       } else {
         toast.error(data?.error ?? 'Nessuna risposta AI ricevuta');
@@ -248,7 +278,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   };
 
   /* @section: relazione-commerciale-documents */
-  const buildDocChildren = (template: RelazioneTemplate) => {
+  const buildDocChildren = (template: RelazioneTemplate, answersSnapshot = answers) => {
     const rows = [
       ['Richiedente', autoData.ragione_sociale || 'N/D'],
       ['CF/PIVA', `${autoData.cf || 'N/D'} / ${autoData.piva || 'N/D'}`],
@@ -267,7 +297,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     template.sezioni.forEach(section => {
       children.push(new Paragraph({ text: section.titolo, heading: HeadingLevel.HEADING_1 }));
       section.domande.forEach(question => {
-        const raw = answers[question.id];
+        const raw = answersSnapshot[question.id];
         if (raw === NA_VALUE) return;
         const value = typeof raw === 'string' && raw.trim() ? raw.trim() : 'Non fornito';
         children.push(new Paragraph({ text: question.testo, heading: HeadingLevel.HEADING_2 }));
@@ -277,7 +307,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     return children;
   };
 
-  const generatePdfBlob = (template: RelazioneTemplate) => {
+  const generatePdfBlob = (template: RelazioneTemplate, answersSnapshot = answers) => {
     const doc = new jsPDF();
     const header = `${autoData.ragione_sociale || 'N/D'} — ${template.nome}`;
     let y = 18;
@@ -312,7 +342,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     template.sezioni.forEach(section => {
       addText(section.titolo, 14, true);
       section.domande.forEach(question => {
-        const raw = answers[question.id];
+        const raw = answersSnapshot[question.id];
         if (raw === NA_VALUE) return;
         const value = typeof raw === 'string' && raw.trim() ? raw.trim() : 'Non fornito';
         addText(question.testo, 12, true);
@@ -326,10 +356,11 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     if (!activeRelazione || !activeTemplate) return;
     setGenerating(true);
     try {
-      await saveDraft(true);
-      const doc = new Document({ sections: [{ properties: {}, children: buildDocChildren(activeTemplate) }] });
+      const answersToGenerate = { ...answers };
+      await saveDraftWithAnswers(answersToGenerate);
+      const doc = new Document({ sections: [{ properties: {}, children: buildDocChildren(activeTemplate, answersToGenerate) }] });
       const docxBlob = await Packer.toBlob(doc);
-      const pdfBlob = generatePdfBlob(activeTemplate);
+      const pdfBlob = generatePdfBlob(activeTemplate, answersToGenerate);
       const basePath = `${practiceId}/relazioni/${activeRelazione.id}`;
       const docxPath = `${basePath}/relazione.docx`;
       const pdfPath = `${basePath}/relazione.pdf`;
@@ -346,10 +377,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       if (pdfErr) throw pdfErr;
       const { error: updErr } = await supabase
         .from('relazioni_commerciali')
-        .update({ docx_url: docxPath, pdf_url: pdfPath, status: 'generata', updated_at: new Date().toISOString(), risposte: answers })
+        .update({ docx_url: docxPath, pdf_url: pdfPath, status: 'generata', updated_at: new Date().toISOString(), risposte: answersToGenerate })
         .eq('id', activeRelazione.id);
       if (updErr) throw updErr;
-      setRelazioni(prev => prev.map(r => r.id === activeRelazione.id ? { ...r, docx_url: docxPath, pdf_url: pdfPath, status: 'generata', risposte: answers } : r));
+      setRelazioni(prev => prev.map(r => r.id === activeRelazione.id ? { ...r, docx_url: docxPath, pdf_url: pdfPath, status: 'generata', risposte: answersToGenerate } : r));
       toast.success('DOCX e PDF generati');
     } catch (error: any) {
       console.error(error);
