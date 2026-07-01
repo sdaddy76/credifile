@@ -1,3 +1,5 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -13,7 +15,7 @@ const QUESTION_IDS = [
 ];
 
 type BodyInput = {
-  practice_id?: string;
+  practice_id?: string | null;
   consulente_mode?: boolean;
   ragione_sociale?: string;
   piva?: string;
@@ -22,14 +24,17 @@ type BodyInput = {
   durata?: number;
   finalita?: string;
   kpi_scores?: unknown;
-  finanziamenti?: Array<{ istituto: string; tipo: string; importo_residuo: number; rata_mensile?: number; scadenza?: string }>;
+  finanziamenti?: Array<Record<string, unknown>>;
   bilancio_testo?: string;
   cr_testo?: string;
   reputazione_json?: string;
   visura_json?: string;
 };
 
-const ok = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  status,
+  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+});
 
 function clip(value: unknown, max = 6000) {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
@@ -54,110 +59,206 @@ function normalizeAnswers(raw: Record<string, unknown>) {
   const answers: Record<string, string> = {};
   for (const id of QUESTION_IDS) {
     const v = raw?.[id];
-    answers[id] = typeof v === 'string' ? v.trim() : '';
+    answers[id] = typeof v === 'string' ? v.trim() : String(v ?? '').trim();
   }
   return answers;
 }
 
-function fallbackAnswers(input: BodyInput, context: Record<string, unknown>) {
-  const ctx: any = context;
-  const name = input.ragione_sociale || ctx.client?.ragione_sociale || ctx.practice?.clients?.ragione_sociale || 'la società';
-  const ateco = input.ateco || ctx.client?.codice_ateco || ctx.practice?.clients?.codice_ateco || '';
-  const settore = sectorFromAteco(ateco);
-  const importo = input.importo || ctx.practice?.importo_richiesto;
-  const kpi = input.kpi_scores || ctx.kpi?.kpi;
-  const fin = input.finanziamenti || ctx.finanziamenti || [];
-  const answers = normalizeAnswers({});
-  answers.presentazione_storia = `${name} viene descritta sulla base dei dati disponibili nei documenti caricati e nella pratica. La relazione dovrà essere integrata dall’agente con dettagli puntuali su soci, amministratori e funzioni chiave non presenti nei dati automatici.`;
-  answers.presentazione_attivita = `${name} opera nel ${settore}${ateco ? ` (codice ATECO ${ateco})` : ''}. La descrizione operativa dovrà essere verificata e completata con prodotti/servizi, mercati serviti e clienti principali.`;
-  answers.presentazione_competitors = `Per il ${settore}, i competitor principali sono normalmente operatori locali e nazionali con offerta comparabile. Inserire nomi specifici se noti all’agente o rilevati dalla documentazione aziendale.`;
-  answers.rep_negativita = input.reputazione_json ? `Sintesi reputazionale da verificare: ${clip(input.reputazione_json, 1200)}` : 'Non risultano dati reputazionali automatici sufficienti. Verificare protesti, pregiudizievoli, procedure concorsuali e posizioni dei soggetti collegati prima dell’invio.';
-  answers.clienti_descrizione = 'Informazione non completamente disponibile dai dati automatici. Indicare principali clienti, eventuali concentrazioni superiori al 10% e tempi medi di incasso.';
-  answers.fornitori_concentrazioni = 'Informazione non completamente disponibile dai dati automatici. Indicare principali fornitori, eventuali concentrazioni superiori al 10% e dipendenza da materie prime o servizi critici.';
-  answers.finalita_descrizione = input.finalita || `Operazione richiesta${importo ? ` per circa € ${Number(importo).toLocaleString('it-IT')}` : ''}. Specificare se destinata a liquidità, investimento o riequilibrio finanziario.`;
-  answers.finalita_coerenza = 'La coerenza dell’operazione deve essere valutata rispetto alla capacità di generazione di cassa, ai KPI disponibili e agli impegni finanziari in essere.';
-  answers.bilancio_analisi = kpi ? `Dai KPI disponibili emergono i seguenti elementi quantitativi: ${clip(kpi, 1600)}` : 'KPI di bilancio non disponibili o non sufficienti. Integrare con ricavi, marginalità, patrimonio netto, indebitamento e variazioni dell’ultimo triennio.';
-  answers.finanziario_impegni = Array.isArray(fin) && fin.length ? `Finanziamenti rilevati: ${fin.map((f: any) => `${f.istituto || f.banca_finanziaria || 'Istituto N/D'} - ${f.tipo || f.tipologia || 'tipo N/D'} - residuo € ${Number(f.importo_residuo || f.debito_residuo || 0).toLocaleString('it-IT')}`).join('; ')}.` : 'Dettagliare prestiti soci, finanziamenti soci, crediti/debiti tributari e altri impegni finanziari significativi.';
-  answers.finanziario_banche = answers.finanziario_impegni;
-  answers.visita_disponibilita = 'Da confermare con l’agente/consulente.';
-  answers.foto_note = 'Se presenti, allegare solo foto aziendali fornite dall’impresa o scattate in sede; non usare immagini da siti web.';
-  return answers;
-}
-
-async function restGet(path: string, serviceKey: string) {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-  if (!supabaseUrl || !serviceKey) return null;
-  const res = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
-    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
-  });
-  if (!res.ok) return null;
-  return await res.json();
+async function safeSelect(label: string, query: PromiseLike<{ data: unknown; error: unknown }>) {
+  try {
+    const { data, error } = await query;
+    if (error) return { label, error: String((error as any)?.message ?? error), data: null };
+    return { label, data, error: null };
+  } catch (e) {
+    return { label, error: String(e), data: null };
+  }
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
   try {
-    const input = (await req.json()) as BodyInput;
-    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     const openaiKey = Deno.env.get('OPENAI_API_KEY');
+    if (!openaiKey) {
+      return new Response(JSON.stringify({ error: 'OPENAI_API_KEY non configurata nei secrets Supabase' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const input = (await req.json()) as BodyInput;
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
+
     const context: Record<string, unknown> = {};
 
-    if (input.practice_id && serviceKey) {
-      const practiceRows = await restGet(`practices?id=eq.${encodeURIComponent(input.practice_id)}&select=*,clients(*)&limit=1`, serviceKey);
-      const practice = Array.isArray(practiceRows) ? practiceRows[0] : null;
-      context.practice = practice;
-      context.client = practice?.clients ?? null;
-      const [kpiRows, financingRows, bankRows] = await Promise.all([
-        restGet(`bilanci_kpi?practice_id=eq.${encodeURIComponent(input.practice_id)}&select=*&order=anno_esercizio.desc&limit=2`, serviceKey),
-        restGet(`client_financing?practice_id=eq.${encodeURIComponent(input.practice_id)}&select=*`, serviceKey),
-        restGet(`practice_banks?practice_id=eq.${encodeURIComponent(input.practice_id)}&select=*,banks(nome)`, serviceKey),
+    if (input.practice_id) {
+      const { data: practice, error: practiceError } = await supabase
+        .from('practices')
+        .select('*, clients(*)')
+        .eq('id', input.practice_id)
+        .maybeSingle();
+
+      if (practiceError) {
+        context.practice_error = practiceError.message;
+      } else {
+        context.practice = practice;
+        context.client = (practice as any)?.clients ?? null;
+      }
+
+      const clientId = (practice as any)?.client_id ?? (practice as any)?.clients?.id ?? null;
+      const results = await Promise.all([
+        safeSelect('bilanci_kpi', supabase
+          .from('bilanci_kpi')
+          .select('*')
+          .eq('practice_id', input.practice_id)
+          .order('anno_esercizio', { ascending: false })
+          .limit(3)),
+        safeSelect('analisi_bilancio', supabase
+          .from('analisi_bilancio')
+          .select('*')
+          .eq('practice_id', input.practice_id)
+          .order('created_at', { ascending: false })
+          .limit(3)),
+        safeSelect('client_financing', supabase
+          .from('client_financing')
+          .select('*')
+          .eq('practice_id', input.practice_id)
+          .order('ordinamento', { ascending: true })),
+        safeSelect('practice_banks', supabase
+          .from('practice_banks')
+          .select('*, banks(nome)')
+          .eq('practice_id', input.practice_id)),
+        safeSelect('estratto_conto_transactions', supabase
+          .from('estratto_conto_transactions')
+          .select('*')
+          .eq('practice_id', input.practice_id)
+          .limit(200)),
       ]);
-      context.kpi = Array.isArray(kpiRows) ? kpiRows[0] : null;
-      context.kpi_storico = kpiRows ?? [];
-      context.finanziamenti = financingRows ?? [];
-      context.banche_pratica = bankRows ?? [];
-      const clientId = practice?.client_id;
+
+      for (const item of results) {
+        context[item.label] = item.data;
+        if (item.error) context[`${item.label}_error`] = item.error;
+      }
+
       if (clientId) {
-        const repRows = await restGet(`analisi_reputazione?client_id=eq.${encodeURIComponent(clientId)}&select=*&order=created_at.desc&limit=1`, serviceKey);
-        context.reputazione = Array.isArray(repRows) ? repRows[0] : null;
+        const rep = await safeSelect('analisi_reputazione', supabase
+          .from('analisi_reputazione')
+          .select('*')
+          .eq('client_id', clientId)
+          .order('created_at', { ascending: false })
+          .limit(1));
+        context.analisi_reputazione = rep.data;
+        if (rep.error) context.analisi_reputazione_error = rep.error;
+
+        const clientKpi = await safeSelect('bilanci_kpi_cliente', supabase
+          .from('bilanci_kpi')
+          .select('*')
+          .eq('client_id', clientId)
+          .order('anno_esercizio', { ascending: false })
+          .limit(3));
+        context.bilanci_kpi_cliente = clientKpi.data;
+        if (clientKpi.error) context.bilanci_kpi_cliente_error = clientKpi.error;
       }
     }
 
-    if (!openaiKey) {
-      return ok({ success: false, error: 'Configura OPENAI_API_KEY nelle variabili d’ambiente Supabase', answers: fallbackAnswers(input, context), source: 'fallback_no_openai_key' });
-    }
-
     const ctx: any = context;
-    const ragioneSociale = input.ragione_sociale || ctx.client?.ragione_sociale || ctx.practice?.clients?.ragione_sociale || 'N/D';
-    const piva = input.piva || ctx.client?.piva || ctx.client?.partita_iva || ctx.practice?.clients?.piva || 'N/D';
-    const ateco = input.ateco || ctx.client?.codice_ateco || ctx.practice?.clients?.codice_ateco || 'N/D';
+    const practice = ctx.practice ?? {};
+    const client = ctx.client ?? practice?.clients ?? {};
+    const ragioneSociale = input.ragione_sociale || client?.ragione_sociale || client?.nome || practice?.ragione_sociale || 'N/D';
+    const piva = input.piva || client?.piva || client?.partita_iva || client?.codice_fiscale || 'N/D';
+    const ateco = input.ateco || client?.codice_ateco || practice?.codice_ateco || 'N/D';
     const settore = sectorFromAteco(ateco);
-    const userPrompt = `Compila una relazione commerciale bancaria italiana per questa azienda.\n\nAzienda: ${ragioneSociale}\nP.IVA: ${piva}\nATECO: ${ateco}\nSettore dedotto: ${settore}\nImporto richiesto: ${input.importo ?? ctx.practice?.importo_richiesto ?? 'N/D'}\nDurata: ${input.durata ?? 'N/D'}\nFinalità: ${input.finalita ?? 'N/D'}\n\nDATI DB / PRATICA:\n${clip(context, 9000)}\n\nKPI già calcolati:\n${clip(input.kpi_scores ?? ctx.kpi?.kpi ?? {}, 3500)}\n\nFinanziamenti:\n${clip(input.finanziamenti ?? ctx.finanziamenti ?? [], 3500)}\n\nTesto bilancio:\n${clip(input.bilancio_testo ?? '', 4500)}\n\nTesto Centrale Rischi:\n${clip(input.cr_testo ?? '', 3500)}\n\nAnalisi reputazionale/visura:\n${clip({ reputazione_json: input.reputazione_json, visura_json: input.visura_json, reputazione_db: ctx.reputazione }, 5000)}\n\nRestituisci ESCLUSIVAMENTE JSON valido con forma {"answers":{...}}. La chiave answers deve contenere una stringa professionale per ciascuno di questi domanda_id: ${QUESTION_IDS.join(', ')}. Se un dato non è disponibile, scrivi una frase prudente che indichi cosa deve verificare l’agente, senza inventare nomi, percentuali o eventi. Per clienti/fornitori/concentrazioni/export/import non inventare valori: chiedi integrazione se assenti. La sezione foto aziendale è opzionale e deve specificare che non vanno usate foto da siti web.`;
+    const importo = input.importo ?? practice?.importo_richiesto ?? practice?.importo ?? 'N/D';
+    const durata = input.durata ?? practice?.durata ?? 'N/D';
+    const finalita = input.finalita ?? practice?.finalita ?? practice?.descrizione_finalita ?? 'N/D';
 
-    const callOpenAI = (model: string) => fetch('https://api.openai.com/v1/chat/completions', {
+    const systemPrompt = `Sei un esperto analista creditizio italiano specializzato in relazioni commerciali bancarie.
+Compila la relazione commerciale per la società indicata usando i dati forniti.
+Scrivi in italiano professionale e formale, adatto a una richiesta di finanziamento bancario.
+Per le sezioni senza dati sufficienti scrivi una risposta professionale generica appropriata al settore.
+Restituisci SOLO un oggetto JSON valido, senza markdown, senza backtick, senza testo aggiuntivo.`;
+
+    const userPrompt = `Compila una relazione commerciale bancaria italiana per la società indicata.
+
+DATI SOCIETÀ
+- Ragione sociale: ${ragioneSociale}
+- Partita IVA/Codice fiscale: ${piva}
+- Codice ATECO: ${ateco}
+- Settore dedotto: ${settore}
+- Importo richiesto: ${importo}
+- Durata richiesta: ${durata}
+- Finalità dichiarata: ${finalita}
+
+DATI COMPLETI DISPONIBILI DA PRATICA / DB
+${clip(context, 12000)}
+
+KPI / ANALISI BILANCIO FORNITI DAL CLIENT
+${clip(input.kpi_scores ?? ctx.bilanci_kpi ?? ctx.analisi_bilancio ?? ctx.bilanci_kpi_cliente ?? {}, 5000)}
+
+FINANZIAMENTI / CENTRALE RISCHI
+${clip(input.finanziamenti ?? ctx.client_financing ?? [], 5000)}
+
+VISURA / REPUTAZIONE
+${clip({ visura_json: input.visura_json, reputazione_json: input.reputazione_json, analisi_reputazione_db: ctx.analisi_reputazione }, 6000)}
+
+TESTO BILANCIO
+${clip(input.bilancio_testo ?? '', 6000)}
+
+TESTO CENTRALE RISCHI / ESTRATTO CONTO
+${clip({ cr_testo: input.cr_testo, estratto_conto_transactions: ctx.estratto_conto_transactions }, 6000)}
+
+Restituisci un JSON valido con una stringa professionale per ognuno di questi campi, senza chiavi aggiuntive e senza contenitore answers:
+${QUESTION_IDS.join(', ')}
+
+Regole:
+- Non inventare nomi, percentuali, protesti, procedure o importi non presenti nei dati.
+- Se una sezione non ha dati puntuali, scrivi una risposta generica professionale appropriata al settore e indica cosa l'agente dovrebbe verificare.
+- Per clienti, fornitori, export, import e concentrazioni, non creare valori numerici se assenti.
+- La sezione foto aziendale è opzionale: specifica che si usano solo foto fornite/scattate e non immagini da siti web.`;
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${openaiKey}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
-        model,
+        model: 'gpt-4o-mini',
+        temperature: 0.3,
+        max_tokens: 4000,
         messages: [
-          { role: 'system', content: 'Sei un esperto analista creditizio italiano. Compila la relazione commerciale bancaria per la società indicata, basandoti sui dati forniti. Scrivi in italiano professionale e formale, adatto a una richiesta di finanziamento bancario. Rispondi sempre solo in JSON valido.' },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.25,
-        max_tokens: 5000,
-        response_format: { type: 'json_object' },
-      }),
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
     });
 
-    let aiRes = await callOpenAI('gpt-4o-mini');
-    if (!aiRes.ok) aiRes = await callOpenAI('gpt-3.5-turbo');
-    if (!aiRes.ok) return ok({ success: true, answers: fallbackAnswers(input, context), source: 'fallback_openai_error', error: await aiRes.text() });
-    const aiData = await aiRes.json();
-    const content = aiData.choices?.[0]?.message?.content ?? '{}';
-    let parsed: any = {};
-    try { parsed = JSON.parse(content); } catch { parsed = {}; }
-    return ok({ success: true, answers: normalizeAnswers(parsed.answers ?? parsed), source: 'openai' });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return new Response(JSON.stringify({ error: `OpenAI errore ${resp.status}: ${errText}` }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const completion = await resp.json();
+    const content = completion.choices?.[0]?.message?.content ?? '';
+
+    let answers: Record<string, string> = {};
+    try {
+      answers = JSON.parse(content);
+    } catch {
+      const match = content.match(/\{[\s\S]*\}/);
+      if (match) {
+        answers = JSON.parse(match[0]);
+      } else {
+        return new Response(JSON.stringify({ error: 'OpenAI non ha restituito JSON valido', raw: content.slice(0, 500) }),
+          { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
+
+    return new Response(JSON.stringify({ answers: normalizeAnswers(answers) }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e) {
-    return ok({ success: false, error: String(e) }, 200);
+    return jsonResponse({ error: String((e as Error)?.message ?? e) }, 500);
   }
 });
