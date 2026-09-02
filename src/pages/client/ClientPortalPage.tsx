@@ -9,13 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import {
-  FileText, Upload, CheckCircle2, Clock, XCircle, AlertCircle,
-  LogOut, Download, Eye, ChevronDown, ChevronUp, PlusCircle, Trash2, Save, FileDown, Loader2,
+  FileText, Upload, CheckCircle2, Clock, AlertCircle,
+  LogOut, PlusCircle, Trash2, Save, FileDown, Loader2,
   Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  STATUS_LABELS, STATUS_COLORS, DOC_STATUS_LABELS, DOC_STATUS_COLORS,
+  STATUS_LABELS, STATUS_COLORS,
   type Practice, type PracticeDocument, type PracticeStatusLog, type PracticeStatus,
 } from '@/lib/types';
 
@@ -24,6 +24,20 @@ interface ClientSession {
   codice: string;
   email: string;
 }
+
+const isFinancingRequestDocument = (doc: PracticeDocument) => {
+  const normalizedName = doc.nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('it-IT');
+
+  return normalizedName.includes('finanziament')
+    && (
+      normalizedName.includes('essere')
+      || normalizedName.includes('attiv')
+      || normalizedName.includes('situazione')
+    );
+};
 
 export default function ClientPortalPage() {
   const { practiceId } = useParams<{ practiceId: string }>();
@@ -34,7 +48,6 @@ export default function ClientPortalPage() {
   const [documents, setDocuments] = useState<PracticeDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
-  const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   // ── Storico stati pratica ────────────────────────────────────────────────
@@ -130,16 +143,41 @@ export default function ClientPortalPage() {
           ordinamento: i,
         };
         if (r.id) {
-          await supabase.from('client_financing').update(payload).eq('id', r.id);
+          const { error } = await supabase.from('client_financing').update(payload).eq('id', r.id);
+          if (error) throw error;
         } else {
-          const { data } = await supabase.from('client_financing').insert(payload).select('id').single();
+          const { data, error } = await supabase.from('client_financing').insert(payload).select('id').single();
+          if (error) throw error;
           if (data?.id) {
             setFinancing(prev => prev.map((row, idx) => idx === i ? { ...row, id: data.id, _new: false, _dirty: false } : row));
           }
         }
       }
+
+      const pendingFinancingDocumentIds = documents
+        .filter(isFinancingRequestDocument)
+        .filter(doc => doc.status === 'richiesto' || doc.status === 'rifiutato')
+        .map(doc => doc.id);
+
+      if (pendingFinancingDocumentIds.length > 0) {
+        const { error } = await supabase
+          .from('practice_documents')
+          .update({
+            status: 'caricato',
+            uploaded_at: new Date().toISOString(),
+            note_rifiuto: null,
+          })
+          .in('id', pendingFinancingDocumentIds);
+        if (error) throw error;
+      }
+
       setFinancing(prev => prev.map(r => ({ ...r, _dirty: false, _new: false })));
-      toast.success('Finanziamenti salvati!');
+      await load();
+      toast.success(
+        financing.length > 0
+          ? 'Finanziamenti salvati!'
+          : 'Assenza di finanziamenti confermata!'
+      );
     } catch (e) { toast.error('Errore salvataggio: ' + String(e)); }
     setSavingFin(false);
   };
@@ -243,12 +281,6 @@ export default function ClientPortalPage() {
     e.target.value = '';
   };
 
-  const downloadFile = async (path: string, name: string) => {
-    const { data } = await supabase.storage.from('practice-files').createSignedUrl(path, 60);
-    if (data?.signedUrl) { window.open(data.signedUrl, '_blank'); }
-    else { toast.error('File non disponibile per il download'); }
-  };
-
   const handleLogout = () => {
     sessionStorage.removeItem('docflow_client');
     navigate('/accesso');
@@ -308,132 +340,11 @@ export default function ClientPortalPage() {
   const completedDocs = documents.filter(d => d.status === 'caricato' || d.status === 'approvato').length;
   const progressPct = totalDocs > 0 ? Math.round((completedDocs / totalDocs) * 100) : 0;
 
-  const docsStandard = documents.filter(d => d.tipo === 'standard');
-  const docsBanca = documents.filter(d => d.tipo === 'banca');
-  const docsIntegrazione = documents.filter(d => d.tipo === 'integrazione');
-
-  const getDocIcon = (status: string) => {
-    if (status === 'approvato') return <CheckCircle2 className="w-5 h-5 text-green-600" />;
-    if (status === 'caricato') return <Clock className="w-5 h-5 text-blue-500" />;
-    if (status === 'rifiutato') return <XCircle className="w-5 h-5 text-red-500" />;
-    return <AlertCircle className="w-5 h-5 text-amber-500" />;
-  };
-
-  const renderDocGroup = (label: string, docs: PracticeDocument[], accent: string) => {
-    if (docs.length === 0) return null;
-    return (
-      <div>
-        <p className={`text-xs font-bold uppercase tracking-widest mb-3 ${accent}`}>{label}</p>
-        <div className="space-y-3">
-          {docs.map(doc => {
-            const files = (doc as PracticeDocument & { uploaded_files?: { id: string; nome_file: string; storage_path: string }[] }).uploaded_files ?? [];
-            const isExpanded = expandedDoc === doc.id;
-            const canUpload = doc.status === 'richiesto' || doc.status === 'rifiutato';
-            return (
-              <Card key={doc.id} className={`border transition-colors ${doc.status === 'rifiutato' ? 'border-red-200 bg-red-50/30' : doc.status === 'approvato' ? 'border-green-200 bg-green-50/30' : 'border-border'}`}>
-                <CardContent className="py-0">
-                  {/* Header */}
-                  <div
-                    className="flex items-center gap-3 py-3 cursor-pointer"
-                    onClick={() => setExpandedDoc(isExpanded ? null : doc.id)}
-                  >
-                    {getDocIcon(doc.status)}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-semibold text-foreground leading-tight">{doc.nome}</p>
-                        {doc.obbligatorio && <span className="text-xs text-red-500 font-medium">*</span>}
-                      </div>
-                      <Badge className={`mt-1 text-xs ${DOC_STATUS_COLORS[doc.status]}`}>
-                        {DOC_STATUS_LABELS[doc.status]}
-                      </Badge>
-                    </div>
-                    {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
-                  </div>
-
-                  {/* Expanded */}
-                  {isExpanded && (
-                    <div className="border-t border-border pt-3 pb-3 space-y-3">
-                      {doc.descrizione && (
-                        <p className="text-sm text-muted-foreground">{doc.descrizione}</p>
-                      )}
-
-                      {doc.note_rifiuto && (
-                        <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                          <p className="text-xs font-semibold text-red-700 mb-1">⚠️ Documento rifiutato — motivo:</p>
-                          <p className="text-sm text-red-800">{doc.note_rifiuto}</p>
-                          <p className="text-xs text-red-600 mt-1">Carica un nuovo documento corretto.</p>
-                        </div>
-                      )}
-
-                      {/* File già caricati */}
-                      {files.length > 0 && (
-                        <div className="space-y-1.5">
-                          <p className="text-xs font-medium text-muted-foreground">File caricati:</p>
-                          {files.map(f => (
-                            <div key={f.id} className="flex items-center gap-2 bg-muted/50 rounded-lg px-3 py-2">
-                              <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <span className="text-sm flex-1 truncate">{f.nome_file}</span>
-                              <button
-                                className="text-primary hover:text-primary/80 shrink-0"
-                                onClick={() => downloadFile(f.storage_path, f.nome_file)}
-                                title="Scarica"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Upload button */}
-                      {canUpload && (
-                        <div>
-                          <input
-                            type="file"
-                            ref={el => { fileInputRefs.current[doc.id] = el; }}
-                            className="hidden"
-                            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-                            onChange={e => handleFileSelect(doc.id, e)}
-                          />
-                          <Button
-                            className="w-full gap-2"
-                            disabled={uploadingDoc === doc.id}
-                            onClick={() => fileInputRefs.current[doc.id]?.click()}
-                          >
-                            {uploadingDoc === doc.id ? (
-                              <>
-                                <span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
-                                Caricamento...
-                              </>
-                            ) : (
-                              <>
-                                <Upload className="w-4 h-4" />
-                                {files.length > 0 ? 'Sostituisci documento' : 'Carica documento'}
-                              </>
-                            )}
-                          </Button>
-                          <p className="text-xs text-muted-foreground text-center mt-1">
-                            PDF, Word, Excel, immagini — max 30 MB
-                          </p>
-                        </div>
-                      )}
-
-                      {doc.status === 'approvato' && (
-                        <div className="flex items-center gap-2 text-green-700 bg-green-50 px-3 py-2 rounded-lg">
-                          <CheckCircle2 className="w-4 h-4 shrink-0" />
-                          <p className="text-sm font-medium">Documento approvato dall'agente ✓</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
+  const financingRequestDocs = documents.filter(isFinancingRequestDocument);
+  const uploadDocuments = documents.filter(doc => !isFinancingRequestDocument(doc));
+  const showFinancingSection = financingRequestDocs.length > 0;
+  const financingRequestCompleted = showFinancingSection
+    && financingRequestDocs.every(doc => doc.status === 'caricato' || doc.status === 'approvato');
 
   return (
     <div className="min-h-screen bg-background">
@@ -607,21 +518,6 @@ export default function ClientPortalPage() {
           );
         })()}
 
-        {/* Documenti */}
-        <div className="space-y-6">
-          {renderDocGroup('Documenti Standard', docsStandard, 'text-blue-600')}
-          {renderDocGroup('Documenti Banca', docsBanca, 'text-purple-600')}
-          {renderDocGroup('Integrazioni Richieste', docsIntegrazione, 'text-amber-600')}
-
-          {documents.length === 0 && (
-            <Card><CardContent className="py-12 text-center">
-              <Clock className="w-8 h-8 mx-auto mb-2 opacity-30 text-muted-foreground" />
-              <p className="text-muted-foreground text-sm">Nessun documento richiesto al momento.</p>
-              <p className="text-xs text-muted-foreground mt-1">Il tuo agente configurerà a breve la lista documenti.</p>
-            </CardContent></Card>
-          )}
-        </div>
-
         {/* Moduli banca da compilare */}
         {bankModuli.length > 0 && (
           <Card className="border-border">
@@ -678,16 +574,25 @@ export default function ClientPortalPage() {
           </Card>
         )}
 
-        {/* Finanziamenti in essere */}
+        {/* Finanziamenti in essere — visibile solo se richiesto nella pratica */}
+        {showFinancingSection && (
         <Card className="border-border">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2">
                 💳 Finanziamenti in essere
               </CardTitle>
-              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={addFinRow}>
-                <PlusCircle className="w-3.5 h-3.5" /> Aggiungi
-              </Button>
+              <div className="flex items-center gap-2">
+                <Badge className={financingRequestCompleted
+                  ? 'bg-green-100 text-green-700 border-green-200 text-xs'
+                  : 'bg-amber-100 text-amber-700 border-amber-200 text-xs'
+                }>
+                  {financingRequestCompleted ? 'Completato' : 'Richiesto'}
+                </Badge>
+                <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={addFinRow}>
+                  <PlusCircle className="w-3.5 h-3.5" /> Aggiungi
+                </Button>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Indica tutti i finanziamenti attivi (mutui, prestiti, leasing, fidi, ecc.)
@@ -825,16 +730,17 @@ export default function ClientPortalPage() {
             <Button
               className="w-full gap-2 mt-2"
               onClick={saveFinancing}
-              disabled={savingFin || !financing.some(r => r._dirty)}
+              disabled={savingFin || (!financing.some(r => r._dirty) && financingRequestCompleted)}
             >
               {savingFin ? (
                 <><span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Salvataggio...</>
               ) : (
-                <><Save className="w-4 h-4" /> Salva Finanziamenti</>
+                <><Save className="w-4 h-4" /> {financing.length > 0 ? 'Salva Finanziamenti' : 'Conferma nessun finanziamento'}</>
               )}
             </Button>
           </CardContent>
         </Card>
+        )}
 
         {/* ── Carica i tuoi Documenti ─────────────────────────────────────── */}
         <Card className="border-border">
@@ -852,9 +758,13 @@ export default function ClientPortalPage() {
               <p className="text-sm text-muted-foreground text-center py-4">
                 Nessun documento richiesto al momento.
               </p>
+            ) : uploadDocuments.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                Nessun altro documento da caricare.
+              </p>
             ) : (
               <div className="space-y-2">
-                {documents.map(doc => {
+                {uploadDocuments.map(doc => {
                   const isLoading = uploadingDoc === doc.id;
                   const isUploaded = doc.status === 'caricato' || doc.status === 'approvato';
                   return (
