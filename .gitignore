@@ -100,3 +100,4 @@ Thumbs.db
 uploaded_files/
 
 node_modules
+.vercel

@@ -90,6 +90,7 @@ export default function PraticaDetailPage() {
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [bankNote, setBankNote] = useState('');
   const [showSendBankDialog, setShowSendBankDialog] = useState<string|null>(null);
+  const [activeTab, setActiveTab] = useState('documenti');
   // Financing — gestito come stringhe per l'editing inline
   interface FinRow {
     id: string; tipologia: string; banca_finanziaria: string;
@@ -1691,7 +1692,7 @@ export default function PraticaDetailPage() {
 
         {/* Documenti + Log */}
         <div className="lg:col-span-2 space-y-4">
-          <Tabs defaultValue="documenti">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList>
               <TabsTrigger value="documenti">Documenti ({documents.length})</TabsTrigger>
               <TabsTrigger value="banche">Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
@@ -1951,6 +1952,17 @@ export default function PraticaDetailPage() {
                       <div className="space-y-3 py-2">
                         <p className="text-sm text-muted-foreground">Destinatario: <strong>{bankEmail}</strong></p>
                         <Textarea placeholder="Note per la banca (opzionale)..." rows={3} value={bankNote} onChange={e => setBankNote(e.target.value)} />
+                        <div className="rounded-lg border border-purple-100 bg-purple-50 p-3 text-sm text-purple-800">
+                          <span className="font-semibold">📄 Relazione commerciale:</span> Prima di inviare alla banca, puoi{' '}
+                          <button
+                            type="button"
+                            onClick={() => { setShowSendBankDialog(null); setActiveTab('relazione'); }}
+                            className="underline font-medium"
+                          >
+                            generare la relazione commerciale
+                          </button>{' '}
+                          nel tab dedicato.
+                        </div>
                         <p className="text-xs text-muted-foreground">Verranno inviati i link firmati (7gg) a tutti i documenti. Lo stato sarà aggiornato.</p>
                       </div>
                       <DialogFooter>
