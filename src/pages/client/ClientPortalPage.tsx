@@ -5,13 +5,14 @@ import { uploadPracticeFile } from '@/lib/uploadFile';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import {
   FileText, Upload, CheckCircle2, Clock, AlertCircle,
   LogOut, PlusCircle, Trash2, Save, FileDown, Loader2,
-  Check,
+  Check, MessageSquare, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -37,6 +38,16 @@ const isFinancingRequestDocument = (doc: PracticeDocument) => {
       || normalizedName.includes('attiv')
       || normalizedName.includes('situazione')
     );
+};
+
+const isBankSituationRequestDocument = (doc: PracticeDocument) => {
+  const normalizedName = doc.nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('it-IT');
+
+  return normalizedName.includes('situazione')
+    && normalizedName.includes('banc');
 };
 
 export default function ClientPortalPage() {
@@ -80,6 +91,43 @@ export default function ClientPortalPage() {
   const [financing, setFinancing] = useState<Financing[]>([]);
   const [savingFin, setSavingFin] = useState(false);
 
+  // ── Domande dell'agente ──────────────────────────────────────────────────
+  interface ClientQuestion {
+    id: string;
+    domanda: string;
+    risposta: string | null;
+    stato: 'richiesta' | 'risposta';
+    answered_at: string | null;
+  }
+  const [clientQuestions, setClientQuestions] = useState<ClientQuestion[]>([]);
+  const [savingQuestionId, setSavingQuestionId] = useState<string | null>(null);
+
+  // ── Situazione banche ────────────────────────────────────────────────────
+  interface ClientBankPosition {
+    id?: string;
+    banca: string;
+    tipo_rapporto: string;
+    accordato: string;
+    utilizzato: string;
+    saldo: string;
+    note: string;
+    _dirty?: boolean;
+    _new?: boolean;
+  }
+  const [clientBanks, setClientBanks] = useState<ClientBankPosition[]>([]);
+  const [savingClientBanks, setSavingClientBanks] = useState(false);
+
+  const BANK_RELATIONSHIP_TYPES = [
+    'Conto corrente',
+    'Fido / apertura di credito',
+    'Anticipo fatture / SBF',
+    'Mutuo',
+    'Leasing',
+    'Prestito',
+    'Carta di credito',
+    'Altro',
+  ];
+
   const TIPOLOGIE = [
     'Mutuo ipotecario', 'Prestito personale', 'Cessione del quinto',
     'Leasing auto', 'Leasing strumentale', 'Apertura di credito',
@@ -103,6 +151,144 @@ export default function ClientPortalPage() {
       debito_residuo: r.debito_residuo?.toString() ?? '',
       note: r.note ?? '',
     })));
+  };
+
+  const updateQuestionAnswer = (questionId: string, value: string) => {
+    setClientQuestions(prev => prev.map(question => (
+      question.id === questionId ? { ...question, risposta: value } : question
+    )));
+  };
+
+  const saveQuestionAnswer = async (question: ClientQuestion) => {
+    const answer = question.risposta?.trim() ?? '';
+    if (!answer) {
+      toast.error('Inserisci una risposta prima di salvare');
+      return;
+    }
+    setSavingQuestionId(question.id);
+    try {
+      const { error } = await supabase
+        .from('practice_client_questions')
+        .update({
+          risposta: answer,
+          stato: 'risposta',
+          answered_at: new Date().toISOString(),
+        })
+        .eq('id', question.id)
+        .eq('practice_id', practiceId);
+      if (error) throw error;
+      setClientQuestions(prev => prev.map(item => (
+        item.id === question.id ? { ...item, risposta: answer, stato: 'risposta' } : item
+      )));
+      toast.success('Risposta salvata');
+    } catch (error) {
+      toast.error('Errore salvataggio risposta: ' + String(error));
+    } finally {
+      setSavingQuestionId(null);
+    }
+  };
+
+  const updateClientBank = (index: number, field: keyof ClientBankPosition, value: string) => {
+    setClientBanks(prev => prev.map((row, rowIndex) => (
+      rowIndex === index ? { ...row, [field]: value, _dirty: true } : row
+    )));
+  };
+
+  const addClientBank = () => {
+    setClientBanks(prev => [...prev, {
+      banca: '',
+      tipo_rapporto: '',
+      accordato: '',
+      utilizzato: '',
+      saldo: '',
+      note: '',
+      _new: true,
+      _dirty: true,
+    }]);
+  };
+
+  const removeClientBank = async (index: number) => {
+    const row = clientBanks[index];
+    try {
+      if (row.id) {
+        const { error } = await supabase
+          .from('practice_client_banks')
+          .delete()
+          .eq('id', row.id)
+          .eq('practice_id', practiceId);
+        if (error) throw error;
+      }
+      setClientBanks(prev => prev.filter((_, rowIndex) => rowIndex !== index));
+      toast.success('Rapporto bancario eliminato');
+    } catch (error) {
+      toast.error('Errore eliminazione: ' + String(error));
+    }
+  };
+
+  const saveClientBankSituation = async () => {
+    if (!practiceId) return;
+    const incompleteRow = clientBanks.find(row => !row.banca.trim());
+    if (incompleteRow) {
+      toast.error('Indica il nome della banca in ogni riga');
+      return;
+    }
+
+    setSavingClientBanks(true);
+    try {
+      for (let index = 0; index < clientBanks.length; index++) {
+        const row = clientBanks[index];
+        if (!row._dirty) continue;
+        const payload = {
+          practice_id: practiceId,
+          banca: row.banca.trim(),
+          tipo_rapporto: row.tipo_rapporto || null,
+          accordato: row.accordato ? parseFloat(row.accordato) : null,
+          utilizzato: row.utilizzato ? parseFloat(row.utilizzato) : null,
+          saldo: row.saldo ? parseFloat(row.saldo) : null,
+          note: row.note.trim() || null,
+          ordinamento: index,
+        };
+        if (row.id) {
+          const { error } = await supabase
+            .from('practice_client_banks')
+            .update(payload)
+            .eq('id', row.id)
+            .eq('practice_id', practiceId);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('practice_client_banks').insert(payload);
+          if (error) throw error;
+        }
+      }
+
+      const pendingBankDocumentIds = documents
+        .filter(isBankSituationRequestDocument)
+        .filter(doc => doc.status === 'richiesto' || doc.status === 'rifiutato')
+        .map(doc => doc.id);
+
+      if (pendingBankDocumentIds.length > 0) {
+        const { error } = await supabase
+          .from('practice_documents')
+          .update({
+            status: 'caricato',
+            uploaded_at: new Date().toISOString(),
+            note_rifiuto: null,
+          })
+          .in('id', pendingBankDocumentIds);
+        if (error) throw error;
+      }
+
+      await load();
+      toast.success(
+        clientBanks.length > 0
+          ? 'Situazione banche salvata'
+          : 'Assenza di rapporti bancari confermata'
+      );
+    } catch (error) {
+      toast.error('Errore salvataggio situazione banche: ' + String(error));
+    } finally {
+      setSavingClientBanks(false);
+    }
   };
 
   const updateFinRow = (idx: number, field: keyof Financing, val: string) => {
@@ -193,15 +379,29 @@ export default function ClientPortalPage() {
 
   const load = async () => {
     if (!practiceId) return;
-    const [p, docs, pbRes, logsRes] = await Promise.all([
+    const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes] = await Promise.all([
       supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)').eq('id', practiceId).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', practiceId).order('tipo').order('created_at'),
       supabase.from('practice_banks').select('bank_id').eq('practice_id', practiceId),
       supabase.from('practice_status_log').select('*').eq('practice_id', practiceId).order('created_at', { ascending: true }),
+      supabase.from('practice_client_questions').select('*').eq('practice_id', practiceId).order('created_at'),
+      supabase.from('practice_client_banks').select('*').eq('practice_id', practiceId).order('ordinamento'),
     ]);
     setPractice(p.data as Practice);
     setDocuments((docs.data ?? []) as PracticeDocument[]);
     setStatusLogs((logsRes.data ?? []) as PracticeStatusLog[]);
+    setClientQuestions((questionsRes.data ?? []) as ClientQuestion[]);
+    setClientBanks((clientBanksRes.data ?? []).map(row => ({
+      id: row.id,
+      banca: row.banca ?? '',
+      tipo_rapporto: row.tipo_rapporto ?? '',
+      accordato: row.accordato != null ? String(row.accordato) : '',
+      utilizzato: row.utilizzato != null ? String(row.utilizzato) : '',
+      saldo: row.saldo != null ? String(row.saldo) : '',
+      note: row.note ?? '',
+      _dirty: false,
+      _new: false,
+    })));
     const bankIds = (pbRes.data ?? []).map((r: { bank_id: string }) => r.bank_id);
     if (bankIds.length > 0) {
       const [modRes, compRes] = await Promise.all([
@@ -341,10 +541,16 @@ export default function ClientPortalPage() {
   const progressPct = totalDocs > 0 ? Math.round((completedDocs / totalDocs) * 100) : 0;
 
   const financingRequestDocs = documents.filter(isFinancingRequestDocument);
-  const uploadDocuments = documents.filter(doc => !isFinancingRequestDocument(doc));
+  const bankSituationRequestDocs = documents.filter(isBankSituationRequestDocument);
+  const uploadDocuments = documents.filter(doc => (
+    !isFinancingRequestDocument(doc) && !isBankSituationRequestDocument(doc)
+  ));
   const showFinancingSection = financingRequestDocs.length > 0;
   const financingRequestCompleted = showFinancingSection
     && financingRequestDocs.every(doc => doc.status === 'caricato' || doc.status === 'approvato');
+  const showBankSituationSection = bankSituationRequestDocs.length > 0;
+  const bankSituationCompleted = showBankSituationSection
+    && bankSituationRequestDocs.every(doc => doc.status === 'caricato' || doc.status === 'approvato');
 
   return (
     <div className="min-h-screen bg-background">
@@ -570,6 +776,194 @@ export default function ClientPortalPage() {
                   </div>
                 );
               })}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Domande dell'agente */}
+        {clientQuestions.length > 0 && (
+          <Card className="border-blue-200">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-blue-600" />
+                Domande del tuo consulente
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Rispondi separatamente a ogni domanda e salva la risposta.
+              </p>
+            </CardHeader>
+            <CardContent className="pb-4 space-y-4">
+              {clientQuestions.map((question, index) => (
+                <div key={question.id} className="rounded-xl border border-border p-3 space-y-2 bg-muted/20">
+                  <div className="flex items-start justify-between gap-3">
+                    <label htmlFor={`question-${question.id}`} className="text-sm font-medium">
+                      {index + 1}. {question.domanda}
+                    </label>
+                    <Badge className={question.stato === 'risposta'
+                      ? 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+                      : 'bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0'
+                    }>
+                      {question.stato === 'risposta' ? 'Risposta salvata' : 'Da rispondere'}
+                    </Badge>
+                  </div>
+                  <Textarea
+                    id={`question-${question.id}`}
+                    placeholder="Scrivi qui la tua risposta..."
+                    rows={3}
+                    value={question.risposta ?? ''}
+                    onChange={event => updateQuestionAnswer(question.id, event.target.value)}
+                  />
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={savingQuestionId === question.id || !(question.risposta?.trim())}
+                    onClick={() => saveQuestionAnswer(question)}
+                  >
+                    {savingQuestionId === question.id
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                      : <><Save className="w-3.5 h-3.5" /> {question.stato === 'risposta' ? 'Aggiorna risposta' : 'Salva risposta'}</>
+                    }
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Situazione banche — visibile solo se richiesta nella pratica */}
+        {showBankSituationSection && (
+          <Card className="border-indigo-200">
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-indigo-600" />
+                    Situazione banche
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Indica i rapporti bancari attivi e i relativi importi.
+                  </p>
+                </div>
+                <Badge className={bankSituationCompleted
+                  ? 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+                  : 'bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0'
+                }>
+                  {bankSituationCompleted ? 'Completato' : 'Richiesto'}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="pb-4 space-y-3">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={addClientBank}>
+                <PlusCircle className="w-3.5 h-3.5" /> Aggiungi banca
+              </Button>
+
+              {clientBanks.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border py-6 px-3 text-center">
+                  <p className="text-sm text-muted-foreground">Nessun rapporto bancario inserito.</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Se non hai rapporti bancari, puoi confermarlo con il pulsante in fondo.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {clientBanks.map((row, index) => (
+                    <div key={row.id ?? `new-${index}`} className="rounded-xl border border-border p-3 space-y-3 bg-muted/20">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          Rapporto {index + 1}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-destructive"
+                          onClick={() => removeClientBank(index)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs text-muted-foreground font-medium mb-1 block">Banca *</label>
+                          <Input
+                            placeholder="es. Intesa Sanpaolo"
+                            value={row.banca}
+                            onChange={event => updateClientBank(index, 'banca', event.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground font-medium mb-1 block">Tipo di rapporto</label>
+                          <Select value={row.tipo_rapporto} onValueChange={value => updateClientBank(index, 'tipo_rapporto', value)}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Seleziona..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {BANK_RELATIONSHIP_TYPES.map(type => (
+                                <SelectItem key={type} value={type}>{type}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-xs text-muted-foreground font-medium mb-1 block">Accordato (€)</label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="0,00"
+                            value={row.accordato}
+                            onChange={event => updateClientBank(index, 'accordato', event.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground font-medium mb-1 block">Utilizzato (€)</label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="0,00"
+                            value={row.utilizzato}
+                            onChange={event => updateClientBank(index, 'utilizzato', event.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground font-medium mb-1 block">Saldo (€)</label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="0,00"
+                            value={row.saldo}
+                            onChange={event => updateClientBank(index, 'saldo', event.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-xs text-muted-foreground font-medium mb-1 block">Note (opzionale)</label>
+                        <Textarea
+                          placeholder="Garanzie, scadenze, condizioni o altre informazioni utili..."
+                          rows={2}
+                          value={row.note}
+                          onChange={event => updateClientBank(index, 'note', event.target.value)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <Button
+                className="w-full gap-2"
+                onClick={saveClientBankSituation}
+                disabled={savingClientBanks || (!clientBanks.some(row => row._dirty) && bankSituationCompleted)}
+              >
+                {savingClientBanks
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Salvataggio...</>
+                  : <><Save className="w-4 h-4" /> {clientBanks.length > 0 ? 'Salva situazione banche' : 'Conferma nessun rapporto bancario'}</>
+                }
+              </Button>
             </CardContent>
           </Card>
         )}

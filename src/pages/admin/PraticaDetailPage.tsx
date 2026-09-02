@@ -56,6 +56,24 @@ import {
 } from '@/lib/types';
 
 type AssignedAgent = { id: string; nome?: string; email: string };
+type IntegrationRequestDraft = { nome: string; descrizione: string };
+type ClientQuestion = {
+  id: string;
+  domanda: string;
+  risposta: string | null;
+  stato: 'richiesta' | 'risposta';
+  answered_at: string | null;
+  created_at: string;
+};
+type ClientBankPosition = {
+  id: string;
+  banca: string;
+  tipo_rapporto: string | null;
+  accordato: number | null;
+  utilizzato: number | null;
+  saldo: number | null;
+  note: string | null;
+};
 
 /** Restituisce solo un indirizzo agente assegnato realmente presente nella pratica. */
 function getAssignedAgentEmail(currentPractice: Practice | null): string | undefined {
@@ -136,8 +154,12 @@ export default function PraticaDetailPage() {
   const [newDocName, setNewDocName] = useState('');
   const [newDocDesc, setNewDocDesc] = useState('');
   const [rejectNote, setRejectNote] = useState('');
-  const [integrationName, setIntegrationName] = useState('');
-  const [integrationDesc, setIntegrationDesc] = useState('');
+  const [integrationRequests, setIntegrationRequests] = useState<IntegrationRequestDraft[]>([
+    { nome: '', descrizione: '' },
+  ]);
+  const [integrationQuestions, setIntegrationQuestions] = useState<string[]>(['']);
+  const [clientQuestions, setClientQuestions] = useState<ClientQuestion[]>([]);
+  const [clientBankPositions, setClientBankPositions] = useState<ClientBankPosition[]>([]);
   const [saving, setSaving] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [showSollecita, setShowSollecita] = useState(false);
@@ -542,7 +564,7 @@ export default function PraticaDetailPage() {
     })();
     // Estrai codice ATECO: usa campo diretto se presente, altrimenti lo cerca nell'indirizzo visura
     const codiceAteco = practice?.codice_ateco ?? (() => {
-      const m = indirizzo.match(/(?:ATECO|Codice)[^\d]*(\d{2}[.\-]\d{2}(?:[.\-]\d{1,2})?)/i);
+      const m = indirizzo.match(/(?:ATECO|Codice)[^\d]*(\d{2}[.-]\d{2}(?:[.-]\d{1,2})?)/i);
       return m?.[1] ?? '';
     })();
 
@@ -692,37 +714,82 @@ export default function PraticaDetailPage() {
     const client = (practice as Practice & { clients?: { email: string } }).clients;
     if (!client?.email) { toast.error('Il cliente non ha un email'); return; }
     setSendingEmail(true);
+    try {
+      // Aggiorna sempre email_cliente al valore attuale del cliente.
+      const { error: accessError } = await supabase.from('practice_access_codes')
+        .update({ email_cliente: client.email.trim().toLowerCase() })
+        .eq('id', accessCode.id);
+      if (accessError) throw accessError;
 
-    // Aggiorna sempre email_cliente al valore attuale del cliente
-    await supabase.from('practice_access_codes')
-      .update({ email_cliente: client.email.trim().toLowerCase() })
-      .eq('id', accessCode.id);
+      const [{ data: profile }, { data: docs, error: docsError }, { data: questions, error: questionsError }] = await Promise.all([
+        supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle(),
+        supabase
+          .from('practice_documents')
+          .select('nome')
+          .eq('practice_id', practice.id)
+          .in('tipo', ['standard', 'integrazione'])
+          .in('status', ['richiesto', 'rifiutato'])
+          .order('created_at'),
+        supabase
+          .from('practice_client_questions')
+          .select('domanda')
+          .eq('practice_id', practice.id)
+          .eq('stato', 'richiesta')
+          .order('created_at'),
+      ]);
+      if (docsError) throw docsError;
+      if (questionsError) throw questionsError;
 
-    const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
-    const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
-    const link = `https://credifile-eosin.vercel.app/#/accesso?p=${practice.id}`;
-    const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
-    const docNames = (docs ?? []).map((d: { nome: string }) => d.nome);
-    const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
-      body: {
-        to: client.email,
-        consultant_name: consultantName,
-        documents: docNames,
-        link,
-        code: accessCode.codice,
-        practice_number: practice.numero_pratica,
-        company_name: (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? undefined,
-        // La copia e le risposte del cliente devono arrivare all'agente assegnato.
-        cc: getAssignedAgentEmail(practice),
-        reply_to: getAssignedAgentEmail(practice),
-      },
-    });
-    setSendingEmail(false);
-    if (emailError || emailData?.success === false) {
-      const msg = emailData?.error ? JSON.stringify(emailData.error) : emailError?.message ?? 'Errore sconosciuto';
-      toast.error('Errore invio email: ' + msg);
-    } else {
-      toast.success(`Email inviata a ${client.email}!`);
+      const docNames = (docs ?? []).map((document: { nome: string }) => document.nome);
+      const questionTexts = (questions ?? []).map((question: { domanda: string }) => question.domanda);
+      if (docNames.length === 0 && questionTexts.length === 0) {
+        toast.info('Non ci sono documenti mancanti o domande senza risposta da inviare');
+        return;
+      }
+
+      const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
+      const link = `https://credifile-eosin.vercel.app/#/accesso?p=${practice.id}`;
+      const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
+        body: {
+          to: client.email,
+          consultant_name: consultantName,
+          documents: docNames,
+          questions: questionTexts,
+          link,
+          code: accessCode.codice,
+          practice_number: practice.numero_pratica,
+          company_name: (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? undefined,
+          subject_override: `Richiesta documentale — ${(practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? practice.numero_pratica}`,
+          // La copia e le risposte del cliente devono arrivare all'agente assegnato.
+          cc: getAssignedAgentEmail(practice),
+          reply_to: getAssignedAgentEmail(practice),
+        },
+      });
+      if (emailError || emailData?.success === false) {
+        const msg = emailData?.error ? JSON.stringify(emailData.error) : emailError?.message ?? 'Errore sconosciuto';
+        throw new Error(msg);
+      }
+
+      await supabase.from('practice_activity_log').insert({
+        practice_id: practice.id,
+        action: 'richiesta_documentale_cliente_inviata',
+        actor_id: user?.id ?? null,
+        actor_nome: consultantName,
+        actor_ruolo: 'admin',
+        metadata: {
+          documenti: docNames,
+          domande: questionTexts,
+          destinatario: client.email,
+        },
+      });
+
+      toast.success(
+        `Email inviata a ${client.email}: ${docNames.length} documenti e ${questionTexts.length} domande`
+      );
+    } catch (error) {
+      toast.error('Errore invio email: ' + String(error));
+    } finally {
+      setSendingEmail(false);
     }
   };
 
@@ -758,11 +825,13 @@ export default function PraticaDetailPage() {
 
   const load = useCallback(async () => {
     if (!id) return;
-    const [p, docs, l, ac] = await Promise.all([
+    const [p, docs, l, ac, questions, clientBanks] = await Promise.all([
       supabase.from('practices').select('*, clients(*), banks(*), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)').eq('id', id).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', id).order('created_at'),
       supabase.from('practice_status_log').select('*').eq('practice_id', id).order('created_at', { ascending: false }),
       supabase.from('practice_access_codes').select('*').eq('practice_id', id).maybeSingle(),
+      supabase.from('practice_client_questions').select('*').eq('practice_id', id).order('created_at'),
+      supabase.from('practice_client_banks').select('*').eq('practice_id', id).order('ordinamento'),
     ]);
     setPractice(p.data as Practice);
     // Carica segreteria di competenza (solo super_admin)
@@ -782,6 +851,8 @@ export default function PraticaDetailPage() {
     setDocuments(docs.data as PracticeDocument[] ?? []);
     setLogs(l.data ?? []);
     setAccessCode(ac.data);
+    setClientQuestions((questions.data ?? []) as ClientQuestion[]);
+    setClientBankPositions((clientBanks.data ?? []) as ClientBankPosition[]);
     // Carica finanziamenti
     const { data: fin } = await supabase.from('client_financing').select('*').eq('practice_id', id).order('ordinamento');
     setFinancing((fin ?? []).map(r => ({
@@ -1280,57 +1351,90 @@ export default function PraticaDetailPage() {
 
   // Aggiunta integrazione
   const handleAddIntegration = async () => {
-    if (!integrationName.trim()) { toast.error('Inserisci il nome del documento'); return; }
-    setSaving(true);
-    await supabase.from('practice_documents').insert({
-      practice_id: id, nome: integrationName, descrizione: integrationDesc,
-      tipo: 'integrazione', obbligatorio: true, status: 'richiesto',
-    });
-    // Aggiorna stato pratica
-    await supabase.from('practices').update({ status: 'integrazioni_richieste' }).eq('id', id);
-    await supabase.from('practice_status_log').insert({
-      practice_id: id, old_status: practice?.status, new_status: 'integrazioni_richieste',
-      note: `Richiesta integrazione: ${integrationName}`, created_by: 'admin',
-    });
+    const requestedDocuments = integrationRequests
+      .map(request => ({
+        nome: request.nome.trim(),
+        descrizione: request.descrizione.trim(),
+      }))
+      .filter(request => request.nome.length > 0);
+    const requestedQuestions = integrationQuestions
+      .map(question => question.trim())
+      .filter(question => question.length > 0);
 
-    // Invia email al cliente se ha un codice di accesso
-    const clientEmail = (practice as Practice & { clients?: { email: string; ragione_sociale: string } }).clients?.email;
-    const clientName  = (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale;
-    if (clientEmail && accessCode) {
-      const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
-      const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
-      const link = `https://credifile-eosin.vercel.app/#/accesso?p=${id}`;
-      await supabase.functions.invoke('send-client-email', {
-        body: {
-          to: clientEmail,
-          consultant_name: consultantName,
-          documents: [integrationName],
-          link,
-          code: accessCode.codice,
-          practice_number: practice?.numero_pratica,
-          company_name: clientName,
-          subject_override: `Richiesta integrazione documenti — ${clientName ?? practice?.numero_pratica}`,
-          // Le risposte del cliente devono arrivare all'agente assegnato.
-          cc: getAssignedAgentEmail(practice),
-          reply_to: getAssignedAgentEmail(practice),
-        },
-      });
-      toast.success(`Integrazione richiesta — email inviata a ${clientEmail}`);
-    } else {
-      toast.success('Integrazione richiesta — stato pratica aggiornato');
-      if (clientEmail && !accessCode) toast.info('Nota: nessun codice accesso attivo, email non inviata');
+    if (requestedDocuments.length === 0 && requestedQuestions.length === 0) {
+      toast.error('Inserisci almeno un documento o una domanda');
+      return;
     }
 
-    // WhatsApp automatico al cliente se ha il telefono
-    inviaWhatsAppAuto(
-      client?.telefono,
-      `Gentile ${client?.ragione_sociale ?? 'Cliente'},\n\nle è stata richiesta un'integrazione documenti per la pratica n° ${practice?.numero_pratica}:\n\n📄 *${integrationName}*\n\nAcceda al portale per caricare i documenti.`
-    );
+    setSaving(true);
+    try {
+      if (requestedDocuments.length > 0) {
+        const { error: documentsError } = await supabase
+          .from('practice_documents')
+          .insert(requestedDocuments.map(request => ({
+            practice_id: id,
+            nome: request.nome,
+            descrizione: request.descrizione || null,
+            tipo: 'integrazione',
+            obbligatorio: true,
+            status: 'richiesto',
+          })));
+        if (documentsError) throw documentsError;
+      }
 
-    setSaving(false);
-    setShowIntegration(false);
-    setIntegrationName(''); setIntegrationDesc('');
-    load();
+      if (requestedQuestions.length > 0) {
+        const { error: questionsError } = await supabase
+          .from('practice_client_questions')
+          .insert(requestedQuestions.map(question => ({
+            practice_id: id,
+            domanda: question,
+            stato: 'richiesta',
+            created_by: user?.id ?? null,
+          })));
+        if (questionsError) throw questionsError;
+      }
+
+      const documentNames = requestedDocuments.map(request => request.nome);
+      const totalRequests = documentNames.length + requestedQuestions.length;
+      const { error: practiceError } = await supabase
+        .from('practices')
+        .update({ status: 'integrazioni_richieste' })
+        .eq('id', id);
+      if (practiceError) throw practiceError;
+
+      const { error: logError } = await supabase.from('practice_status_log').insert({
+        practice_id: id,
+        old_status: practice?.status,
+        new_status: 'integrazioni_richieste',
+        note: `Richiesta documentale preparata: ${documentNames.length} documenti, ${requestedQuestions.length} domande`,
+        created_by: 'admin',
+      });
+      if (logError) throw logError;
+
+      await supabase.from('practice_activity_log').insert({
+        practice_id: id,
+        action: 'richiesta_documentale_preparata',
+        actor_id: user?.id ?? null,
+        actor_nome: user?.email ?? 'Admin',
+        actor_ruolo: 'admin',
+        metadata: {
+          documenti: documentNames,
+          domande: requestedQuestions,
+        },
+      });
+
+      toast.success(
+        `${totalRequests} ${totalRequests === 1 ? 'elemento aggiunto' : 'elementi aggiunti'} alla richiesta. Ora usa “Invia Richiesta Documenti”.`
+      );
+      setShowIntegration(false);
+      setIntegrationRequests([{ nome: '', descrizione: '' }]);
+      setIntegrationQuestions(['']);
+      await load();
+    } catch (error) {
+      toast.error('Errore nella richiesta documentale: ' + String(error));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const downloadFile = async (path: string, name: string) => {
@@ -1732,9 +1836,9 @@ export default function PraticaDetailPage() {
                   <BellRing className="w-3.5 h-3.5" /> Sollecita Cliente
                 </Button>
                 )}
-                {canApprove && (
+                {(canEdit || canApprove) && (
                 <Button size="sm" variant="outline" className="gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50" onClick={() => setShowIntegration(true)}>
-                  <AlertCircle className="w-3.5 h-3.5" /> Richiedi Integrazione
+                  <AlertCircle className="w-3.5 h-3.5" /> Prepara Richiesta
                 </Button>
                 )}
               </div>
@@ -1838,6 +1942,67 @@ export default function PraticaDetailPage() {
                   </div>
                 </div>
               ))}
+
+              {clientQuestions.length > 0 && (
+                <Card className="border-blue-200 bg-blue-50/40">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <MessageSquare className="w-4 h-4 text-blue-600" />
+                      Domande al cliente ({clientQuestions.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {clientQuestions.map((question, index) => (
+                      <div key={question.id} className="rounded-lg border border-blue-100 bg-white p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-sm font-medium">{index + 1}. {question.domanda}</p>
+                          <Badge className={question.stato === 'risposta'
+                            ? 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+                            : 'bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0'
+                          }>
+                            {question.stato === 'risposta' ? 'Risposta' : 'In attesa'}
+                          </Badge>
+                        </div>
+                        {question.risposta && (
+                          <div className="mt-2 rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">Risposta del cliente</p>
+                            <p className="text-sm whitespace-pre-wrap">{question.risposta}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {clientBankPositions.length > 0 && (
+                <Card className="border-indigo-200">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-indigo-600" />
+                      Situazione banche dichiarata dal cliente ({clientBankPositions.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {clientBankPositions.map((position, index) => (
+                        <div key={position.id} className="rounded-lg border border-border p-3">
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <p className="text-sm font-semibold">{index + 1}. {position.banca}</p>
+                            {position.tipo_rapporto && <Badge variant="outline">{position.tipo_rapporto}</Badge>}
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                            <div><span className="text-muted-foreground">Accordato:</span> <strong>{position.accordato != null ? `€ ${position.accordato.toLocaleString('it-IT')}` : '—'}</strong></div>
+                            <div><span className="text-muted-foreground">Utilizzato:</span> <strong>{position.utilizzato != null ? `€ ${position.utilizzato.toLocaleString('it-IT')}` : '—'}</strong></div>
+                            <div><span className="text-muted-foreground">Saldo:</span> <strong>{position.saldo != null ? `€ ${position.saldo.toLocaleString('it-IT')}` : '—'}</strong></div>
+                          </div>
+                          {position.note && <p className="text-xs text-muted-foreground mt-2 whitespace-pre-wrap">{position.note}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {documents.length === 0 && (
                 <div className="text-center py-10 text-muted-foreground text-sm">
@@ -3084,27 +3249,158 @@ export default function PraticaDetailPage() {
 
       {/* Dialog integrazione */}
       <Dialog open={showIntegration} onOpenChange={setShowIntegration}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Richiedi Integrazione Banca</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Il documento verrà aggiunto alla lista richieste e lo stato pratica diventerà "Integrazioni Richieste".</p>
-          {accessCode && (practice as Practice & { clients?: { email: string } }).clients?.email && (
-            <p className="text-sm text-blue-700 bg-blue-50 rounded-md px-3 py-2 border border-blue-200">
-              📧 Verrà inviata un'email a <strong>{(practice as Practice & { clients?: { email: string } }).clients?.email}</strong> con il documento richiesto.
-            </p>
-          )}
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Nome Documento *</Label>
-              <Input placeholder="es. Piano di rientro finanziamenti" value={integrationName} onChange={e => setIntegrationName(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Descrizione / Istruzioni</Label>
-              <Textarea placeholder="Dettagli sulla richiesta..." rows={2} value={integrationDesc} onChange={e => setIntegrationDesc(e.target.value)} />
+        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Prepara richiesta documentale</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Aggiungi più documenti e domande in una sola volta. Il cliente riceverà l'elenco completo solo quando userai il pulsante verde “Invia Richiesta Documenti”.
+          </p>
+
+          <div className="space-y-6 py-2">
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">Documenti da integrare</p>
+                  <p className="text-xs text-muted-foreground">Ogni voce diventerà un caricamento separato nel Portale Cliente.</p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1"
+                  onClick={() => setIntegrationRequests(prev => [...prev, { nome: '', descrizione: '' }])}
+                >
+                  <Plus className="w-3.5 h-3.5" /> Aggiungi
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setIntegrationRequests(prev => (
+                    prev.some(request => request.nome.trim().toLocaleLowerCase('it-IT') === 'finanziamenti in essere')
+                      ? prev
+                      : [...prev.filter(request => request.nome.trim() || request.descrizione.trim()), {
+                        nome: 'Finanziamenti in essere',
+                        descrizione: 'Compilare la tabella con tutti i finanziamenti attivi.',
+                      }]
+                  ))}
+                >
+                  + Finanziamenti in essere
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setIntegrationRequests(prev => (
+                    prev.some(request => request.nome.trim().toLocaleLowerCase('it-IT') === 'situazione banche')
+                      ? prev
+                      : [...prev.filter(request => request.nome.trim() || request.descrizione.trim()), {
+                        nome: 'Situazione banche',
+                        descrizione: 'Compilare la tabella con i rapporti bancari in essere.',
+                      }]
+                  ))}
+                >
+                  + Situazione banche
+                </Button>
+              </div>
+
+              <div className="space-y-3">
+                {integrationRequests.map((request, index) => (
+                  <div key={index} className="rounded-lg border border-border p-3 space-y-2 bg-muted/20">
+                    <div className="flex items-center justify-between">
+                      <Label>Documento {index + 1}</Label>
+                      {integrationRequests.length > 1 && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-destructive"
+                          onClick={() => setIntegrationRequests(prev => prev.filter((_, rowIndex) => rowIndex !== index))}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
+                        </Button>
+                      )}
+                    </div>
+                    <Input
+                      placeholder="es. Contratto di finanziamento"
+                      value={request.nome}
+                      onChange={event => setIntegrationRequests(prev => prev.map((row, rowIndex) => (
+                        rowIndex === index ? { ...row, nome: event.target.value } : row
+                      )))}
+                    />
+                    <Textarea
+                      placeholder="Descrizione o istruzioni per il cliente (opzionale)"
+                      rows={2}
+                      value={request.descrizione}
+                      onChange={event => setIntegrationRequests(prev => prev.map((row, rowIndex) => (
+                        rowIndex === index ? { ...row, descrizione: event.target.value } : row
+                      )))}
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <Separator />
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">Domande al cliente</p>
+                  <p className="text-xs text-muted-foreground">Il cliente troverà una casella di risposta separata per ogni domanda.</p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1"
+                  onClick={() => setIntegrationQuestions(prev => [...prev, ''])}
+                >
+                  <Plus className="w-3.5 h-3.5" /> Aggiungi
+                </Button>
+              </div>
+
+              <div className="space-y-3">
+                {integrationQuestions.map((question, index) => (
+                  <div key={index} className="rounded-lg border border-border p-3 bg-muted/20">
+                    <div className="flex items-center justify-between mb-2">
+                      <Label>Domanda {index + 1}</Label>
+                      {integrationQuestions.length > 1 && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-destructive"
+                          onClick={() => setIntegrationQuestions(prev => prev.filter((_, rowIndex) => rowIndex !== index))}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
+                        </Button>
+                      )}
+                    </div>
+                    <Textarea
+                      placeholder="es. A quale finalità sarà destinato il finanziamento richiesto?"
+                      rows={2}
+                      value={question}
+                      onChange={event => setIntegrationQuestions(prev => prev.map((row, rowIndex) => (
+                        rowIndex === index ? event.target.value : row
+                      )))}
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              Dopo il salvataggio, premi “Invia Richiesta Documenti” nel riquadro Portale Cliente per spedire una sola email con tutti gli elementi ancora mancanti.
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowIntegration(false)}>Annulla</Button>
-            <Button onClick={handleAddIntegration} disabled={saving} className="bg-amber-600 hover:bg-amber-700">Richiedi Integrazione</Button>
+            <Button onClick={handleAddIntegration} disabled={saving} className="bg-amber-600 hover:bg-amber-700">
+              {saving ? 'Salvataggio...' : 'Aggiungi alla richiesta'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
