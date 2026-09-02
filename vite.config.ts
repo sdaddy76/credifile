@@ -14,8 +14,8 @@ import * as t from '@babel/types';
 
 
 // CJS/ESM interop for Babel libs
-const traverse: typeof _traverse.default = ( (_traverse as any).default ?? _traverse ) as any;
-const generate: typeof _generate.default = ( (_generate as any).default ?? _generate ) as any;
+const traverse = ((_traverse as unknown as { default?: typeof _traverse }).default ?? _traverse) as typeof _traverse;
+const generate = ((_generate as unknown as { default?: typeof _generate }).default ?? _generate) as typeof _generate;
 
 function cdnPrefixImages(): Plugin {
   const DEBUG = process.env.CDN_IMG_DEBUG === '1';
@@ -80,7 +80,7 @@ function cdnPrefixImages(): Plugin {
     let rewrites = 0;
 
     traverse(ast, {
-      JSXAttribute(path) {
+      JSXAttribute(path: any) {
         const name = (path.node.name as t.JSXIdentifier).name;
         const isSrc = name === 'src' || name === 'href';
         const isSrcSet = name === 'srcSet' || name === 'srcset';
@@ -104,23 +104,23 @@ function cdnPrefixImages(): Plugin {
         }
       },
 
-      StringLiteral(path) {
+      StringLiteral(path: any) {
         // skip object keys: { "image": "..." }
         if (t.isObjectProperty(path.parent) && path.parentKey === 'key' && !path.parent.computed) return;
         // skip import/export sources
         if (t.isImportDeclaration(path.parent) || t.isExportAllDeclaration(path.parent) || t.isExportNamedDeclaration(path.parent)) return;
         // skip inside JSX attribute (already handled)
-        if (path.findParent(p => p.isJSXAttribute())) return;
+        if (path.findParent((p: any) => p.isJSXAttribute())) return;
 
         const before = path.node.value;
         const after = toCDN(before, cdn);
         if (after !== before) { path.node.value = after; rewrites++; }
       },
 
-      TemplateLiteral(path) {
+      TemplateLiteral(path: any) {
         // handle `"/images/foo.png"` as template with NO expressions
         if (path.node.expressions.length) return;
-        const raw = path.node.quasis.map(q => q.value.cooked ?? q.value.raw).join('');
+        const raw = path.node.quasis.map((q: any) => q.value.cooked ?? q.value.raw).join('');
         const after = toCDN(raw, cdn);
         if (after !== raw) {
           path.replaceWith(t.stringLiteral(after));

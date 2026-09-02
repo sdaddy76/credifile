@@ -264,8 +264,8 @@ export default function NuovoReportWizard() {
             istituto: riga.banca,
             tipo,
             importo_residuo: riga.utilizzato,
-            rata_mensile: null,
-            scadenza: null,
+            rata_mensile: null as number | null,
+            scadenza: null as string | null,
             fonte: 'centrale_rischi',
           };
         });

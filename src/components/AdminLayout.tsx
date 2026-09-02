@@ -138,7 +138,7 @@ export default function AdminLayout() {
             <NavLink
               key={to} to={to}
               onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) => cn(
+              className={({ isActive }: { isActive: boolean }) => cn(
                 'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
                 isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               )}
