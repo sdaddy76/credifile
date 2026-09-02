@@ -55,6 +55,14 @@ import {
   type Bank, type PracticeAccessCode
 } from '@/lib/types';
 
+type AssignedAgent = { id: string; nome?: string; email: string };
+
+/** Restituisce solo un indirizzo agente assegnato realmente presente nella pratica. */
+function getAssignedAgentEmail(currentPractice: Practice | null): string | undefined {
+  const email = (currentPractice as Practice & { assigned_agent?: AssignedAgent } | null)?.assigned_agent?.email?.trim();
+  return email || undefined;
+}
+
 export default function PraticaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -703,7 +711,9 @@ export default function PraticaDetailPage() {
         code: accessCode.codice,
         practice_number: practice.numero_pratica,
         company_name: (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? undefined,
-        cc: (practice as Practice & { segnalatore?: { email: string } }).segnalatore?.email ?? undefined,
+        // La copia e le risposte del cliente devono arrivare all'agente assegnato.
+        cc: getAssignedAgentEmail(practice),
+        reply_to: getAssignedAgentEmail(practice),
       },
     });
     setSendingEmail(false);
@@ -967,7 +977,9 @@ export default function PraticaDetailPage() {
         code: codice,
         practice_number: practice.numero_pratica,
         company_name: (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? undefined,
-        cc: (practice as Practice & { segnalatore?: { email: string } }).segnalatore?.email ?? undefined,
+        // La copia e le risposte del cliente devono arrivare all'agente assegnato.
+        cc: getAssignedAgentEmail(practice),
+        reply_to: getAssignedAgentEmail(practice),
       },
     });
     if (emailError2 || emailData2?.success === false) {
@@ -1297,6 +1309,9 @@ export default function PraticaDetailPage() {
           practice_number: practice?.numero_pratica,
           company_name: clientName,
           subject_override: `Richiesta integrazione documenti — ${clientName ?? practice?.numero_pratica}`,
+          // Le risposte del cliente devono arrivare all'agente assegnato.
+          cc: getAssignedAgentEmail(practice),
+          reply_to: getAssignedAgentEmail(practice),
         },
       });
       toast.success(`Integrazione richiesta — email inviata a ${clientEmail}`);
@@ -1627,7 +1642,7 @@ export default function PraticaDetailPage() {
           })()}
 
           {/* Link cliente — solo agente */}
-          {isAgente && (
+          {(isAgente || isSuperAdmin || isSegreteria) && (
           <Card className="border-border">
             <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Link2 className="w-4 h-4 text-primary" />Portale Cliente</CardTitle></CardHeader>
             <CardContent className="space-y-3">

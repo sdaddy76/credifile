@@ -11,7 +11,7 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
   try {
-    const { to, consultant_name, documents, link, code, practice_number, company_name, cc } = await req.json();
+    const { to, consultant_name, documents, link, code, practice_number, company_name, cc, reply_to } = await req.json();
 
     if (!to || !consultant_name || !link || !code) {
       return new Response(JSON.stringify({ success: false, error: "Parametri mancanti" }), {
@@ -68,6 +68,7 @@ Deno.serve(async (req: Request) => {
 
     const emailPayload: Record<string, unknown> = { from: FROM_EMAIL, to: [to], subject, html: htmlBody, text: textBody };
     if (cc) emailPayload.cc = Array.isArray(cc) ? cc : [cc];
+    if (typeof reply_to === "string" && reply_to.trim()) emailPayload.reply_to = reply_to.trim();
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
