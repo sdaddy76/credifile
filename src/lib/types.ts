@@ -186,9 +186,9 @@ export interface PracticeStatusLog {
 
 export const STATUS_LABELS: Record<PracticeStatus, string> = {
   bozza: 'Bozza',
-  raccolta_documenti: 'Raccolta Documenti',
-  inviata_banca: 'Inviata alla Banca',
-  integrazioni_richieste: 'Integrazioni Richieste',
+  raccolta_documenti: 'Raccolta Documentazione',
+  inviata_banca: 'Inviata a Banca',
+  integrazioni_richieste: 'Integrazione Richiesta',
   completata: 'Completata',
   approvata: 'Approvata',
   rifiutata: 'Rifiutata',

@@ -17,7 +17,7 @@ import {
 import { toast } from 'sonner';
 import {
   STATUS_LABELS, STATUS_COLORS,
-  type Practice, type PracticeDocument, type PracticeStatusLog, type PracticeStatus,
+  type Practice, type PracticeDocument, type PracticeStatusLog,
 } from '@/lib/types';
 
 interface ClientSession {
@@ -754,28 +754,89 @@ export default function ClientPortalPage() {
 
         {/* ── Stepper stati pratica ───────────────────────────────────────── */}
         {(() => {
-          const STEPS: { key: PracticeStatus; label: string }[] = [
+          type ClientWorkflowStep =
+            | 'bozza'
+            | 'raccolta_documenti'
+            | 'integrazioni_richieste'
+            | 'inviata_banca'
+            | 'istruttoria'
+            | 'in_delibera'
+            | 'deliberata'
+            | 'erogata';
+
+          const PRIMARY_STEPS: { key: ClientWorkflowStep; label: string }[] = [
             { key: 'bozza',                  label: 'Bozza' },
-            { key: 'raccolta_documenti',      label: 'Raccolta Documenti' },
-            { key: 'inviata_banca',           label: 'Inviata Banca' },
-            { key: 'integrazioni_richieste',  label: 'In Valutazione' },
-            { key: 'approvata',               label: 'Approvata / Declinata' },
+            { key: 'raccolta_documenti',     label: 'Raccolta Documentazione' },
+            { key: 'inviata_banca',          label: 'Inviata a Banca' },
+            { key: 'istruttoria',             label: 'Istruttoria' },
+            { key: 'in_delibera',             label: 'In Delibera' },
+            { key: 'deliberata',              label: 'Deliberata' },
+            { key: 'erogata',                 label: 'Erogata' },
           ];
 
-          const STATUS_MESSAGES: Partial<Record<PracticeStatus, string>> = {
+          const STATUS_MESSAGES: Record<string, string> = {
             bozza:               '📝 La pratica è in fase di configurazione da parte del tuo agente.',
             raccolta_documenti:  '📂 Stiamo raccogliendo la documentazione necessaria. Carica i documenti richiesti qui sotto.',
-            inviata_banca:       '🏦 La pratica è stata inviata alla banca. Attendiamo una risposta.',
-            integrazioni_richieste: '🔍 La banca sta valutando la tua richiesta. Ti aggiorneremo appena disponibile.',
+            integrazioni_richieste: '📎 È stata richiesta un’integrazione documentale. Carica qui sotto i documenti mancanti.',
+            inviata_banca:       '🏦 La pratica è stata inviata alla banca.',
+            istruttoria:         '🔍 La banca sta analizzando la documentazione e la richiesta.',
+            completata:          '🔍 La pratica è in istruttoria presso la banca.',
+            in_delibera:         '⏳ L’istruttoria è terminata e la pratica è in attesa di delibera.',
+            deliberata:          '📋 La banca ha deliberato la pratica. Contatta il tuo agente per conoscere l’esito.',
             approvata:           '✅ Complimenti! La tua pratica è stata approvata.',
+            rifiutata:           '❌ La pratica ha ricevuto un esito negativo. Contatta il tuo agente per ulteriori informazioni.',
             declinata:           '❌ Purtroppo la pratica è stata declinata. Contatta il tuo agente per ulteriori informazioni.',
+            erogata:             '💶 Il finanziamento è stato erogato.',
           };
 
-          // Trova l'indice dello stato corrente nell'array STEPS
-          const currentKey = practice.status;
-          const currentIdx = STEPS.findIndex(s => s.key === currentKey);
-          // Se lo stato non è in STEPS (es. declinata/integrazioni) mostra l'ultimo step evidenziato
-          const displayIdx = currentIdx === -1 ? STEPS.length - 1 : currentIdx;
+          const statusToStep: Record<string, ClientWorkflowStep> = {
+            bozza: 'bozza',
+            raccolta_documenti: 'raccolta_documenti',
+            inviata_banca: 'inviata_banca',
+            istruttoria: 'istruttoria',
+            completata: 'istruttoria',
+            in_delibera: 'in_delibera',
+            deliberata: 'deliberata',
+            approvata: 'deliberata',
+            rifiutata: 'deliberata',
+            declinata: 'deliberata',
+            erogata: 'erogata',
+          };
+
+          const currentKey = practice.status as string;
+          const latestIntegrationLog = [...statusLogs]
+            .reverse()
+            .find(log => log.new_status === 'integrazioni_richieste');
+          const previousNonIntegrationLog = latestIntegrationLog
+            ? [...statusLogs]
+                .filter(log =>
+                  new Date(log.created_at).getTime() < new Date(latestIntegrationLog.created_at).getTime()
+                  && log.new_status !== 'integrazioni_richieste'
+                )
+                .reverse()[0]
+            : undefined;
+          const integrationOriginStatus =
+            latestIntegrationLog?.old_status !== 'integrazioni_richieste'
+              ? latestIntegrationLog?.old_status
+              : previousNonIntegrationLog?.new_status;
+          const integrationAnchorKey = statusToStep[integrationOriginStatus ?? '']
+            ?? statusToStep[previousNonIntegrationLog?.new_status ?? '']
+            ?? 'raccolta_documenti';
+          const integrationAnchorIdx = PRIMARY_STEPS.findIndex(step => step.key === integrationAnchorKey);
+          const STEPS = [...PRIMARY_STEPS];
+
+          if (latestIntegrationLog || currentKey === 'integrazioni_richieste') {
+            STEPS.splice(
+              Math.max(0, integrationAnchorIdx) + 1,
+              0,
+              { key: 'integrazioni_richieste', label: 'Integrazione Richiesta' }
+            );
+          }
+
+          const currentStepKey = currentKey === 'integrazioni_richieste'
+            ? 'integrazioni_richieste'
+            : statusToStep[currentKey] ?? 'bozza';
+          const displayIdx = STEPS.findIndex(step => step.key === currentStepKey);
 
           return (
             <Card className="border-border">
@@ -787,10 +848,11 @@ export default function ClientPortalPage() {
                 {/* Stepper orizzontale su md, verticale su mobile */}
                 <div className="flex flex-col gap-0">
                   {STEPS.map((step, idx) => {
-                    const log = statusLogs.find(l => l.new_status === step.key);
+                    const log = step.key === 'integrazioni_richieste'
+                      ? latestIntegrationLog
+                      : [...statusLogs].reverse().find(l => statusToStep[l.new_status] === step.key);
                     const isCurrent = idx === displayIdx;
                     const isPast    = idx < displayIdx;
-                    const isFuture  = idx > displayIdx;
 
                     return (
                       <div key={step.key} className="flex items-start gap-3">
