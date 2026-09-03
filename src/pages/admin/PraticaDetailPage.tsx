@@ -1764,6 +1764,38 @@ export default function PraticaDetailPage() {
                     <p className="text-xs text-muted-foreground">Email: {accessCode.email_cliente}</p>
                     {accessCode.last_access && <p className="text-xs text-muted-foreground">Ultimo accesso: {new Date(accessCode.last_access).toLocaleDateString('it-IT')}</p>}
                   </div>
+                  <div className={`rounded-lg border p-3 ${
+                    accessCode.privacy_consent_accepted_at
+                      ? 'border-green-200 bg-green-50 text-green-800'
+                      : 'border-amber-200 bg-amber-50 text-amber-800'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      {accessCode.privacy_consent_accepted_at
+                        ? <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      }
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold">
+                          {accessCode.privacy_consent_accepted_at
+                            ? 'Privacy accettata'
+                            : 'Privacy non ancora accettata'
+                          }
+                        </p>
+                        {accessCode.privacy_consent_accepted_at && (
+                          <>
+                            <p className="text-xs mt-0.5">
+                              {new Date(accessCode.privacy_consent_accepted_at).toLocaleString('it-IT')}
+                            </p>
+                            {accessCode.privacy_consent_version && (
+                              <p className="text-[11px] mt-0.5 opacity-80">
+                                Versione: {accessCode.privacy_consent_version}
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" className="flex-1 gap-1 text-xs" onClick={copyLink}>
                       <Copy className="w-3 h-3" /> Copia Link

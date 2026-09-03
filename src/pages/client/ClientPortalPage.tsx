@@ -12,7 +12,7 @@ import { Progress } from '@/components/ui/progress';
 import {
   FileText, Upload, CheckCircle2, Clock, AlertCircle,
   LogOut, PlusCircle, Trash2, Save, FileDown, Loader2,
-  Check, MessageSquare, Building2,
+  Check, MessageSquare, Building2, ShieldCheck, LockKeyhole,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -25,6 +25,9 @@ interface ClientSession {
   codice: string;
   email: string;
 }
+
+const PRIVACY_CONSENT_VERSION = '2026-09-03-v1';
+const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell'informativa privacy relativa alla pratica e, in qualità di interessato e/o legale rappresentante della società, autorizzo il consulente o intermediario incaricato a raccogliere, trattare e trasmettere alle banche e agli intermediari finanziari coinvolti nella valutazione della pratica i documenti e le informazioni personali, societarie, economiche e finanziarie da me caricati, esclusivamente per l'istruttoria, la valutazione e l'eventuale perfezionamento della richiesta di finanziamento. Dichiaro inoltre di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti. Sono informato che l'autorizzazione può essere revocata per i trattamenti basati sul consenso, senza pregiudicare la liceità dei trattamenti già effettuati, contattando il consulente che gestisce la pratica.`;
 
 const isFinancingRequestDocument = (doc: PracticeDocument) => {
   const normalizedName = doc.nome
@@ -60,6 +63,10 @@ export default function ClientPortalPage() {
   const [loading, setLoading] = useState(true);
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [privacyConsentRecordId, setPrivacyConsentRecordId] = useState<string | null>(null);
+  const [privacyConsentAcceptedAt, setPrivacyConsentAcceptedAt] = useState<string | null>(null);
+  const [privacyConsentChecked, setPrivacyConsentChecked] = useState(false);
+  const [savingPrivacyConsent, setSavingPrivacyConsent] = useState(false);
 
   // ── Storico stati pratica ────────────────────────────────────────────────
   const [statusLogs, setStatusLogs] = useState<PracticeStatusLog[]>([]);
@@ -160,6 +167,10 @@ export default function ClientPortalPage() {
   };
 
   const saveQuestionAnswer = async (question: ClientQuestion) => {
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
     const answer = question.risposta?.trim() ?? '';
     if (!answer) {
       toast.error('Inserisci una risposta prima di salvare');
@@ -227,6 +238,10 @@ export default function ClientPortalPage() {
 
   const saveClientBankSituation = async () => {
     if (!practiceId) return;
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
     const incompleteRow = clientBanks.find(row => !row.banca.trim());
     if (incompleteRow) {
       toast.error('Indica il nome della banca in ogni riga');
@@ -312,6 +327,10 @@ export default function ClientPortalPage() {
 
   const saveFinancing = async () => {
     if (!practiceId) return;
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
     setSavingFin(true);
     try {
       for (let i = 0; i < financing.length; i++) {
@@ -378,14 +397,21 @@ export default function ClientPortalPage() {
   }, [practiceId, navigate]);
 
   const load = async () => {
-    if (!practiceId) return;
-    const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes] = await Promise.all([
+    if (!practiceId || !session) return;
+    const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes, accessRes] = await Promise.all([
       supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)').eq('id', practiceId).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', practiceId).order('tipo').order('created_at'),
       supabase.from('practice_banks').select('bank_id').eq('practice_id', practiceId),
       supabase.from('practice_status_log').select('*').eq('practice_id', practiceId).order('created_at', { ascending: true }),
       supabase.from('practice_client_questions').select('*').eq('practice_id', practiceId).order('created_at'),
       supabase.from('practice_client_banks').select('*').eq('practice_id', practiceId).order('ordinamento'),
+      supabase
+        .from('practice_access_codes')
+        .select('id, privacy_consent_accepted_at, privacy_consent_version')
+        .eq('practice_id', practiceId)
+        .eq('codice', session.codice)
+        .eq('email_cliente', session.email)
+        .maybeSingle(),
     ]);
     setPractice(p.data as Practice);
     setDocuments((docs.data ?? []) as PracticeDocument[]);
@@ -402,6 +428,12 @@ export default function ClientPortalPage() {
       _dirty: false,
       _new: false,
     })));
+    setPrivacyConsentRecordId(accessRes.data?.id ?? null);
+    setPrivacyConsentAcceptedAt(
+      accessRes.data?.privacy_consent_version === PRIVACY_CONSENT_VERSION
+        ? accessRes.data?.privacy_consent_accepted_at ?? null
+        : null
+    );
     const bankIds = (pbRes.data ?? []).map((r: { bank_id: string }) => r.bank_id);
     if (bankIds.length > 0) {
       const [modRes, compRes] = await Promise.all([
@@ -423,6 +455,10 @@ export default function ClientPortalPage() {
 
   const uploadCompilatoClient = async (moduloId: string, file: File) => {
     if (!practiceId) return;
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
     setUploadingMod(moduloId);
     const ext  = file.name.split('.').pop() ?? 'pdf';
     const path = `${practiceId}/${moduloId}/${Date.now()}.${ext}`;
@@ -441,6 +477,10 @@ export default function ClientPortalPage() {
 
   const handleFileUpload = async (docId: string, file: File) => {
     if (!practiceId) return;
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
     setUploadingDoc(docId);
 
     try {
@@ -489,6 +529,10 @@ export default function ClientPortalPage() {
   // ── Upload documento libero (non legato a practice_document) ─────────────
   const handleFreeDocUpload = async (file: File) => {
     if (!practiceId) return;
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
     if (file.size > 30 * 1024 * 1024) {
       toast.error('File troppo grande. Massimo 30 MB.');
       return;
@@ -515,6 +559,43 @@ export default function ClientPortalPage() {
       toast.error('Errore caricamento: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setUploadingFreeDoc(false);
+    }
+  };
+
+  const acceptPrivacyConsent = async () => {
+    if (!privacyConsentRecordId || !session || !privacyConsentChecked) {
+      toast.error('Seleziona la casella di autorizzazione per continuare');
+      return;
+    }
+
+    setSavingPrivacyConsent(true);
+    const acceptedAt = new Date().toISOString();
+    try {
+      const { data, error } = await supabase
+        .from('practice_access_codes')
+        .update({
+          privacy_consent_accepted_at: acceptedAt,
+          privacy_consent_version: PRIVACY_CONSENT_VERSION,
+          privacy_consent_text: PRIVACY_CONSENT_TEXT,
+          privacy_consent_email: session.email,
+          privacy_consent_user_agent: navigator.userAgent,
+        })
+        .eq('id', privacyConsentRecordId)
+        .eq('practice_id', session.practiceId)
+        .eq('codice', session.codice)
+        .eq('email_cliente', session.email)
+        .select('id')
+        .single();
+      if (error) throw error;
+      if (!data?.id) throw new Error('Codice di accesso non trovato');
+
+      setPrivacyConsentAcceptedAt(acceptedAt);
+      setPrivacyConsentChecked(false);
+      toast.success('Autorizzazione registrata. Ora puoi caricare i documenti.');
+    } catch (error) {
+      toast.error('Errore durante il salvataggio dell’autorizzazione: ' + String(error));
+    } finally {
+      setSavingPrivacyConsent(false);
     }
   };
 
@@ -724,6 +805,80 @@ export default function ClientPortalPage() {
           );
         })()}
 
+        {/* Autorizzazione privacy obbligatoria */}
+        <Card className={privacyConsentAcceptedAt
+          ? 'border-green-200 bg-green-50/40'
+          : 'border-amber-300 bg-amber-50/40 shadow-sm'
+        }>
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <ShieldCheck className={privacyConsentAcceptedAt ? 'w-5 h-5 text-green-600' : 'w-5 h-5 text-amber-600'} />
+                Autorizzazione privacy e trasmissione documenti
+              </CardTitle>
+              <Badge className={privacyConsentAcceptedAt
+                ? 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+                : 'bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0'
+              }>
+                {privacyConsentAcceptedAt ? 'Accettata' : 'Obbligatoria'}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="pb-4 space-y-4">
+            {privacyConsentAcceptedAt ? (
+              <div className="flex items-start gap-2 text-sm text-green-800">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                <p>
+                  Autorizzazione registrata il{' '}
+                  <strong>{new Date(privacyConsentAcceptedAt).toLocaleString('it-IT')}</strong>.
+                  Puoi procedere con il caricamento e la compilazione dei documenti.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="rounded-lg border border-amber-200 bg-white p-4">
+                  <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-line">
+                    {PRIVACY_CONSENT_TEXT}
+                  </p>
+                </div>
+
+                <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-border bg-white p-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-border accent-blue-600"
+                    checked={privacyConsentChecked}
+                    onChange={event => setPrivacyConsentChecked(event.target.checked)}
+                  />
+                  <span className="text-sm font-medium leading-relaxed">
+                    Ho letto e accetto l’autorizzazione sopra riportata e autorizzo la trasmissione
+                    dei documenti personali e societari alle banche e agli intermediari coinvolti nella pratica.
+                  </span>
+                </label>
+
+                <Button
+                  className="w-full gap-2 bg-amber-600 hover:bg-amber-700 text-white"
+                  disabled={!privacyConsentChecked || savingPrivacyConsent || !privacyConsentRecordId}
+                  onClick={acceptPrivacyConsent}
+                >
+                  {savingPrivacyConsent
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Registrazione in corso...</>
+                    : <><ShieldCheck className="w-4 h-4" /> Accetta e abilita il caricamento</>
+                  }
+                </Button>
+
+                <div className="flex items-start gap-2 text-xs text-amber-800">
+                  <LockKeyhole className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <p>Finché non accetti, tutti i caricamenti e le compilazioni richieste rimangono bloccati.</p>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <fieldset
+          disabled={!privacyConsentAcceptedAt}
+          className={`space-y-6 border-0 p-0 m-0 min-w-0 ${privacyConsentAcceptedAt ? '' : 'opacity-50'}`}
+        >
         {/* Moduli banca da compilare */}
         {bankModuli.length > 0 && (
           <Card className="border-border">
@@ -1250,6 +1405,7 @@ export default function ClientPortalPage() {
             </div>
           </CardContent>
         </Card>
+        </fieldset>
 
         {/* Footer note */}
         <div className="text-center text-xs text-muted-foreground pb-4">

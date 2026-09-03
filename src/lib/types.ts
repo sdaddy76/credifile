@@ -133,6 +133,11 @@ export interface PracticeAccessCode {
   email_cliente: string;
   scadenza?: string;
   last_access?: string;
+  privacy_consent_accepted_at?: string | null;
+  privacy_consent_version?: string | null;
+  privacy_consent_text?: string | null;
+  privacy_consent_email?: string | null;
+  privacy_consent_user_agent?: string | null;
   created_at: string;
 }
 
