@@ -26,6 +26,37 @@ interface ClientSession {
   email: string;
 }
 
+interface AgentDocumentNotificationParams {
+  practiceId: string;
+  session: ClientSession;
+  practiceDocumentId?: string;
+  uploadedFileId?: string;
+}
+
+const notifyAgentDocumentUpload = async ({
+  practiceId,
+  session,
+  practiceDocumentId,
+  uploadedFileId,
+}: AgentDocumentNotificationParams) => {
+  const { data, error } = await supabase.functions.invoke('notify-agent-document-upload', {
+    body: {
+      practice_id: practiceId,
+      practice_document_id: practiceDocumentId,
+      uploaded_file_id: uploadedFileId,
+      access_code: session.codice,
+      client_email: session.email,
+    },
+  });
+
+  if (error || data?.success === false) {
+    console.error(
+      'Notifica caricamento documentale non inviata:',
+      error?.message ?? data?.error ?? data?.errors ?? 'errore sconosciuto'
+    );
+  }
+};
+
 const PRIVACY_CONSENT_VERSION = '2026-09-03-v1';
 const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell'informativa privacy relativa alla pratica e, in qualità di interessato e/o legale rappresentante della società, autorizzo il consulente o intermediario incaricato a raccogliere, trattare e trasmettere alle banche e agli intermediari finanziari coinvolti nella valutazione della pratica i documenti e le informazioni personali, societarie, economiche e finanziarie da me caricati, esclusivamente per l'istruttoria, la valutazione e l'eventuale perfezionamento della richiesta di finanziamento. Dichiaro inoltre di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti. Sono informato che l'autorizzazione può essere revocata per i trattamenti basati sul consenso, senza pregiudicare la liceità dei trattamenti già effettuati, contattando il consulente che gestisce la pratica.`;
 
@@ -291,6 +322,10 @@ export default function ClientPortalPage() {
           })
           .in('id', pendingBankDocumentIds);
         if (error) throw error;
+
+        if (session) {
+          await notifyAgentDocumentUpload({ practiceId, session });
+        }
       }
 
       await load();
@@ -374,6 +409,10 @@ export default function ClientPortalPage() {
           })
           .in('id', pendingFinancingDocumentIds);
         if (error) throw error;
+
+        if (session) {
+          await notifyAgentDocumentUpload({ practiceId, session });
+        }
       }
 
       setFinancing(prev => prev.map(r => ({ ...r, _dirty: false, _new: false })));
@@ -494,16 +533,31 @@ export default function ClientPortalPage() {
         uploadedBy: 'cliente',
       });
 
-      if (result.error || !result.path) {
+      if (result.error || !result.path || !result.uploadedFileId) {
         toast.error(`Errore caricamento "${file.name}": ${result.error?.message ?? 'errore sconosciuto'}`);
         return;
       }
 
       // Aggiorna stato documento
-      await supabase.from('practice_documents').update({
-        status: 'caricato',
-        uploaded_at: new Date().toISOString(),
-      }).eq('id', docId);
+      const { error: statusError } = await supabase
+        .from('practice_documents')
+        .update({
+          status: 'caricato',
+          uploaded_at: new Date().toISOString(),
+          note_rifiuto: null,
+        })
+        .eq('id', docId)
+        .eq('practice_id', practiceId);
+      if (statusError) throw statusError;
+
+      if (session) {
+        await notifyAgentDocumentUpload({
+          practiceId,
+          session,
+          practiceDocumentId: docId,
+          uploadedFileId: result.uploadedFileId,
+        });
+      }
 
       toast.success(`"${file.name}" caricato con successo!`);
       load();

@@ -16,6 +16,7 @@ export interface UploadPracticeFileParams {
 
 export interface UploadPracticeFileResult {
   path: string | null;
+  uploadedFileId: string | null;
   nomefile_originale: string;
   error: Error | null;
 }
@@ -40,7 +41,7 @@ export async function uploadPracticeFile({
     .upload(path, file, { cacheControl: '3600', upsert: false });
 
   if (storageError) {
-    return { path: null, nomefile_originale, error: new Error(storageError.message) };
+    return { path: null, uploadedFileId: null, nomefile_originale, error: new Error(storageError.message) };
   }
 
   const payload: Record<string, unknown> = {
@@ -56,12 +57,16 @@ export async function uploadPracticeFile({
     payload.practice_document_id = practiceDocumentId;
   }
 
-  const { error: dbError } = await supabase.from('uploaded_files').insert(payload);
+  const { data: uploadedFile, error: dbError } = await supabase
+    .from('uploaded_files')
+    .insert(payload)
+    .select('id')
+    .single();
 
   if (dbError) {
     await supabase.storage.from('practice-files').remove([path]);
-    return { path, nomefile_originale, error: new Error(dbError.message) };
+    return { path, uploadedFileId: null, nomefile_originale, error: new Error(dbError.message) };
   }
 
-  return { path, nomefile_originale, error: null };
+  return { path, uploadedFileId: uploadedFile.id, nomefile_originale, error: null };
 }
