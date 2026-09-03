@@ -67,17 +67,36 @@ interface FormState {
   email:                 string;
   telefono:              string;
   indirizzo:             string;
+  provincia:             string;
   data_costituzione:     string;
+  forma_giuridica:       string;
+  capitale_sociale:      string;
   capitale_versato:      string;
+  codice_ateco:          string;
+  ateco_descrizione:     string;
   soci:                  Socio[];
   amministratori:        Amministratore[];
 }
 
 const EMPTY: FormState = {
   ragione_sociale: '', piva: '', codice_fiscale: '', email: '',
-  telefono: '', indirizzo: '', data_costituzione: '', capitale_versato: '',
+  telefono: '', indirizzo: '', provincia: '', data_costituzione: '',
+  forma_giuridica: '', capitale_sociale: '', capitale_versato: '',
+  codice_ateco: '', ateco_descrizione: '',
   soci: [], amministratori: [],
 };
+
+function parseOptionalAmount(value: string): number | null {
+  const normalized = value.trim().replace(/[€\s]/g, '');
+  if (!normalized) return null;
+  const decimalValue = normalized.includes(',')
+    ? normalized.replace(/\./g, '').replace(',', '.')
+    : /^\d{1,3}(?:\.\d{3})+$/.test(normalized)
+      ? normalized.replace(/\./g, '')
+      : normalized;
+  const parsed = Number(decimalValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 // ═══════════════════════════════════════════════════════════
 //  COMPONENTE
@@ -173,8 +192,13 @@ export default function ClientiPage() {
     email:             c.email,
     telefono:          c.telefono         ?? '',
     indirizzo:         c.indirizzo        ?? '',
+    provincia:         c.provincia        ?? '',
     data_costituzione: c.data_costituzione ?? '',
+    forma_giuridica:   c.forma_giuridica  ?? '',
+    capitale_sociale:  c.capitale_sociale != null ? String(c.capitale_sociale) : '',
     capitale_versato:  c.capitale_sociale_versato ?? '',
+    codice_ateco:      c.codice_ateco      ?? '',
+    ateco_descrizione: c.ateco_descrizione ?? '',
     soci:              c.soci             ?? [],
     amministratori:    c.amministratori   ?? [],
   });
@@ -203,8 +227,13 @@ export default function ClientiPage() {
         email:             prev.email             || parsed.email             || '',
         telefono:          prev.telefono          || parsed.telefono          || '',
         indirizzo:         prev.indirizzo         || parsed.indirizzo         || '',
+        provincia:         prev.provincia,
         data_costituzione: prev.data_costituzione || parsed.data_costituzione || '',
+        forma_giuridica:   prev.forma_giuridica   || parsed.forma_giuridica   || '',
+        capitale_sociale:  prev.capitale_sociale  || (parsed.capitale_sociale != null ? String(parsed.capitale_sociale) : ''),
         capitale_versato:  prev.capitale_versato  || parsed.capitale_versato  || '',
+        codice_ateco:      prev.codice_ateco      || parsed.codice_ateco      || '',
+        ateco_descrizione: prev.ateco_descrizione || parsed.ateco_descrizione || '',
         // Soci e amministratori si aggiornano sempre da visura
         soci:              parsed.soci           ?? prev.soci,
         amministratori:    parsed.amministratori ?? prev.amministratori,
@@ -225,6 +254,10 @@ export default function ClientiPage() {
       toast.error('Ragione sociale ed email obbligatori'); return;
     }
     if (!user?.id) { toast.error('Sessione non valida. Ricarica la pagina.'); return; }
+    const capitaleSociale = parseOptionalAmount(form.capitale_sociale);
+    if (form.capitale_sociale.trim() && capitaleSociale === null) {
+      toast.error('Il capitale sociale non è un importo valido'); return;
+    }
     setSaving(true);
     const payload = {
       ragione_sociale:         form.ragione_sociale.trim(),
@@ -233,8 +266,13 @@ export default function ClientiPage() {
       email:                   form.email.trim(),
       telefono:                form.telefono         || null,
       indirizzo:               form.indirizzo        || null,
+      provincia:               form.provincia.trim().toUpperCase() || null,
       data_costituzione:       form.data_costituzione || null,
+      forma_giuridica:         form.forma_giuridica   || null,
+      capitale_sociale:        capitaleSociale,
       capitale_sociale_versato: form.capitale_versato || null,
+      codice_ateco:            form.codice_ateco.trim().toUpperCase() || null,
+      ateco_descrizione:       form.ateco_descrizione || null,
       soci:                    form.soci.length           > 0 ? form.soci           : null,
       amministratori:          form.amministratori.length > 0 ? form.amministratori : null,
     };
@@ -432,14 +470,39 @@ export default function ClientiPage() {
                 onChange={e => setForm(f => ({ ...f, indirizzo: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
+              <Label>Provincia</Label>
+              <Input maxLength={5} placeholder="MI" value={form.provincia}
+                onChange={e => setForm(f => ({ ...f, provincia: e.target.value.toUpperCase() }))} />
+            </div>
+            <div className="space-y-1.5">
               <Label>Data Costituzione</Label>
               <Input placeholder="gg/mm/aaaa" value={form.data_costituzione}
                 onChange={e => setForm(f => ({ ...f, data_costituzione: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
+              <Label>Forma Giuridica</Label>
+              <Input placeholder="S.r.l." value={form.forma_giuridica}
+                onChange={e => setForm(f => ({ ...f, forma_giuridica: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Capitale Sociale (€)</Label>
+              <Input inputMode="decimal" placeholder="10.000,00" value={form.capitale_sociale}
+                onChange={e => setForm(f => ({ ...f, capitale_sociale: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
               <Label>Capitale Sociale Versato (€)</Label>
-              <Input placeholder="10.000,00" value={form.capitale_versato}
+              <Input inputMode="decimal" placeholder="10.000,00" value={form.capitale_versato}
                 onChange={e => setForm(f => ({ ...f, capitale_versato: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Codice ATECO</Label>
+              <Input className="font-mono" placeholder="47.11" value={form.codice_ateco}
+                onChange={e => setForm(f => ({ ...f, codice_ateco: e.target.value }))} />
+            </div>
+            <div className="col-span-2 space-y-1.5">
+              <Label>Descrizione ATECO</Label>
+              <Input value={form.ateco_descrizione}
+                onChange={e => setForm(f => ({ ...f, ateco_descrizione: e.target.value }))} />
             </div>
           </div>
 

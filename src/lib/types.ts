@@ -36,6 +36,11 @@ export interface Client {
   capitale_sociale_versato?: string;
   soci?: Socio[];
   amministratori?: Amministratore[];
+  forma_giuridica?: string;
+  capitale_sociale?: number;
+  ateco_descrizione?: string;
+  codice_ateco?: string;
+  provincia?: string;
   created_at: string;
   updated_at: string;
 }
