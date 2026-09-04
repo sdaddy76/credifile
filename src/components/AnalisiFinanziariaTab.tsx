@@ -889,8 +889,20 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     setLoading(true);
     // Codice ATECO della pratica (per benchmark settoriale)
     const { data: practiceData } = await supabase
-      .from('practices').select('codice_ateco').eq('id', practiceId).maybeSingle();
-    setCodiceAteco(practiceData?.codice_ateco ?? null);
+      .from('practices')
+      .select('codice_ateco, client_id')
+      .eq('id', practiceId)
+      .maybeSingle();
+    let resolvedAteco = practiceData?.codice_ateco?.trim() || null;
+    if (!resolvedAteco && practiceData?.client_id) {
+      const { data: clientData } = await supabase
+        .from('clients')
+        .select('codice_ateco')
+        .eq('id', practiceData.client_id)
+        .maybeSingle();
+      resolvedAteco = clientData?.codice_ateco?.trim() || null;
+    }
+    setCodiceAteco(resolvedAteco);
     // KPI già calcolati
     const { data: kpiData } = await supabase
       .from('bilanci_kpi')
@@ -899,7 +911,13 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       .order('anno_esercizio', { ascending: false });
     const list = (kpiData ?? []) as BilancioRecord[];
     setBilanci(list);
-    if (list.length > 0) setSelectedBilancio(b => b ?? list[0]);
+    setSelectedBilancio(current => {
+      if (current) {
+        const refreshed = list.find(item => item.id === current.id);
+        if (refreshed) return refreshed;
+      }
+      return list[0] ?? null;
+    });
     if (list.length > 0) {
       const { data: alertData } = await supabase
         .from('balance_anomaly_alerts')
@@ -1391,7 +1409,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                 </CardContent>
               </Card>
 
-              {selectedBilancio.anomaly_analysis && (
+              {selectedBilancio.anomaly_analysis ? (
                 <Card className={
                   selectedBilancio.anomaly_level === 'critico'
                     ? 'border-red-300'
@@ -1553,6 +1571,19 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                     <p className="text-[10px] leading-relaxed text-muted-foreground italic">
                       {selectedBilancio.anomaly_analysis.disclaimer}
                     </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card className="border-amber-200 bg-amber-50/40">
+                  <CardContent className="flex items-start gap-3 py-4">
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-amber-900">Analisi anomalie non ancora disponibile</p>
+                      <p className="text-xs leading-relaxed text-amber-800">
+                        Seleziona il PDF del bilancio nella parte superiore e premi <strong>Analizza</strong>.
+                        Il sistema controllerà le voci dello stato patrimoniale e del conto economico.
+                      </p>
+                    </div>
                   </CardContent>
                 </Card>
               )}

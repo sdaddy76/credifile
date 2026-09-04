@@ -52,6 +52,21 @@ async function getSectorContext(codiceAteco?: string | null) {
   };
 }
 
+async function getPracticeAteco(practiceId: string): Promise<string | null> {
+  const practiceRows = await fetchJson<Array<{ codice_ateco: string | null; client_id: string | null }>>(
+    `practices?id=eq.${encodeURIComponent(practiceId)}&select=codice_ateco,client_id&limit=1`,
+  );
+  const practiceAteco = practiceRows?.[0]?.codice_ateco?.trim() || null;
+  if (practiceAteco) return practiceAteco;
+
+  const clientId = practiceRows?.[0]?.client_id;
+  if (!clientId) return null;
+  const clientRows = await fetchJson<Array<{ codice_ateco: string | null }>>(
+    `clients?id=eq.${encodeURIComponent(clientId)}&select=codice_ateco&limit=1`,
+  );
+  return clientRows?.[0]?.codice_ateco?.trim() || null;
+}
+
 // ─── Parsing numeri in formato italiano ──────────────────────────────────────
 function parseNum(raw: string | undefined | null): number | null {
   if (!raw) return null;
@@ -390,10 +405,7 @@ Deno.serve(async (req) => {
     servizio_debito_annuo,
   } = calcolaKpi(bilData, financing ?? []);
 
-  const practiceRows = await fetchJson<Array<{ codice_ateco: string | null }>>(
-    `practices?id=eq.${encodeURIComponent(practice_id)}&select=codice_ateco&limit=1`,
-  );
-  const codiceAteco = practiceRows?.[0]?.codice_ateco ?? null;
+  const codiceAteco = await getPracticeAteco(practice_id);
   const sector = await getSectorContext(codiceAteco);
   const previousRows = await fetchJson<BalanceSnapshot[]>(
     `bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=*&order=anno_esercizio.desc.nullslast&limit=5`,
