@@ -2,6 +2,10 @@ export type PracticeStatus =
   | 'bozza'
   | 'raccolta_documenti'
   | 'inviata_banca'
+  | 'istruttoria'
+  | 'in_delibera'
+  | 'deliberata'
+  | 'erogata'
   | 'integrazioni_richieste'
   | 'completata'
   | 'approvata'
@@ -149,6 +153,7 @@ export interface PracticeAccessCode {
 export interface PracticeDocument {
   id: string;
   practice_id: string;
+  integration_request_id?: string | null;
   template_id?: string;
   bank_requirement_id?: string;
   nome: string;
@@ -160,6 +165,20 @@ export interface PracticeDocument {
   uploaded_at?: string;
   created_at: string;
   uploaded_files?: UploadedFile[];
+}
+
+export interface PracticeIntegrationRequest {
+  id: string;
+  practice_id: string;
+  origin_status: PracticeStatus | string;
+  status: 'open' | 'completed' | 'cancelled';
+  note?: string | null;
+  created_by?: string | null;
+  requested_at: string;
+  sent_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UploadedFile {
@@ -188,9 +207,13 @@ export const STATUS_LABELS: Record<PracticeStatus, string> = {
   bozza: 'Bozza',
   raccolta_documenti: 'Raccolta Documentazione',
   inviata_banca: 'Inviata a Banca',
-  integrazioni_richieste: 'Integrazione Richiesta',
-  completata: 'Completata',
-  approvata: 'Approvata',
+  istruttoria: 'Istruttoria',
+  in_delibera: 'In Delibera',
+  deliberata: 'Deliberata',
+  erogata: 'Erogata',
+  integrazioni_richieste: 'Integrazione Richiesta (legacy)',
+  completata: 'Istruttoria (legacy)',
+  approvata: 'Deliberata (legacy)',
   rifiutata: 'Rifiutata',
   declinata: 'Declinata',
 };
@@ -199,6 +222,10 @@ export const STATUS_COLORS: Record<PracticeStatus, string> = {
   bozza: 'bg-muted text-muted-foreground',
   raccolta_documenti: 'bg-blue-100 text-blue-800',
   inviata_banca: 'bg-purple-100 text-purple-800',
+  istruttoria: 'bg-cyan-100 text-cyan-800',
+  in_delibera: 'bg-amber-100 text-amber-800',
+  deliberata: 'bg-emerald-100 text-emerald-800',
+  erogata: 'bg-green-100 text-green-800',
   integrazioni_richieste: 'bg-amber-100 text-amber-800',
   completata: 'bg-green-100 text-green-800',
   approvata: 'bg-emerald-100 text-emerald-800',

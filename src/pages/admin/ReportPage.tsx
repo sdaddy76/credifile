@@ -310,13 +310,15 @@ function generateReportPdf(bilanci: BilancioRecord[], practiceLabel: string) {
 
 // ── Status pratica colori ──────────────────────────────────────────────────
 const STATUS_LABEL: Record<string, string> = {
-  bozza: 'Bozza', raccolta_documenti: 'Raccolta Doc.', analisi: 'Analisi',
-  inviata_banca: 'Inviata Banca', approvata: 'Approvata', rifiutata: 'Rifiutata',
+  bozza: 'Bozza', raccolta_documenti: 'Raccolta Doc.', inviata_banca: 'Inviata Banca',
+  istruttoria: 'Istruttoria', in_delibera: 'In Delibera', deliberata: 'Deliberata',
+  erogata: 'Erogata', declinata: 'Declinata',
 };
 const STATUS_COLOR: Record<string, string> = {
   bozza: 'bg-gray-100 text-gray-700', raccolta_documenti: 'bg-yellow-100 text-yellow-800',
-  analisi: 'bg-blue-100 text-blue-800', inviata_banca: 'bg-purple-100 text-purple-800',
-  approvata: 'bg-green-100 text-green-800', rifiutata: 'bg-red-100 text-red-800',
+  inviata_banca: 'bg-purple-100 text-purple-800', istruttoria: 'bg-cyan-100 text-cyan-800',
+  in_delibera: 'bg-amber-100 text-amber-800', deliberata: 'bg-green-100 text-green-800',
+  erogata: 'bg-emerald-100 text-emerald-800', declinata: 'bg-red-100 text-red-800',
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

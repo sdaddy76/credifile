@@ -556,9 +556,10 @@ export default function PratichePage() {
             { status: 'bozza',                   label: 'Bozza',               headerCls: 'bg-slate-100 text-slate-700',   dropBg: 'bg-slate-50' },
             { status: 'raccolta_documenti',       label: 'Raccolta Documenti',  headerCls: 'bg-blue-100 text-blue-700',    dropBg: 'bg-blue-50/40' },
             { status: 'inviata_banca',            label: 'Inviata Banca',       headerCls: 'bg-purple-100 text-purple-700',dropBg: 'bg-purple-50/40' },
-            { status: 'integrazioni_richieste',   label: 'Integrazioni',        headerCls: 'bg-amber-100 text-amber-700',  dropBg: 'bg-amber-50/40' },
-            { status: 'completata',               label: 'Completata',          headerCls: 'bg-green-100 text-green-700',  dropBg: 'bg-green-50/40' },
-            { status: 'approvata',                label: 'Approvata',           headerCls: 'bg-emerald-100 text-emerald-700', dropBg: 'bg-emerald-50/40' },
+            { status: 'istruttoria',              label: 'Istruttoria',         headerCls: 'bg-cyan-100 text-cyan-700',    dropBg: 'bg-cyan-50/40' },
+            { status: 'in_delibera',              label: 'In Delibera',         headerCls: 'bg-amber-100 text-amber-700',  dropBg: 'bg-amber-50/40' },
+            { status: 'deliberata',               label: 'Deliberata',          headerCls: 'bg-emerald-100 text-emerald-700', dropBg: 'bg-emerald-50/40' },
+            { status: 'erogata',                  label: 'Erogata',             headerCls: 'bg-green-100 text-green-700',  dropBg: 'bg-green-50/40' },
             { status: 'declinata',                label: 'Declinata',           headerCls: 'bg-red-100 text-red-700',      dropBg: 'bg-red-50/40' },
           ];
           return (

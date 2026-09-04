@@ -24,13 +24,15 @@ interface PraticaBanca {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 const STATUS_PRATICA_LABELS: Record<string, string> = {
-  bozza: 'Bozza', raccolta_documenti: 'Raccolta Doc.', in_valutazione: 'In Valutazione',
-  integrazioni_richieste: 'Integrazioni', approvata: 'Approvata', declinata: 'Declinata', erogata: 'Erogata',
+  bozza: 'Bozza', raccolta_documenti: 'Raccolta Doc.', inviata_banca: 'Inviata a Banca',
+  istruttoria: 'Istruttoria', in_delibera: 'In Delibera', deliberata: 'Deliberata',
+  declinata: 'Declinata', erogata: 'Erogata',
 };
 const STATUS_PRATICA_COLOR: Record<string, string> = {
   bozza: 'bg-gray-100 text-gray-700', raccolta_documenti: 'bg-blue-100 text-blue-700',
-  in_valutazione: 'bg-yellow-100 text-yellow-800', integrazioni_richieste: 'bg-orange-100 text-orange-700',
-  approvata: 'bg-green-100 text-green-700', declinata: 'bg-red-100 text-red-700', erogata: 'bg-emerald-100 text-emerald-800',
+  inviata_banca: 'bg-purple-100 text-purple-700', istruttoria: 'bg-cyan-100 text-cyan-800',
+  in_delibera: 'bg-amber-100 text-amber-700', deliberata: 'bg-green-100 text-green-700',
+  declinata: 'bg-red-100 text-red-700', erogata: 'bg-emerald-100 text-emerald-800',
 };
 const STATUS_BANCA_BG: Record<string, string> = {
   inviata: 'bg-blue-50 border-blue-200', in_attesa: 'bg-amber-50 border-amber-200',

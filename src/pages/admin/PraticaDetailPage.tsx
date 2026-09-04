@@ -52,19 +52,33 @@ async function extractPdfText(file: File): Promise<string> {
 import {
   STATUS_LABELS, STATUS_COLORS, DOC_STATUS_LABELS, DOC_STATUS_COLORS,
   type Practice, type PracticeDocument, type PracticeStatusLog,
-  type Bank, type PracticeAccessCode, type Client, type Socio, type Amministratore
+  type Bank, type PracticeAccessCode, type Client, type Socio, type Amministratore,
+  type PracticeIntegrationRequest, type PracticeStatus
 } from '@/lib/types';
+import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
 
 type AssignedAgent = { id: string; nome?: string; email: string };
 type IntegrationRequestDraft = { nome: string; descrizione: string };
 type ClientQuestion = {
   id: string;
+  integration_request_id?: string | null;
   domanda: string;
   risposta: string | null;
   stato: 'richiesta' | 'risposta';
   answered_at: string | null;
   created_at: string;
 };
+
+const PRIMARY_STATUS_OPTIONS: PracticeStatus[] = [
+  'bozza',
+  'raccolta_documenti',
+  'inviata_banca',
+  'istruttoria',
+  'in_delibera',
+  'deliberata',
+  'erogata',
+  'declinata',
+];
 type ClientBankPosition = {
   id: string;
   banca: string;
@@ -209,6 +223,7 @@ export default function PraticaDetailPage() {
   ]);
   const [integrationQuestions, setIntegrationQuestions] = useState<string[]>(['']);
   const [clientQuestions, setClientQuestions] = useState<ClientQuestion[]>([]);
+  const [integrationCycles, setIntegrationCycles] = useState<PracticeIntegrationRequest[]>([]);
   const [clientBankPositions, setClientBankPositions] = useState<ClientBankPosition[]>([]);
   const [saving, setSaving] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
@@ -775,14 +790,14 @@ export default function PraticaDetailPage() {
         supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle(),
         supabase
           .from('practice_documents')
-          .select('nome')
+          .select('nome, integration_request_id')
           .eq('practice_id', practice.id)
           .in('tipo', ['standard', 'integrazione'])
           .in('status', ['richiesto', 'rifiutato'])
           .order('created_at'),
         supabase
           .from('practice_client_questions')
-          .select('domanda')
+          .select('domanda, integration_request_id')
           .eq('practice_id', practice.id)
           .eq('stato', 'richiesta')
           .order('created_at'),
@@ -820,6 +835,18 @@ export default function PraticaDetailPage() {
         throw new Error(msg);
       }
 
+      const integrationRequestIds = Array.from(new Set(
+        [...(docs ?? []), ...(questions ?? [])]
+          .map(item => item.integration_request_id as string | null)
+          .filter((requestId): requestId is string => Boolean(requestId))
+      ));
+      if (integrationRequestIds.length > 0) {
+        await supabase
+          .from('practice_integration_requests')
+          .update({ sent_at: new Date().toISOString() })
+          .in('id', integrationRequestIds);
+      }
+
       await supabase.from('practice_activity_log').insert({
         practice_id: practice.id,
         action: 'richiesta_documentale_cliente_inviata',
@@ -830,6 +857,7 @@ export default function PraticaDetailPage() {
           documenti: docNames,
           domande: questionTexts,
           destinatario: client.email,
+          integration_request_ids: integrationRequestIds,
         },
       });
 
@@ -875,13 +903,14 @@ export default function PraticaDetailPage() {
 
   const load = useCallback(async () => {
     if (!id) return;
-    const [p, docs, l, ac, questions, clientBanks] = await Promise.all([
+    const [p, docs, l, ac, questions, clientBanks, integrations] = await Promise.all([
       supabase.from('practices').select('*, clients(*), banks(*), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)').eq('id', id).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', id).order('created_at'),
       supabase.from('practice_status_log').select('*').eq('practice_id', id).order('created_at', { ascending: false }),
       supabase.from('practice_access_codes').select('*').eq('practice_id', id).maybeSingle(),
       supabase.from('practice_client_questions').select('*').eq('practice_id', id).order('created_at'),
       supabase.from('practice_client_banks').select('*').eq('practice_id', id).order('ordinamento'),
+      supabase.from('practice_integration_requests').select('*').eq('practice_id', id).order('requested_at'),
     ]);
     setPractice(p.data as Practice);
     // Carica segreteria di competenza (solo super_admin)
@@ -902,6 +931,7 @@ export default function PraticaDetailPage() {
     setLogs(l.data ?? []);
     setAccessCode(ac.data);
     setClientQuestions((questions.data ?? []) as ClientQuestion[]);
+    setIntegrationCycles((integrations.data ?? []) as PracticeIntegrationRequest[]);
     setClientBankPositions((clientBanks.data ?? []) as ClientBankPosition[]);
     // Carica finanziamenti
     const { data: fin } = await supabase.from('client_financing').select('*').eq('practice_id', id).order('ordinamento');
@@ -1473,12 +1503,31 @@ export default function PraticaDetailPage() {
     }
 
     setSaving(true);
+    let integrationRequestId: string | null = null;
     try {
+      const originStatus = normalizePrimaryStatus(practice?.status ?? 'raccolta_documenti');
+      const { data: integrationRequest, error: integrationRequestError } = await supabase
+        .from('practice_integration_requests')
+        .insert({
+          practice_id: id,
+          origin_status: originStatus,
+          status: 'open',
+          note: `Richiesti ${requestedDocuments.length} documenti e ${requestedQuestions.length} risposte`,
+          created_by: user?.id ?? null,
+        })
+        .select('id')
+        .single();
+      if (integrationRequestError || !integrationRequest?.id) {
+        throw integrationRequestError ?? new Error('Ciclo di integrazione non creato');
+      }
+      integrationRequestId = integrationRequest.id;
+
       if (requestedDocuments.length > 0) {
         const { error: documentsError } = await supabase
           .from('practice_documents')
           .insert(requestedDocuments.map(request => ({
             practice_id: id,
+            integration_request_id: integrationRequestId,
             nome: request.nome,
             descrizione: request.descrizione || null,
             tipo: 'integrazione',
@@ -1493,6 +1542,7 @@ export default function PraticaDetailPage() {
           .from('practice_client_questions')
           .insert(requestedQuestions.map(question => ({
             practice_id: id,
+            integration_request_id: integrationRequestId,
             domanda: question,
             stato: 'richiesta',
             created_by: user?.id ?? null,
@@ -1502,20 +1552,6 @@ export default function PraticaDetailPage() {
 
       const documentNames = requestedDocuments.map(request => request.nome);
       const totalRequests = documentNames.length + requestedQuestions.length;
-      const { error: practiceError } = await supabase
-        .from('practices')
-        .update({ status: 'integrazioni_richieste' })
-        .eq('id', id);
-      if (practiceError) throw practiceError;
-
-      const { error: logError } = await supabase.from('practice_status_log').insert({
-        practice_id: id,
-        old_status: practice?.status,
-        new_status: 'integrazioni_richieste',
-        note: `Richiesta documentale preparata: ${documentNames.length} documenti, ${requestedQuestions.length} domande`,
-        created_by: 'admin',
-      });
-      if (logError) throw logError;
 
       await supabase.from('practice_activity_log').insert({
         practice_id: id,
@@ -1526,17 +1562,25 @@ export default function PraticaDetailPage() {
         metadata: {
           documenti: documentNames,
           domande: requestedQuestions,
+          integration_request_id: integrationRequestId,
+          fase_pratica: originStatus,
         },
       });
 
       toast.success(
-        `${totalRequests} ${totalRequests === 1 ? 'elemento aggiunto' : 'elementi aggiunti'} alla richiesta. Ora usa “Invia Richiesta Documenti”.`
+        `${totalRequests} ${totalRequests === 1 ? 'elemento aggiunto' : 'elementi aggiunti'} senza modificare la fase “${STATUS_LABELS[originStatus]}”. Ora usa “Invia Richiesta Documenti”.`
       );
       setShowIntegration(false);
       setIntegrationRequests([{ nome: '', descrizione: '' }]);
       setIntegrationQuestions(['']);
       await load();
     } catch (error) {
+      if (integrationRequestId) {
+        await supabase
+          .from('practice_integration_requests')
+          .delete()
+          .eq('id', integrationRequestId);
+      }
       toast.error('Errore nella richiesta documentale: ' + String(error));
     } finally {
       setSaving(false);
@@ -1571,6 +1615,8 @@ export default function PraticaDetailPage() {
   const docsStandard = documents.filter(d => d.tipo === 'standard');
   const docsBanca = documents.filter(d => d.tipo === 'banca');
   const docsIntegrazione = documents.filter(d => d.tipo === 'integrazione');
+  const integrationCycleById = new Map(integrationCycles.map(cycle => [cycle.id, cycle]));
+  const openIntegrationCycles = integrationCycles.filter(cycle => cycle.status === 'open');
   const completedDocs = documents.filter(d => d.status === 'caricato' || d.status === 'approvato').length;
 
   return (
@@ -1992,6 +2038,11 @@ export default function PraticaDetailPage() {
                   <AlertCircle className="w-3.5 h-3.5" /> Prepara Richiesta
                 </Button>
                 )}
+                {openIntegrationCycles.length > 0 && (
+                  <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+                    {openIntegrationCycles.length} {openIntegrationCycles.length === 1 ? 'integrazione aperta' : 'integrazioni aperte'}
+                  </Badge>
+                )}
               </div>
               )}
 
@@ -2015,6 +2066,13 @@ export default function PraticaDetailPage() {
                                   <p className="text-sm font-medium text-foreground">{doc.nome}</p>
                                   {doc.obbligatorio && <span className="text-xs text-red-500">*</span>}
                                   <Badge className={`text-xs ${DOC_STATUS_COLORS[doc.status]}`}>{DOC_STATUS_LABELS[doc.status]}</Badge>
+                                  {doc.integration_request_id && integrationCycleById.get(doc.integration_request_id) && (
+                                    <Badge variant="outline" className="text-xs border-amber-200 text-amber-700">
+                                      Richiesta durante {STATUS_LABELS[
+                                        integrationCycleById.get(doc.integration_request_id)!.origin_status as PracticeStatus
+                                      ] ?? integrationCycleById.get(doc.integration_request_id)!.origin_status}
+                                    </Badge>
+                                  )}
                                 </div>
                                 {doc.descrizione && <p className="text-xs text-muted-foreground mt-0.5">{doc.descrizione}</p>}
                                 {doc.note_rifiuto && <p className="text-xs text-red-600 mt-1 bg-red-50 px-2 py-1 rounded">Motivo rifiuto: {doc.note_rifiuto}</p>}
@@ -2113,6 +2171,13 @@ export default function PraticaDetailPage() {
                           }>
                             {question.stato === 'risposta' ? 'Risposta' : 'In attesa'}
                           </Badge>
+                          {question.integration_request_id && integrationCycleById.get(question.integration_request_id) && (
+                            <Badge variant="outline" className="text-xs shrink-0 border-amber-200 text-amber-700">
+                              {STATUS_LABELS[
+                                integrationCycleById.get(question.integration_request_id)!.origin_status as PracticeStatus
+                              ] ?? integrationCycleById.get(question.integration_request_id)!.origin_status}
+                            </Badge>
+                          )}
                         </div>
                         {question.risposta && (
                           <div className="mt-2 rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
@@ -3513,7 +3578,9 @@ export default function PraticaDetailPage() {
               <Select value={newStatus} onValueChange={setNewStatus}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(STATUS_LABELS).map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+                  {PRIMARY_STATUS_OPTIONS.map(status => (
+                    <SelectItem key={status} value={status}>{STATUS_LABELS[status]}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -3576,6 +3643,11 @@ export default function PraticaDetailPage() {
           <p className="text-sm text-muted-foreground">
             Aggiungi più documenti e domande in una sola volta. Il cliente riceverà l'elenco completo solo quando userai il pulsante verde “Invia Richiesta Documenti”.
           </p>
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            La richiesta sarà collegata alla fase <strong>{STATUS_LABELS[
+              normalizePrimaryStatus(practice?.status ?? 'raccolta_documenti')
+            ]}</strong>. La fase principale della pratica non verrà modificata.
+          </div>
 
           <div className="space-y-6 py-2">
             <section className="space-y-3">

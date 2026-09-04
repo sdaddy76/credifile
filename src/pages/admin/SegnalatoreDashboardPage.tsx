@@ -42,22 +42,22 @@ const STATI_ORDER: PracticeStatus[] = [
   'bozza',
   'raccolta_documenti',
   'inviata_banca',
-  'integrazioni_richieste',
-  'approvata',
+  'istruttoria',
+  'in_delibera',
+  'deliberata',
+  'erogata',
   'declinata',
-  'rifiutata',
-  'completata',
 ];
 
 const BAR_COLORS: Record<string, string> = {
   bozza:                  '#94a3b8',
   raccolta_documenti:     '#3b82f6',
   inviata_banca:          '#a855f7',
-  integrazioni_richieste: '#f59e0b',
-  approvata:              '#10b981',
+  istruttoria:            '#06b6d4',
+  in_delibera:            '#f59e0b',
+  deliberata:             '#10b981',
+  erogata:                '#22c55e',
   declinata:              '#f43f5e',
-  rifiutata:              '#ef4444',
-  completata:             '#22c55e',
 };
 
 // ── Componente Barra SVG ─────────────────────────────────────────────────────
@@ -204,9 +204,9 @@ export default function SegnalatoreDashboardPage() {
   const fmtEur = (v: number) => v.toLocaleString('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
 
   // KPI rapidi
-  const approvate  = countByStatus['approvata']  ?? 0;
-  const declinateR = (countByStatus['declinata'] ?? 0) + (countByStatus['rifiutata'] ?? 0);
-  const attive     = totale - approvate - declinateR;
+  const concluse = (countByStatus['deliberata'] ?? 0) + (countByStatus['erogata'] ?? 0);
+  const declinateR = countByStatus['declinata'] ?? 0;
+  const attive = totale - concluse - declinateR;
 
   return (
     <div className="space-y-6 p-1">

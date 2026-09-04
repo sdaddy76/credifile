@@ -112,17 +112,17 @@ export default function StatistichePage() {
   const byStatus: Record<string, number> = {};
   practices.forEach(p => { byStatus[p.status] = (byStatus[p.status] ?? 0) + 1; });
 
-  const completate  = (byStatus['completata'] ?? 0) + (byStatus['approvata'] ?? 0);
-  const inCorso     = (byStatus['raccolta_documenti'] ?? 0) + (byStatus['inviata_banca'] ?? 0) + (byStatus['integrazioni_richieste'] ?? 0);
+  const completate  = (byStatus['deliberata'] ?? 0) + (byStatus['erogata'] ?? 0);
+  const inCorso     = (byStatus['raccolta_documenti'] ?? 0) + (byStatus['inviata_banca'] ?? 0) + (byStatus['istruttoria'] ?? 0) + (byStatus['in_delibera'] ?? 0);
   const bozze       = byStatus['bozza'] ?? 0;
-  const rifiutate   = byStatus['rifiutata'] ?? 0;
+  const rifiutate   = byStatus['declinata'] ?? 0;
   // Pratiche ancora aperte (qualsiasi stato non terminale)
   const daCompletare = totale - completate - rifiutate;
   const tasso       = totale > 0 ? Math.round((completate / totale) * 100) : 0;
 
   // Durata media pratiche attive (giorni da creazione)
   const durateAttive = practices
-    .filter(p => !['completata','approvata','rifiutata'].includes(p.status))
+    .filter(p => !['deliberata','erogata','declinata'].includes(p.status))
     .map(p => daysBetween(p.created_at, new Date().toISOString()));
   const durataMediaAttiva = avg(durateAttive);
 
@@ -147,7 +147,7 @@ export default function StatistichePage() {
     const bs: Record<string, number> = {};
     agentPractices.forEach(p => { bs[p.status] = (bs[p.status] ?? 0) + 1; });
     const durateAgente = agentPractices
-      .filter(p => !['completata','approvata','rifiutata'].includes(p.status))
+      .filter(p => !['deliberata','erogata','declinata'].includes(p.status))
       .map(p => daysBetween(p.created_at, new Date().toISOString()));
     const durata = avg(durateAgente);
     const tempi = agentPractices.flatMap(p => {
@@ -155,7 +155,7 @@ export default function StatistichePage() {
       const fu = uploads.find(u => u.practice_id === p.id);
       return ac && fu ? [daysBetween(ac.created_at, fu.uploaded_at)] : [];
     });
-    const completateAg = (bs['completata'] ?? 0) + (bs['approvata'] ?? 0);
+    const completateAg = (bs['deliberata'] ?? 0) + (bs['erogata'] ?? 0);
     return {
       ...agent,
       totale: agentPractices.length,
@@ -198,11 +198,11 @@ export default function StatistichePage() {
   });
   const topAteco = Object.entries(atecoCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
-  // 4. Tasso conversione raccolta_documenti → approvata
+  // 4. Tasso di avanzamento da raccolta documenti a delibera
   const inRaccolta = practices.filter(p => p.status === 'raccolta_documenti').length;
-  const approvate = byStatus['approvata'] ?? 0;
-  const totalePassaggioBase = inRaccolta + approvate + (byStatus['completata'] ?? 0) + (byStatus['inviata_banca'] ?? 0) + (byStatus['integrazioni_richieste'] ?? 0);
-  const tassoConversione = totalePassaggioBase > 0 ? Math.round((approvate / totalePassaggioBase) * 100) : 0;
+  const deliberate = (byStatus['deliberata'] ?? 0) + (byStatus['erogata'] ?? 0);
+  const totalePassaggioBase = inRaccolta + deliberate + (byStatus['inviata_banca'] ?? 0) + (byStatus['istruttoria'] ?? 0) + (byStatus['in_delibera'] ?? 0);
+  const tassoConversione = totalePassaggioBase > 0 ? Math.round((deliberate / totalePassaggioBase) * 100) : 0;
 
   // 5. Distribuzione importi
   const FASCE = [
@@ -312,9 +312,10 @@ export default function StatistichePage() {
                 { label: 'Bozze da attivare', val: bozze, color: 'text-gray-600' },
                 { label: 'In raccolta documenti', val: byStatus['raccolta_documenti'] ?? 0, color: 'text-amber-600' },
                 { label: 'Inviate alla banca', val: byStatus['inviata_banca'] ?? 0, color: 'text-blue-600' },
-                { label: 'Integrazioni richieste', val: byStatus['integrazioni_richieste'] ?? 0, color: 'text-orange-600' },
-                { label: 'Completate / Approvate', val: completate, color: 'text-green-600' },
-                { label: 'Rifiutate', val: rifiutate, color: 'text-red-600' },
+                { label: 'In istruttoria', val: byStatus['istruttoria'] ?? 0, color: 'text-cyan-600' },
+                { label: 'In delibera', val: byStatus['in_delibera'] ?? 0, color: 'text-orange-600' },
+                { label: 'Deliberate / Erogate', val: completate, color: 'text-green-600' },
+                { label: 'Declinate', val: rifiutate, color: 'text-red-600' },
                 { label: 'Pratiche con doc mancanti', val: praticheConDocMancanti, color: 'text-rose-600' },
               ].map(r => (
                 <div key={r.label} className="flex items-center justify-between py-1 border-b border-border last:border-0">
@@ -349,8 +350,8 @@ export default function StatistichePage() {
                   const y = i * 30 + 4;
                   const colors: Record<string, string> = {
                     bozza: '#94a3b8', raccolta_documenti: '#3b82f6', inviata_banca: '#8b5cf6',
-                    integrazioni_richieste: '#f59e0b', completata: '#22c55e', approvata: '#10b981',
-                    rifiutata: '#ef4444', declinata: '#f43f5e',
+                    istruttoria: '#06b6d4', in_delibera: '#f59e0b', deliberata: '#10b981',
+                    erogata: '#22c55e', declinata: '#f43f5e',
                   };
                   const fill = colors[status] ?? '#6b7280';
                   return (

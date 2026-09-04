@@ -33,8 +33,10 @@ const STATUS_BAR_COLOR: Record<string, string> = {
   bozza:                  '#94a3b8',
   raccolta_documenti:     '#3b82f6',
   inviata_banca:          '#a855f7',
-  integrazioni_richieste: '#f59e0b',
-  approvata:              '#10b981',
+  istruttoria:            '#06b6d4',
+  in_delibera:            '#f59e0b',
+  deliberata:             '#10b981',
+  erogata:                '#22c55e',
   declinata:              '#f43f5e',
   rifiutata:              '#ef4444',
   completata:             '#22c55e',
@@ -143,10 +145,10 @@ export default function DashboardPage() {
     { label: 'Banche Attive', value: stats.totalBanks, icon: Building2, color: 'text-emerald-600', bg: 'bg-emerald-50', link: '/admin/banche' },
     { label: 'Task Aperti', value: pendingTasks, icon: CheckSquare, color: 'text-indigo-600', bg: 'bg-indigo-50', link: '/admin/tasks' },
     { label: 'Scadenze 14gg', value: upcomingDeadlines, icon: Calendar, color: 'text-amber-600', bg: 'bg-amber-50', link: '/admin/calendario' },
-    { label: 'Da Completare', value: (stats.byStatus['raccolta_documenti'] ?? 0) + (stats.byStatus['integrazioni_richieste'] ?? 0), icon: Clock, color: 'text-orange-600', bg: 'bg-orange-50', link: '/admin/pratiche' },
+    { label: 'Da Completare', value: (stats.byStatus['raccolta_documenti'] ?? 0) + (stats.byStatus['inviata_banca'] ?? 0) + (stats.byStatus['istruttoria'] ?? 0) + (stats.byStatus['in_delibera'] ?? 0), icon: Clock, color: 'text-orange-600', bg: 'bg-orange-50', link: '/admin/pratiche' },
   ];
 
-  const priorityStatuses = ['integrazioni_richieste', 'raccolta_documenti', 'inviata_banca'];
+  const priorityStatuses = ['raccolta_documenti', 'inviata_banca', 'istruttoria', 'in_delibera'];
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">

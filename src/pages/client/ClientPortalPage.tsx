@@ -18,7 +18,9 @@ import { toast } from 'sonner';
 import {
   STATUS_LABELS, STATUS_COLORS,
   type Practice, type PracticeDocument, type PracticeStatusLog,
+  type PracticeIntegrationRequest,
 } from '@/lib/types';
+import { buildPracticeTimeline, normalizePrimaryStatus } from '@/lib/practiceTimeline';
 
 interface ClientSession {
   practiceId: string;
@@ -101,6 +103,7 @@ export default function ClientPortalPage() {
 
   // ── Storico stati pratica ────────────────────────────────────────────────
   const [statusLogs, setStatusLogs] = useState<PracticeStatusLog[]>([]);
+  const [integrationRequests, setIntegrationRequests] = useState<PracticeIntegrationRequest[]>([]);
 
   // ── Upload autonomo (free-form, non legato a un practice_document) ────────
   const [uploadingFreeDoc, setUploadingFreeDoc] = useState(false);
@@ -132,6 +135,7 @@ export default function ClientPortalPage() {
   // ── Domande dell'agente ──────────────────────────────────────────────────
   interface ClientQuestion {
     id: string;
+    integration_request_id?: string | null;
     domanda: string;
     risposta: string | null;
     stato: 'richiesta' | 'risposta';
@@ -437,7 +441,7 @@ export default function ClientPortalPage() {
 
   const load = async () => {
     if (!practiceId || !session) return;
-    const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes, accessRes] = await Promise.all([
+    const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes, accessRes, integrationsRes] = await Promise.all([
       supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)').eq('id', practiceId).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', practiceId).order('tipo').order('created_at'),
       supabase.from('practice_banks').select('bank_id').eq('practice_id', practiceId),
@@ -451,11 +455,17 @@ export default function ClientPortalPage() {
         .eq('codice', session.codice)
         .eq('email_cliente', session.email)
         .maybeSingle(),
+      supabase
+        .from('practice_integration_requests')
+        .select('*')
+        .eq('practice_id', practiceId)
+        .order('requested_at'),
     ]);
     setPractice(p.data as Practice);
     setDocuments((docs.data ?? []) as PracticeDocument[]);
     setStatusLogs((logsRes.data ?? []) as PracticeStatusLog[]);
     setClientQuestions((questionsRes.data ?? []) as ClientQuestion[]);
+    setIntegrationRequests((integrationsRes.data ?? []) as PracticeIntegrationRequest[]);
     setClientBanks((clientBanksRes.data ?? []).map(row => ({
       id: row.id,
       banca: row.banca ?? '',
@@ -674,6 +684,7 @@ export default function ClientPortalPage() {
   const totalDocs = documents.length;
   const completedDocs = documents.filter(d => d.status === 'caricato' || d.status === 'approvato').length;
   const progressPct = totalDocs > 0 ? Math.round((completedDocs / totalDocs) * 100) : 0;
+  const openIntegrationRequests = integrationRequests.filter(request => request.status === 'open');
 
   const financingRequestDocs = documents.filter(isFinancingRequestDocument);
   const bankSituationRequestDocs = documents.filter(isBankSituationRequestDocument);
@@ -712,9 +723,17 @@ export default function ClientPortalPage() {
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
                 <p className="text-xs text-muted-foreground font-medium">Stato Pratica</p>
-                <Badge className={`mt-1 ${STATUS_COLORS[practice.status]}`}>
-                  {STATUS_LABELS[practice.status]}
-                </Badge>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <Badge className={STATUS_COLORS[practice.status]}>
+                    {STATUS_LABELS[practice.status]}
+                  </Badge>
+                  {openIntegrationRequests.length > 0 && (
+                    <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+                      {openIntegrationRequests.length}{' '}
+                      {openIntegrationRequests.length === 1 ? 'integrazione aperta' : 'integrazioni aperte'}
+                    </Badge>
+                  )}
+                </div>
               </div>
               {bank && (
                 <div className="text-right">
@@ -733,12 +752,15 @@ export default function ClientPortalPage() {
               <p className="text-xs text-muted-foreground text-right">{progressPct}% completato</p>
             </div>
 
-            {practice.status === 'integrazioni_richieste' && (
+            {openIntegrationRequests.length > 0 && (
               <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <p className="text-sm text-amber-800">
-                  <strong>Attenzione:</strong> La banca ha richiesto documenti aggiuntivi.
-                  Scorri in basso per vedere cosa manca.
+                  <strong>Attenzione:</strong>{' '}
+                  {openIntegrationRequests.length === 1
+                    ? 'È aperta una richiesta di integrazione.'
+                    : `Sono aperte ${openIntegrationRequests.length} richieste di integrazione.`}
+                  {' '}Scorri in basso per completare documenti e risposte mancanti.
                 </p>
               </div>
             )}
@@ -754,30 +776,9 @@ export default function ClientPortalPage() {
 
         {/* ── Stepper stati pratica ───────────────────────────────────────── */}
         {(() => {
-          type ClientWorkflowStep =
-            | 'bozza'
-            | 'raccolta_documenti'
-            | 'integrazioni_richieste'
-            | 'inviata_banca'
-            | 'istruttoria'
-            | 'in_delibera'
-            | 'deliberata'
-            | 'erogata';
-
-          const PRIMARY_STEPS: { key: ClientWorkflowStep; label: string }[] = [
-            { key: 'bozza',                  label: 'Bozza' },
-            { key: 'raccolta_documenti',     label: 'Raccolta Documentazione' },
-            { key: 'inviata_banca',          label: 'Inviata a Banca' },
-            { key: 'istruttoria',             label: 'Istruttoria' },
-            { key: 'in_delibera',             label: 'In Delibera' },
-            { key: 'deliberata',              label: 'Deliberata' },
-            { key: 'erogata',                 label: 'Erogata' },
-          ];
-
           const STATUS_MESSAGES: Record<string, string> = {
             bozza:               '📝 La pratica è in fase di configurazione da parte del tuo agente.',
             raccolta_documenti:  '📂 Stiamo raccogliendo la documentazione necessaria. Carica i documenti richiesti qui sotto.',
-            integrazioni_richieste: '📎 È stata richiesta un’integrazione documentale. Carica qui sotto i documenti mancanti.',
             inviata_banca:       '🏦 La pratica è stata inviata alla banca.',
             istruttoria:         '🔍 La banca sta analizzando la documentazione e la richiesta.',
             completata:          '🔍 La pratica è in istruttoria presso la banca.',
@@ -789,54 +790,9 @@ export default function ClientPortalPage() {
             erogata:             '💶 Il finanziamento è stato erogato.',
           };
 
-          const statusToStep: Record<string, ClientWorkflowStep> = {
-            bozza: 'bozza',
-            raccolta_documenti: 'raccolta_documenti',
-            inviata_banca: 'inviata_banca',
-            istruttoria: 'istruttoria',
-            completata: 'istruttoria',
-            in_delibera: 'in_delibera',
-            deliberata: 'deliberata',
-            approvata: 'deliberata',
-            rifiutata: 'deliberata',
-            declinata: 'deliberata',
-            erogata: 'erogata',
-          };
-
           const currentKey = practice.status as string;
-          const latestIntegrationLog = [...statusLogs]
-            .reverse()
-            .find(log => log.new_status === 'integrazioni_richieste');
-          const previousNonIntegrationLog = latestIntegrationLog
-            ? [...statusLogs]
-                .filter(log =>
-                  new Date(log.created_at).getTime() < new Date(latestIntegrationLog.created_at).getTime()
-                  && log.new_status !== 'integrazioni_richieste'
-                )
-                .reverse()[0]
-            : undefined;
-          const integrationOriginStatus =
-            latestIntegrationLog?.old_status !== 'integrazioni_richieste'
-              ? latestIntegrationLog?.old_status
-              : previousNonIntegrationLog?.new_status;
-          const integrationAnchorKey = statusToStep[integrationOriginStatus ?? '']
-            ?? statusToStep[previousNonIntegrationLog?.new_status ?? '']
-            ?? 'raccolta_documenti';
-          const integrationAnchorIdx = PRIMARY_STEPS.findIndex(step => step.key === integrationAnchorKey);
-          const STEPS = [...PRIMARY_STEPS];
-
-          if (latestIntegrationLog || currentKey === 'integrazioni_richieste') {
-            STEPS.splice(
-              Math.max(0, integrationAnchorIdx) + 1,
-              0,
-              { key: 'integrazioni_richieste', label: 'Integrazione Richiesta' }
-            );
-          }
-
-          const currentStepKey = currentKey === 'integrazioni_richieste'
-            ? 'integrazioni_richieste'
-            : statusToStep[currentKey] ?? 'bozza';
-          const displayIdx = STEPS.findIndex(step => step.key === currentStepKey);
+          const primaryStatus = normalizePrimaryStatus(currentKey);
+          const timeline = buildPracticeTimeline(currentKey, integrationRequests);
 
           return (
             <Card className="border-border">
@@ -847,19 +803,26 @@ export default function ClientPortalPage() {
 
                 {/* Stepper orizzontale su md, verticale su mobile */}
                 <div className="flex flex-col gap-0">
-                  {STEPS.map((step, idx) => {
-                    const log = step.key === 'integrazioni_richieste'
-                      ? latestIntegrationLog
-                      : [...statusLogs].reverse().find(l => statusToStep[l.new_status] === step.key);
-                    const isCurrent = idx === displayIdx;
-                    const isPast    = idx < displayIdx;
+                  {timeline.map((step, idx) => {
+                    const log = step.kind === 'primary'
+                      ? [...statusLogs].reverse().find(
+                          item => normalizePrimaryStatus(item.new_status) === step.key
+                        )
+                      : undefined;
+                    const displayedAt = step.kind === 'integration'
+                      ? step.request.requested_at
+                      : log?.created_at;
+                    const isCurrent = step.state === 'current' || step.state === 'active';
+                    const isPast = step.state === 'past' || step.state === 'completed';
 
                     return (
                       <div key={step.key} className="flex items-start gap-3">
                         {/* Icona + linea verticale */}
                         <div className="flex flex-col items-center">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold transition-colors ${
-                            isCurrent
+                            step.state === 'active'
+                              ? 'bg-amber-500 text-white shadow-md'
+                              : isCurrent
                               ? 'bg-blue-600 text-white shadow-md'
                               : isPast
                               ? 'bg-green-500 text-white'
@@ -871,7 +834,7 @@ export default function ClientPortalPage() {
                             }
                           </div>
                           {/* Connettore verticale (non sull'ultimo) */}
-                          {idx < STEPS.length - 1 && (
+                          {idx < timeline.length - 1 && (
                             <div className={`w-0.5 h-6 mt-0.5 ${isPast ? 'bg-green-400' : 'bg-border'}`} />
                           )}
                         </div>
@@ -879,22 +842,41 @@ export default function ClientPortalPage() {
                         {/* Testo */}
                         <div className="pb-4 flex-1 min-w-0">
                           <p className={`text-sm font-semibold leading-tight ${
-                            isCurrent ? 'text-blue-700' : isPast ? 'text-green-700' : 'text-muted-foreground'
+                            step.state === 'active'
+                              ? 'text-amber-700'
+                              : isCurrent
+                                ? 'text-blue-700'
+                                : isPast
+                                  ? 'text-green-700'
+                                  : 'text-muted-foreground'
                           }`}>
                             {step.label}
-                            {isCurrent && (
+                            {step.state === 'current' && (
                               <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                                Corrente
+                                Fase corrente
+                              </span>
+                            )}
+                            {step.state === 'active' && (
+                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                                Aperta
+                              </span>
+                            )}
+                            {step.state === 'completed' && (
+                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                Completata
                               </span>
                             )}
                           </p>
-                          {log?.created_at && (
+                          {displayedAt && (
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              {new Date(log.created_at).toLocaleString('it-IT', {
+                              {new Date(displayedAt).toLocaleString('it-IT', {
                                 day: '2-digit', month: '2-digit', year: 'numeric',
                                 hour: '2-digit', minute: '2-digit',
                               })}
                             </p>
+                          )}
+                          {step.kind === 'integration' && step.request.note && (
+                            <p className="text-xs text-muted-foreground mt-1">{step.request.note}</p>
                           )}
                         </div>
                       </div>
@@ -909,11 +891,14 @@ export default function ClientPortalPage() {
                       ? 'bg-green-50 border border-green-200 text-green-800'
                       : currentKey === 'declinata'
                       ? 'bg-red-50 border border-red-200 text-red-800'
-                      : currentKey === 'integrazioni_richieste'
-                      ? 'bg-amber-50 border border-amber-200 text-amber-800'
                       : 'bg-blue-50 border border-blue-200 text-blue-800'
                   }`}>
                     {STATUS_MESSAGES[currentKey]}
+                  </div>
+                )}
+                {!STATUS_MESSAGES[currentKey] && STATUS_MESSAGES[primaryStatus] && (
+                  <div className="mt-1 rounded-lg px-4 py-3 text-sm bg-blue-50 border border-blue-200 text-blue-800">
+                    {STATUS_MESSAGES[primaryStatus]}
                   </div>
                 )}
               </CardContent>

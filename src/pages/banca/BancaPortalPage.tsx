@@ -116,13 +116,21 @@ interface ReceivedPractice {
 }
 
 /* ─── Helpers ─── */
-const VISIBLE_STATUSES = ['raccolta_documenti', 'inviata_banca', 'integrazioni_richieste', 'completata', 'approvata'];
+const VISIBLE_STATUSES = [
+  'raccolta_documenti',
+  'inviata_banca',
+  'istruttoria',
+  'in_delibera',
+  'deliberata',
+  'erogata',
+  'declinata',
+];
 
 /** Estrae solo la città dall'indirizzo visura (formato: "ROMA (RM) VIA...") */
 function extractCity(indirizzo?: string): string | null {
   if (!indirizzo) return null;
   // La città è all'inizio, prima della sigla provincia tra parentesi
-  const m = indirizzo.match(/^([A-ZÀÈÉÌÒÙA-Za-zÀÈÉÌÒÙàèéìòù][A-Za-zÀÈÉÌÒÙàèéìòù\s\-']{1,40}?)\s*\([A-Z]{2}\)/);
+  const m = indirizzo.match(/^([A-ZÀÈÉÌÒÙA-Za-zÀÈÉÌÒÙàèéìòù][A-Za-zÀÈÉÌÒÙàèéìòù\s-']{1,40}?)\s*\([A-Z]{2}\)/);
   if (m?.[1]) return m[1].trim();
   return null;
 }
@@ -131,7 +139,7 @@ function extractCity(indirizzo?: string): string | null {
 function extractAteco(indirizzo?: string, fallback?: string): string | null {
   if (fallback) return fallback;
   if (!indirizzo) return null;
-  const m = indirizzo.match(/(?:ATECO|attivit[àa])[^\d]*(\d{2}[.\-]\d{2}(?:[.\-]\d{1,2})?)/i);
+  const m = indirizzo.match(/(?:ATECO|attivit[àa])[^\d]*(\d{2}[.-]\d{2}(?:[.-]\d{1,2})?)/i);
   if (m?.[1]) return m[1];
   return null;
 }
@@ -157,9 +165,10 @@ const AREA_LABEL: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   raccolta_documenti: 'Raccolta Documenti',
   inviata_banca: 'Inviata alla Banca',
-  integrazioni_richieste: 'Integrazioni',
-  completata: 'Completa',
-  approvata: 'Approvata',
+  istruttoria: 'Istruttoria',
+  in_delibera: 'In Delibera',
+  deliberata: 'Deliberata',
+  erogata: 'Erogata',
   bozza: 'Bozza',
   rifiutata: 'Rifiutata',
   declinata: 'Declinata',
@@ -168,9 +177,10 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_COLOR: Record<string, string> = {
   raccolta_documenti: 'bg-blue-100 text-blue-800',
   inviata_banca: 'bg-purple-100 text-purple-800',
-  integrazioni_richieste: 'bg-amber-100 text-amber-800',
-  completata: 'bg-green-100 text-green-800',
-  approvata: 'bg-emerald-100 text-emerald-800',
+  istruttoria: 'bg-cyan-100 text-cyan-800',
+  in_delibera: 'bg-amber-100 text-amber-800',
+  deliberata: 'bg-emerald-100 text-emerald-800',
+  erogata: 'bg-green-100 text-green-800',
   rifiutata: 'bg-red-100 text-red-800',
   declinata: 'bg-rose-100 text-rose-800',
   bozza: 'bg-slate-100 text-slate-600',
