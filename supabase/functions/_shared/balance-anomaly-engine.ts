@@ -18,6 +18,7 @@ export interface BalanceAnomalyFinding {
   evidence: string[];
   possible_explanations: string[];
   recommended_checks: string[];
+  suggested_question: string;
 }
 
 export interface BalanceAnomalyAnalysis {
@@ -30,7 +31,15 @@ export interface BalanceAnomalyAnalysis {
   sector_key?: string;
   sector_label?: string;
   comparison_year?: number | null;
+  line_items_analyzed: number;
+  line_items_flagged: number;
   disclaimer: string;
+}
+
+export interface BalanceLineItem {
+  label: string;
+  current_value: number;
+  previous_value?: number | null;
 }
 
 export interface BalanceSnapshot {
@@ -84,11 +93,11 @@ export interface AnalyzeBalanceAnomaliesInput {
   benchmark?: Record<string, number | null> | null;
 }
 
-export const BALANCE_ANOMALY_ENGINE_VERSION = '1.0.0';
+export const BALANCE_ANOMALY_ENGINE_VERSION = '1.1.0';
 
 export const BALANCE_ANOMALY_DISCLAIMER =
-  'L’analisi evidenzia indicatori di rischio, incoerenze e poste da approfondire. ' +
-  'Non certifica la falsità del bilancio e non costituisce prova di frode. ' +
+  'L’analisi evidenzia anomalie di bilancio da approfondire, incoerenze e poste che richiedono maggiori informazioni. ' +
+  'Non esprime un giudizio sulla correttezza complessiva del bilancio. ' +
   'Ogni segnalazione deve essere verificata da un professionista mediante nota integrativa, ' +
   'mastrini, partitari, riconciliazioni e documenti giustificativi.';
 
@@ -154,6 +163,10 @@ function makeFinding(
     evidence,
     possible_explanations: possibleExplanations,
     recommended_checks: recommendedChecks,
+    suggested_question:
+      `Con riferimento a “${title}”, vi chiediamo di fornire una spiegazione dettagliata. ` +
+      `${evidence.join('; ')}. Indicate la natura della voce, le principali controparti, ` +
+      `il criterio di contabilizzazione e allegate, se disponibili, il mastrino o la documentazione di supporto.`,
   };
 }
 
@@ -167,23 +180,114 @@ function parseItalianNumber(raw: string): number | null {
   return Number.isFinite(value) ? (negative ? -value : value) : null;
 }
 
-function scanUnclearItems(rawText: string, materialityBase: number): Array<{ label: string; value: number }> {
+export function extractBalanceLineItems(rawText: string): BalanceLineItem[] {
+  const results = new Map<string, BalanceLineItem>();
+  const readableText = rawText
+    .replace(/<\/(?:tr|p|div|li|table)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&');
+  const lines = readableText.replace(/\u00a0/g, ' ').split(/\r?\n/);
+
+  for (const sourceLine of lines) {
+    const line = sourceLine.replace(/\s+/g, ' ').trim();
+    if (line.length < 5 || line.length > 260 || /^[-|: ]+$/.test(line)) continue;
+
+    let label = '';
+    let numericTokens: string[] = [];
+    if (line.includes('|')) {
+      const columns = line.split('|').map(column => column.trim()).filter(Boolean);
+      label = columns[0] ?? '';
+      numericTokens = columns.slice(1).filter(column => /\d/.test(column));
+    } else {
+      const withoutEnumeration = line
+        .replace(/^(?:[A-Z]\)|[IVX]+[).-]?|\d+[).-])\s*/i, '')
+        .trim();
+      const numberMatches = [...withoutEnumeration.matchAll(/\(?-?\d+(?:[.\s]\d{3})*(?:,\d+)?\)?/g)];
+      if (numberMatches.length === 0 || numberMatches[0].index === undefined) continue;
+      label = withoutEnumeration.slice(0, numberMatches[0].index).trim();
+      numericTokens = numberMatches.map(match => match[0]);
+    }
+
+    if (label.length < 3 || /^(totale|subtotale|bilancio|esercizio|pagina)$/i.test(label)) continue;
+    const values = numericTokens.map(parseItalianNumber).filter(finite);
+    if (values.length === 0) continue;
+    const key = label.toLocaleLowerCase('it-IT');
+    const candidate: BalanceLineItem = {
+      label,
+      current_value: values[0],
+      previous_value: values[1] ?? null,
+    };
+    const existing = results.get(key);
+    if (!existing || Math.abs(candidate.current_value) > Math.abs(existing.current_value)) {
+      results.set(key, candidate);
+    }
+  }
+
+  return [...results.values()];
+}
+
+function scanUnclearItems(
+  rawText: string,
+  materialityBase: number,
+  lineItems: BalanceLineItem[],
+): Array<{ label: string; value: number }> {
   const terms = [
     'altri crediti',
     'altri debiti',
     'crediti diversi',
     'debiti diversi',
+    'crediti verso altri',
+    'debiti verso altri',
+    'altri ricavi',
+    'altri proventi',
+    'altri costi',
     'oneri diversi',
     'sopravvenienze',
+    'insussistenze',
     'rettifiche',
+    'partite diverse',
+    'partite da sistemare',
+    'partite transitorie',
+    'crediti da definire',
+    'debiti da definire',
+    'costi capitalizzati',
+    'incrementi di immobilizzazioni per lavori interni',
+    'lavori in corso su ordinazione',
+    'crediti verso soci',
+    'debiti verso soci',
+    'finanziamenti soci',
+    'crediti infragruppo',
+    'debiti infragruppo',
+    'parti correlate',
+    'anticipi',
+    'acconti',
+    'avviamento',
+    'ratei e risconti',
     'varie',
+    'diversi',
     'non specificato',
     'da definire',
+    'da chiarire',
   ];
   const normalized = rawText.replace(/\u00a0/g, ' ');
   const results = new Map<string, number>();
 
+  for (const item of lineItems) {
+    const normalizedLabel = item.label.toLocaleLowerCase('it-IT');
+    if (!terms.some(term => normalizedLabel.includes(term))) continue;
+    const absolute = Math.abs(item.current_value);
+    if (absolute < Math.max(5_000, materialityBase * 0.015)) continue;
+    results.set(item.label, Math.max(results.get(item.label) ?? 0, absolute));
+  }
+
   for (const term of terms) {
+    const alreadyCapturedFromLine = lineItems.some(item =>
+      item.label.toLocaleLowerCase('it-IT').includes(term) &&
+      Math.abs(item.current_value) >= Math.max(5_000, materialityBase * 0.015)
+    );
+    if (alreadyCapturedFromLine) continue;
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(`${escaped}[^\\d(]{0,80}(\\(?\\d[\\d. ]*(?:,\\d+)?\\)?)`, 'gi');
     let match: RegExpExecArray | null;
@@ -251,6 +355,7 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
   const previous = input.previous ?? null;
   const sectorKey = input.sectorKey || inferAtecoSectorKey(input.atecoCode);
   const findings: BalanceAnomalyFinding[] = [];
+  const lineItems = input.rawText ? extractBalanceLineItems(input.rawText) : [];
 
   const coreFields = [
     current.totale_attivo,
@@ -680,10 +785,10 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
   }
 
   if (input.rawText && (asset > 0 || revenue > 0)) {
-    const unclearItems = scanUnclearItems(input.rawText, Math.max(asset, revenue));
+    const unclearItems = scanUnclearItems(input.rawText, Math.max(asset, revenue), lineItems);
     for (const item of unclearItems) {
       findings.push(makeFinding(
-        `posta-generica-${item.label.replace(/\s+/g, '-')}`,
+        `posta-generica-${item.label.toLocaleLowerCase('it-IT').replace(/[^a-z0-9à-ÿ]+/gi, '-')}`,
         'posta_da_chiarire',
         item.value > Math.max(asset, revenue) * 0.1 ? 'media' : 'bassa',
         'media',
@@ -719,6 +824,8 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     sector_key: sectorKey,
     sector_label: input.sectorLabel ?? undefined,
     comparison_year: previous?.anno_esercizio ?? null,
+    line_items_analyzed: lineItems.length,
+    line_items_flagged: uniqueFindings.filter(finding => finding.category === 'posta_da_chiarire').length,
     disclaimer: BALANCE_ANOMALY_DISCLAIMER,
   };
 }

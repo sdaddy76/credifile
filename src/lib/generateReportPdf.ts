@@ -455,7 +455,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     const anomalyInfo = anomalyLevelInfo(analysis.level);
     doc.addPage(); y = 18;
 
-    sectionTitle('Anomalie di Bilancio e Poste da Verificare', '🔎');
+    sectionTitle('Anomalie di Bilancio da Approfondire', '🔎');
 
     doc.setFillColor(...anomalyInfo.bg);
     doc.setDrawColor(...anomalyInfo.color);

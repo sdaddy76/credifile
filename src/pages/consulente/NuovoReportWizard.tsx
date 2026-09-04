@@ -31,6 +31,7 @@ import {
   FileText, BarChart2, Brain, Send, Download, ShieldCheck, Clock, Mail,
   PlusCircle, Trash2, Banknote, Save,
 } from 'lucide-react';
+import { pdfTextItemsToLines } from '@/lib/pdfTextLines';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -44,7 +45,7 @@ async function extractPdfTextWizard(file: File): Promise<string> {
   for (let i = 1; i <= pdf.numPages; i++) {
     const pg = await pdf.getPage(i);
     const ct = await pg.getTextContent();
-    pages.push(ct.items.map((it: unknown) => (it as { str?: string }).str ?? '').join(' '));
+    pages.push(pdfTextItemsToLines(ct.items as unknown[]).join('\n'));
   }
   return pages.join('\n');
 }
@@ -995,14 +996,14 @@ export default function NuovoReportWizard() {
               }`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-800">Anomalie e poste da verificare</h3>
+                    <h3 className="text-sm font-bold text-slate-800">Anomalie di bilancio da approfondire</h3>
                     <p className="text-xs text-slate-600 mt-0.5">
                       {anomalyAnalysis.findings.length} segnalazioni · livello {anomalyAnalysis.level}
                     </p>
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-black text-slate-800">{anomalyAnalysis.score}<span className="text-sm text-slate-400">/100</span></div>
-                    <div className="text-[10px] uppercase font-semibold text-slate-500">rischio anomalie</div>
+                    <div className="text-[10px] uppercase font-semibold text-slate-500">indice anomalie</div>
                   </div>
                 </div>
                 {anomalyAnalysis.findings.length > 0 ? (

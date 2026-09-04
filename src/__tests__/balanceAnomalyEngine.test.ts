@@ -1,5 +1,6 @@
 import {
   analyzeBalanceAnomalies,
+  extractBalanceLineItems,
   inferAtecoSectorKey,
   type BalanceSnapshot,
 } from '../../supabase/functions/_shared/balance-anomaly-engine';
@@ -50,6 +51,16 @@ describe('balance anomaly engine', () => {
     expect(inferAtecoSectorKey('62.01.00')).toBe('ict');
     expect(inferAtecoSectorKey('25.11.00')).toBe('manifattura');
     expect(inferAtecoSectorKey('69.20.11')).toBe('professionali');
+  });
+
+  it('separa etichetta, valore corrente e valore precedente per ogni voce', () => {
+    expect(extractBalanceLineItems('Altri crediti e partite diverse 180.000 45.000')).toEqual([
+      {
+        label: 'Altri crediti e partite diverse',
+        current_value: 180_000,
+        previous_value: 45_000,
+      },
+    ]);
   });
 
   it('non genera red flag rilevanti per un bilancio coerente', () => {
@@ -146,10 +157,14 @@ describe('balance anomaly engine', () => {
       sectorKey: 'manifattura',
     });
 
-    expect(result.findings.some(item => item.id === 'posta-generica-altri-crediti')).toBe(true);
+    const finding = result.findings.find(item => item.id === 'posta-generica-altri-crediti');
+    expect(finding).toBeDefined();
+    expect(finding?.suggested_question.toLowerCase()).toContain('altri crediti');
+    expect(result.line_items_analyzed).toBeGreaterThan(0);
+    expect(result.line_items_flagged).toBe(1);
   });
 
-  it('classifica i dati insufficienti come problema di qualità e non come frode', () => {
+  it('classifica i dati insufficienti come problema di qualità senza formulare accuse', () => {
     const result = analyzeBalanceAnomalies({
       current: { anno_esercizio: 2025, totale_attivo: 100_000 },
       sectorKey: 'default',
@@ -157,6 +172,7 @@ describe('balance anomaly engine', () => {
 
     const finding = result.findings.find(item => item.id === 'qualita-dati-principali');
     expect(finding?.category).toBe('qualita_dato');
-    expect(result.disclaimer.toLowerCase()).toContain('non costituisce prova di frode');
+    expect(result.disclaimer.toLowerCase()).toContain('anomalie di bilancio da approfondire');
+    expect(result.disclaimer.toLowerCase()).not.toContain('frode');
   });
 });

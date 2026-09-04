@@ -4,14 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck, Download, Trash2 } from 'lucide-react';
+import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck, Download, Trash2, MessageSquare, CircleSlash2, UserRoundCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { fmtBenchmark, getAtecoBenchmark, type SectorBenchmark } from '@/lib/sectorBenchmarks';
 import type { BalanceAnomalyAnalysis } from '../../supabase/functions/_shared/balance-anomaly-engine';
+import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
 
 interface Props { practiceId: string }
 
@@ -43,6 +45,40 @@ interface BilancioRecord {
   anomaly_engine_version: string | null;
   created_at: string;
 }
+
+type BalanceAnomalyAlertStatus =
+  | 'open'
+  | 'answered_by_consultant'
+  | 'client_requested'
+  | 'client_answered'
+  | 'ignored';
+
+interface BalanceAnomalyAlert {
+  id: string;
+  bilancio_id: string;
+  practice_id: string;
+  finding_id: string;
+  title: string;
+  category: string;
+  severity: 'alta' | 'media' | 'bassa';
+  confidence: 'alta' | 'media' | 'bassa';
+  finding: BalanceAnomalyAnalysis['findings'][number];
+  status: BalanceAnomalyAlertStatus;
+  consultant_response: string | null;
+  ignore_reason: string | null;
+  client_question_id: string | null;
+  practice_client_questions?: { risposta: string | null; answered_at: string | null } | null;
+  active: boolean;
+  resolved_at: string | null;
+}
+
+const ALERT_STATUS_LABELS: Record<BalanceAnomalyAlertStatus, string> = {
+  open: 'Da valutare',
+  answered_by_consultant: 'Spiegata dal consulente',
+  client_requested: 'Richiesta al cliente',
+  client_answered: 'Risposta dal cliente',
+  ignored: 'Ignorata',
+};
 
 // Bancabilità
 interface BankKpiReq { id: string; bank_id: string; kpi_key: string; kpi_area: string; kpi_label: string; min_value: number | null; max_value: number | null }
@@ -424,6 +460,7 @@ function generateBancabilitaReport(
   bilanci: BilancioRecord[],
   bancabilita: BancaCheck[],
   practiceId: string,
+  anomalyAlerts: BalanceAnomalyAlert[],
 ) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
@@ -547,38 +584,61 @@ function generateBancabilitaReport(
     y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
 
     if (bil.anomaly_analysis) {
+      const reportAlerts = anomalyAlerts.filter(alert =>
+        alert.bilancio_id === bil.id && alert.active && alert.status !== 'ignored'
+      );
       if (y > 225) { doc.addPage(); y = 15; }
       const analysis = bil.anomaly_analysis;
       doc.setTextColor(...BLUE);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'bold');
-      doc.text(`ANOMALIE E POSTE DA VERIFICARE — ${analysis.score}/100 (${analysis.level.toUpperCase()})`, 14, y);
+      doc.text(`ANOMALIE DI BILANCIO DA APPROFONDIRE — ${analysis.score}/100 (${analysis.level.toUpperCase()})`, 14, y);
       y += 5;
 
-      if (analysis.findings.length === 0) {
+      if (analysis.findings.length === 0 || (reportAlerts.length === 0 && anomalyAlerts.some(alert => alert.bilancio_id === bil.id))) {
         doc.setTextColor(22, 101, 52);
         doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
-        doc.text('Nessuna anomalia significativa rilevata dai controlli automatici disponibili.', 14, y);
+        doc.text('Nessuna anomalia di bilancio aperta da approfondire.', 14, y);
         y += 8;
       } else {
+        const rows = reportAlerts.length > 0
+          ? reportAlerts.map(alert => {
+              const resolution = alert.status === 'answered_by_consultant'
+                ? alert.consultant_response ?? 'Spiegazione inserita dal consulente'
+                : alert.status === 'client_answered'
+                  ? alert.practice_client_questions?.risposta ?? 'Risposta ricevuta dal cliente'
+                  : alert.status === 'client_requested'
+                    ? 'Chiarimento richiesto al cliente'
+                    : alert.finding.recommended_checks[0] ?? 'Da approfondire';
+              return [
+                alert.severity.toUpperCase(),
+                alert.title,
+                alert.finding.evidence.join(' · '),
+                ALERT_STATUS_LABELS[alert.status],
+                resolution,
+              ];
+            })
+          : analysis.findings.map(finding => [
+              finding.severity.toUpperCase(),
+              finding.title,
+              finding.evidence.join(' · '),
+              'Da valutare',
+              finding.recommended_checks[0] ?? 'Approfondire',
+            ]);
         autoTable(doc, {
           startY: y,
-          head: [['Gravità', 'Segnalazione', 'Evidenza', 'Verifica consigliata']],
-          body: analysis.findings.map(finding => [
-            finding.severity.toUpperCase(),
-            finding.title,
-            finding.evidence.join(' · '),
-            finding.recommended_checks[0] ?? 'Approfondire',
-          ]),
+          head: [['Gravità', 'Anomalia', 'Evidenza', 'Stato', 'Approfondimento']],
+          body: rows,
           margin: { left: 14, right: 14 },
           styles: { fontSize: 6.8, cellPadding: 1.8, overflow: 'linebreak' },
           headStyles: { fillColor: BLUE, textColor: [255,255,255], fontStyle: 'bold' },
           columnStyles: {
-            0: { cellWidth: 18, fontStyle: 'bold' },
-            1: { cellWidth: 45 },
-            2: { cellWidth: 65 },
-            3: { cellWidth: 54 },
+            0: { cellWidth: 16, fontStyle: 'bold' },
+            1: { cellWidth: 38 },
+            2: { cellWidth: 50 },
+            3: { cellWidth: 29 },
+            4: { cellWidth: 49 },
           },
         });
         y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;
@@ -763,6 +823,9 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const [bancabilita, setBancabilita] = useState<BancaCheck[]>([]);
   const [loadingBanca, setLoadingBanca] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [anomalyAlerts, setAnomalyAlerts] = useState<BalanceAnomalyAlert[]>([]);
+  const [alertNotes, setAlertNotes] = useState<Record<string, string>>({});
+  const [savingAlertId, setSavingAlertId] = useState<string | null>(null);
 
   const loadBancabilita = useCallback(async (latestKpi: KpiResult | null) => {
     setLoadingBanca(true);
@@ -837,6 +900,17 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     const list = (kpiData ?? []) as BilancioRecord[];
     setBilanci(list);
     if (list.length > 0) setSelectedBilancio(b => b ?? list[0]);
+    if (list.length > 0) {
+      const { data: alertData } = await supabase
+        .from('balance_anomaly_alerts')
+        .select('*, practice_client_questions(risposta,answered_at)')
+        .in('bilancio_id', list.map(bilancio => bilancio.id))
+        .eq('active', true)
+        .order('created_at');
+      setAnomalyAlerts((alertData ?? []) as BalanceAnomalyAlert[]);
+    } else {
+      setAnomalyAlerts([]);
+    }
 
     // PDF già caricati nella pratica
     const { data: pdfData } = await supabase
@@ -873,6 +947,194 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     const latest = bilanci.length > 0 ? bilanci[0].kpi : null;
     loadBancabilita(latest);
   }, [bilanci, loadBancabilita]);
+
+  const updateAlert = async (
+    alert: BalanceAnomalyAlert,
+    status: 'answered_by_consultant' | 'ignored',
+  ) => {
+    const note = alertNotes[alert.id]?.trim() ?? '';
+    if (!note) {
+      toast.error(status === 'ignored'
+        ? 'Inserisci il motivo per cui l’alert può essere ignorato'
+        : 'Inserisci la spiegazione del consulente');
+      return;
+    }
+    setSavingAlertId(alert.id);
+    try {
+      const { error } = await supabase
+        .from('balance_anomaly_alerts')
+        .update({
+          status,
+          consultant_response: status === 'answered_by_consultant' ? note : null,
+          ignore_reason: status === 'ignored' ? note : null,
+          resolved_at: new Date().toISOString(),
+        })
+        .eq('id', alert.id);
+      if (error) throw error;
+      setAnomalyAlerts(previous => previous.map(item => (
+        item.id === alert.id
+          ? {
+              ...item,
+              status,
+              consultant_response: status === 'answered_by_consultant' ? note : null,
+              ignore_reason: status === 'ignored' ? note : null,
+              resolved_at: new Date().toISOString(),
+            }
+          : item
+      )));
+      toast.success(status === 'ignored' ? 'Alert ignorato con motivazione' : 'Spiegazione del consulente salvata');
+    } catch (error) {
+      toast.error('Errore aggiornamento alert: ' + String(error));
+    } finally {
+      setSavingAlertId(null);
+    }
+  };
+
+  const askClientAboutAlert = async (alert: BalanceAnomalyAlert) => {
+    const question = alertNotes[alert.id]?.trim()
+      || alert.finding.suggested_question
+      || `Con riferimento all’anomalia di bilancio “${alert.title}” (${alert.finding.evidence.join('; ')}), vi chiediamo di fornire una spiegazione dettagliata e la documentazione contabile di supporto.`;
+    if (!question) {
+      toast.error('Inserisci la domanda da inviare al cliente');
+      return;
+    }
+    setSavingAlertId(alert.id);
+    let integrationRequestId: string | null = null;
+    let questionId: string | null = null;
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUser = authData.user;
+      const [{ data: practiceData, error: practiceError }, { data: accessCode, error: accessError }, { data: profile }] = await Promise.all([
+        supabase
+          .from('practices')
+          .select('numero_pratica,status,clients(ragione_sociale,email),assigned_agent:admin_profiles!practices_assigned_to_fkey(nome,email)')
+          .eq('id', practiceId)
+          .single(),
+        supabase
+          .from('practice_access_codes')
+          .select('id,codice,email_cliente')
+          .eq('practice_id', practiceId)
+          .maybeSingle(),
+        currentUser
+          ? supabase.from('admin_profiles').select('nome,email').eq('id', currentUser.id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+      if (practiceError) throw practiceError;
+      if (accessError) throw accessError;
+
+      const practiceWithRelations = practiceData as unknown as {
+        numero_pratica: string;
+        status: string;
+        clients: { ragione_sociale: string; email: string } | null;
+        assigned_agent: { nome?: string; email: string } | null;
+      };
+      const client = practiceWithRelations.clients;
+      if (!client?.email) throw new Error('Il cliente non ha un indirizzo email');
+      if (!accessCode?.codice) throw new Error('Genera prima il link e il codice di accesso del cliente');
+      const assignedAgentEmail = practiceWithRelations.assigned_agent?.email?.trim() || null;
+      if (!assignedAgentEmail) {
+        throw new Error('Assegna alla pratica un agente con email valida prima di inviare la domanda al cliente');
+      }
+
+      const { data: integrationRequest, error: integrationError } = await supabase
+        .from('practice_integration_requests')
+        .insert({
+          practice_id: practiceId,
+          origin_status: normalizePrimaryStatus(practiceWithRelations.status),
+          status: 'open',
+          note: `Chiarimento su anomalia di bilancio: ${alert.title}`,
+          created_by: currentUser?.id ?? null,
+        })
+        .select('id')
+        .single();
+      if (integrationError || !integrationRequest?.id) {
+        throw integrationError ?? new Error('Impossibile creare la richiesta di chiarimento');
+      }
+      integrationRequestId = integrationRequest.id;
+
+      const { data: insertedQuestion, error: questionError } = await supabase
+        .from('practice_client_questions')
+        .insert({
+          practice_id: practiceId,
+          integration_request_id: integrationRequestId,
+          domanda: question,
+          stato: 'richiesta',
+          created_by: currentUser?.id ?? null,
+        })
+        .select('id')
+        .single();
+      if (questionError || !insertedQuestion?.id) {
+        throw questionError ?? new Error('Impossibile creare la domanda');
+      }
+      questionId = insertedQuestion.id;
+
+      const { error: alertError } = await supabase
+        .from('balance_anomaly_alerts')
+        .update({
+          status: 'client_requested',
+          client_question_id: questionId,
+          resolved_at: null,
+        })
+        .eq('id', alert.id);
+      if (alertError) throw alertError;
+
+      const consultantName = profile?.nome ?? currentUser?.email ?? 'Il tuo consulente';
+      const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
+        body: {
+          to: client.email,
+          consultant_name: consultantName,
+          documents: [],
+          questions: [question],
+          link: `https://credifile-eosin.vercel.app/#/accesso?p=${practiceId}`,
+          code: accessCode.codice,
+          practice_number: practiceWithRelations.numero_pratica,
+          company_name: client.ragione_sociale,
+          subject_override: `Anomalia di bilancio da approfondire — ${client.ragione_sociale}`,
+          cc: assignedAgentEmail,
+          reply_to: assignedAgentEmail,
+        },
+      });
+      if (emailError || emailData?.success === false) {
+        throw new Error(`La domanda è stata creata, ma l’email non è stata inviata: ${emailData?.error ?? emailError?.message ?? 'errore sconosciuto'}`);
+      }
+
+      await Promise.all([
+        supabase
+          .from('practice_integration_requests')
+          .update({ sent_at: new Date().toISOString() })
+          .eq('id', integrationRequestId),
+        supabase.from('practice_activity_log').insert({
+          practice_id: practiceId,
+          action: 'chiarimento_anomalia_bilancio_richiesto',
+          actor_id: currentUser?.id ?? null,
+          actor_nome: consultantName,
+          actor_ruolo: 'consulente',
+          metadata: {
+            alert_id: alert.id,
+            bilancio_id: alert.bilancio_id,
+            titolo: alert.title,
+            domanda: question,
+            destinatario: client.email,
+            integration_request_id: integrationRequestId,
+          },
+        }),
+      ]);
+
+      setAnomalyAlerts(previous => previous.map(item => (
+        item.id === alert.id
+          ? { ...item, status: 'client_requested', client_question_id: questionId }
+          : item
+      )));
+      toast.success(`Domanda inviata a ${client.email}`);
+    } catch (error) {
+      if (!questionId && integrationRequestId) {
+        await supabase.from('practice_integration_requests').delete().eq('id', integrationRequestId);
+      }
+      toast.error(String(error));
+    } finally {
+      setSavingAlertId(null);
+    }
+  };
 
   // Logica core: dato il testo PDF + metadati, chiama l'edge function
   const runAnalysis = async (pdfText: string, uploadedFileId: string | null) => {
@@ -969,6 +1231,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
 
   if (loading) return <div className="py-8 text-center text-muted-foreground text-sm">Caricamento analisi...</div>;
 
+  const selectedAlerts = selectedBilancio
+    ? anomalyAlerts.filter(alert => alert.bilancio_id === selectedBilancio.id)
+    : [];
+
   return (
     <div className="space-y-4">
       {/* Header con selezione PDF esistente o upload nuovo */}
@@ -1017,7 +1283,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             </Button>
             {bilanci.length > 0 && (
               <Button variant="outline" size="sm"
-                onClick={() => generateBancabilitaReport(bilanci, bancabilita, practiceId)}
+                onClick={() => generateBancabilitaReport(bilanci, bancabilita, practiceId, anomalyAlerts)}
                 title="Genera PDF riassuntivo KPI + bancabilità">
                 <Download className="w-3.5 h-3.5 mr-1.5" /> Genera Report PDF
               </Button>
@@ -1139,7 +1405,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                     <CardTitle className="text-sm flex items-center justify-between gap-3">
                       <span className="flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 text-amber-600" />
-                        Anomalie di bilancio e poste da verificare
+                        Anomalie di bilancio da approfondire
                       </span>
                       <Badge variant="outline" className="font-bold">
                         {selectedBilancio.anomaly_analysis.score}/100 · {selectedBilancio.anomaly_analysis.level}
@@ -1147,13 +1413,21 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    <div className="flex flex-wrap gap-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      <span>Voci analizzate: <strong className="text-foreground">{selectedBilancio.anomaly_analysis.line_items_analyzed ?? 0}</strong></span>
+                      <span>Poste poco chiare: <strong className="text-foreground">{selectedBilancio.anomaly_analysis.line_items_flagged ?? 0}</strong></span>
+                      <span>Alert aperti: <strong className="text-foreground">{selectedAlerts.filter(alert => alert.status === 'open').length}</strong></span>
+                    </div>
                     {selectedBilancio.anomaly_analysis.findings.length === 0 ? (
                       <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
                         Nessuna anomalia significativa rilevata dai controlli automatici disponibili.
                       </div>
-                    ) : (
-                      selectedBilancio.anomaly_analysis.findings.map(finding => (
-                        <div key={finding.id} className="rounded-lg border bg-card p-3">
+                    ) : selectedAlerts.length > 0 ? (
+                      selectedAlerts.map(alert => {
+                        const finding = alert.finding;
+                        const isResolved = ['answered_by_consultant', 'client_answered', 'ignored'].includes(alert.status);
+                        return (
+                        <div key={alert.id} className={`rounded-lg border p-3 ${isResolved ? 'bg-muted/20' : 'bg-card'}`}>
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge className={
                               finding.severity === 'alta'
@@ -1168,6 +1442,9 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                               {finding.category.replace(/_/g, ' ')}
                             </span>
+                            <Badge variant="outline" className="ml-auto">
+                              {ALERT_STATUS_LABELS[alert.status]}
+                            </Badge>
                           </div>
                           <h4 className="mt-2 text-sm font-semibold text-foreground">{finding.title}</h4>
                           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{finding.explanation}</p>
@@ -1194,6 +1471,82 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                               </ul>
                             </div>
                           </div>
+                          {alert.consultant_response && (
+                            <div className="mt-3 rounded-md border border-green-200 bg-green-50 p-2">
+                              <p className="text-[10px] font-semibold uppercase text-green-700">Spiegazione del consulente</p>
+                              <p className="mt-1 text-xs whitespace-pre-wrap text-green-900">{alert.consultant_response}</p>
+                            </div>
+                          )}
+                          {alert.ignore_reason && (
+                            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2">
+                              <p className="text-[10px] font-semibold uppercase text-slate-600">Motivo esclusione</p>
+                              <p className="mt-1 text-xs whitespace-pre-wrap text-slate-800">{alert.ignore_reason}</p>
+                            </div>
+                          )}
+                          {alert.practice_client_questions?.risposta && (
+                            <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 p-2">
+                              <p className="text-[10px] font-semibold uppercase text-blue-700">Risposta del cliente</p>
+                              <p className="mt-1 text-xs whitespace-pre-wrap text-blue-900">{alert.practice_client_questions.risposta}</p>
+                            </div>
+                          )}
+                          {alert.status === 'client_requested' ? (
+                            <div className="mt-3 flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                              <MessageSquare className="h-3.5 w-3.5" />
+                              Domanda inviata. L’alert si aggiornerà quando il cliente salverà la risposta.
+                            </div>
+                          ) : alert.status === 'open' ? (
+                            <div className="mt-3 space-y-2 border-t pt-3">
+                              <Textarea
+                                rows={3}
+                                value={alertNotes[alert.id] ?? ''}
+                                onChange={event => setAlertNotes(previous => ({ ...previous, [alert.id]: event.target.value }))}
+                                placeholder={finding.suggested_question || 'Inserisci una spiegazione, una domanda per il cliente o il motivo per ignorare l’alert...'}
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1.5 border-green-200 text-green-700 hover:bg-green-50"
+                                  disabled={savingAlertId === alert.id}
+                                  onClick={() => updateAlert(alert, 'answered_by_consultant')}
+                                >
+                                  <UserRoundCheck className="h-3.5 w-3.5" />
+                                  Rispondo io
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="gap-1.5"
+                                  disabled={savingAlertId === alert.id}
+                                  onClick={() => askClientAboutAlert(alert)}
+                                >
+                                  <MessageSquare className="h-3.5 w-3.5" />
+                                  Chiedi al cliente
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="gap-1.5 text-muted-foreground"
+                                  disabled={savingAlertId === alert.id}
+                                  onClick={() => updateAlert(alert, 'ignored')}
+                                >
+                                  <CircleSlash2 className="h-3.5 w-3.5" />
+                                  Ignora alert
+                                </Button>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">
+                                Se lasci vuoto il testo e scegli “Chiedi al cliente”, sarà usata la domanda proposta automaticamente.
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                        );
+                      })
+                    ) : (
+                      selectedBilancio.anomaly_analysis.findings.map(finding => (
+                        <div key={finding.id} className="rounded-lg border bg-card p-3">
+                          <Badge variant="outline">Alert in preparazione</Badge>
+                          <h4 className="mt-2 text-sm font-semibold">{finding.title}</h4>
+                          <p className="mt-1 text-xs text-muted-foreground">{finding.evidence.join(' · ')}</p>
                         </div>
                       ))
                     )}
