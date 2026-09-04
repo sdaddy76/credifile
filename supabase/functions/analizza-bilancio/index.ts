@@ -1,3 +1,9 @@
+import {
+  analyzeBalanceAnomalies,
+  inferAtecoSectorKey,
+  type BalanceSnapshot,
+} from '../_shared/balance-anomaly-engine.ts';
+
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
@@ -16,6 +22,34 @@ function fail(msg: string, status = 200) {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
+}
+
+const serviceHeaders = {
+  'apikey': SERVICE_ROLE,
+  'Authorization': `Bearer ${SERVICE_ROLE}`,
+  'Content-Type': 'application/json',
+};
+
+async function fetchJson<T>(path: string): Promise<T | null> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: serviceHeaders });
+  if (!response.ok) return null;
+  return await response.json() as T;
+}
+
+async function getSectorContext(codiceAteco?: string | null) {
+  const sectorKey = inferAtecoSectorKey(codiceAteco);
+  const rows = await fetchJson<Array<{
+    ateco_macro: string;
+    ateco_label: string;
+    kpi_data: Record<string, number | null>;
+  }>>(
+    `sector_benchmarks?ateco_macro=eq.${encodeURIComponent(sectorKey)}&select=ateco_macro,ateco_label,kpi_data&limit=1`,
+  );
+  return {
+    sectorKey,
+    sectorLabel: rows?.[0]?.ateco_label ?? sectorKey,
+    benchmark: rows?.[0]?.kpi_data ?? null,
+  };
 }
 
 // ─── Parsing numeri in formato italiano ──────────────────────────────────────
@@ -320,6 +354,16 @@ Deno.serve(async (req) => {
     if (bilancio_testo.trim().length < 50) return fail('Contenuto bilancio troppo breve o non leggibile');
     const bilData = parseBilancio(bilancio_testo);
     const { is_holding, kpi, dscr_source, servizio_debito_annuo } = calcolaKpi(bilData, financing ?? []);
+    const codiceAteco: string | null = body.codice_ateco ?? null;
+    const sector = await getSectorContext(codiceAteco);
+    const anomalyAnalysis = analyzeBalanceAnomalies({
+      current: { ...bilData, is_holding } as BalanceSnapshot,
+      rawText: bilancio_testo,
+      atecoCode: codiceAteco,
+      sectorKey: sector.sectorKey,
+      sectorLabel: sector.sectorLabel,
+      benchmark: sector.benchmark,
+    });
     return ok({
       anno_esercizio: bilData.anno_esercizio,
       ragione_sociale: bilData.ragione_sociale,
@@ -327,6 +371,7 @@ Deno.serve(async (req) => {
       is_holding,
       dscr_source,
       servizio_debito_annuo,
+      anomaly_analysis: anomalyAnalysis,
     });
   }
 
@@ -344,6 +389,27 @@ Deno.serve(async (req) => {
     dscr_source,
     servizio_debito_annuo,
   } = calcolaKpi(bilData, financing ?? []);
+
+  const practiceRows = await fetchJson<Array<{ codice_ateco: string | null }>>(
+    `practices?id=eq.${encodeURIComponent(practice_id)}&select=codice_ateco&limit=1`,
+  );
+  const codiceAteco = practiceRows?.[0]?.codice_ateco ?? null;
+  const sector = await getSectorContext(codiceAteco);
+  const previousRows = await fetchJson<BalanceSnapshot[]>(
+    `bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=*&order=anno_esercizio.desc.nullslast&limit=5`,
+  );
+  const previousBalance = previousRows?.find(row =>
+    row.anno_esercizio !== bilData.anno_esercizio,
+  ) ?? null;
+  const anomalyAnalysis = analyzeBalanceAnomalies({
+    current: { ...bilData, is_holding } as BalanceSnapshot,
+    previous: previousBalance,
+    rawText: pdf_text,
+    atecoCode: codiceAteco,
+    sectorKey: sector.sectorKey,
+    sectorLabel: sector.sectorLabel,
+    benchmark: sector.benchmark,
+  });
 
   // Upsert su DB via REST
   const row = {
@@ -367,16 +433,19 @@ Deno.serve(async (req) => {
     fondi_rischi: bilData.fondi_rischi,
     tfr: bilData.tfr,
     debiti_banche_breve: bilData.debiti_banche_breve,
+    debiti_banche_lungo: bilData.debiti_banche_lungo,
     debiti_altri_finanziatori: bilData.debiti_altri_finanziatori,
     debiti_fornitori: bilData.debiti_fornitori,
     debiti_tributari: bilData.debiti_tributari,
     totale_debiti: bilData.totale_debiti,
+    ratei_risconti_passivi: bilData.ratei_risconti_passivi,
     ricavi_vendite: bilData.ricavi_vendite,
     totale_valore_produzione: bilData.totale_valore_produzione,
     costi_materie: bilData.costi_materie,
     costi_servizi: bilData.costi_servizi,
     costo_personale: bilData.costo_personale,
     ammortamenti: bilData.ammortamenti,
+    oneri_diversi_gestione: bilData.oneri_diversi_gestione,
     totale_costi_produzione: bilData.totale_costi_produzione,
     differenza_ab: bilData.differenza_ab,
     proventi_partecipazioni: bilData.proventi_partecipazioni,
@@ -387,6 +456,10 @@ Deno.serve(async (req) => {
     kpi,
     is_holding,
     formato_rilevato: bilData.formato_rilevato,
+    anomaly_analysis: anomalyAnalysis,
+    anomaly_score: anomalyAnalysis.score,
+    anomaly_level: anomalyAnalysis.level,
+    anomaly_engine_version: anomalyAnalysis.engine_version,
   };
 
   const upsertRes = await fetch(
@@ -394,9 +467,7 @@ Deno.serve(async (req) => {
     {
       method: 'POST',
       headers: {
-        'apikey': SERVICE_ROLE,
-        'Authorization': `Bearer ${SERVICE_ROLE}`,
-        'Content-Type': 'application/json',
+        ...serviceHeaders,
         'Prefer': 'resolution=merge-duplicates,return=representation',
       },
       body: JSON.stringify(row),
@@ -417,5 +488,6 @@ Deno.serve(async (req) => {
     is_holding,
     dscr_source,
     servizio_debito_annuo,
+    anomaly_analysis: anomalyAnalysis,
   });
 });

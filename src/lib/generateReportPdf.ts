@@ -1,5 +1,11 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import type {
+  BalanceAnomalyAnalysis,
+  BalanceAnomalyFinding,
+} from '../../supabase/functions/_shared/balance-anomaly-engine';
+
+export type { BalanceAnomalyAnalysis, BalanceAnomalyFinding };
 
 export interface KpiScore {
   kpi_key: string; kpi_label: string; kpi_area: string;
@@ -45,6 +51,7 @@ export interface ReportData {
   kpi_totali?: number;
   dscr_metodo?: 'finanziamenti' | 'approssimato';
   servizio_debito_annuo?: number;
+  anomaly_analysis?: BalanceAnomalyAnalysis | null;
 }
 
 // ── Colori ─────────────────────────────────────────────────────────────────
@@ -79,6 +86,13 @@ function ratingBancabileInfo(r?: 'bancabile' | 'attenzione' | 'non_bancabile' | 
   if (r === 'attenzione')   return { label: 'ATTENZIONE',   color: [146,64,14]   as [n,n,n], bg: [254,243,199] as [n,n,n] };
   if (r === 'non_bancabile')return { label: 'NON BANCABILE', color: [185,28,28]  as [n,n,n], bg: [254,226,226] as [n,n,n] };
   return                           { label: 'N/D',           color: GRAY,         bg: LIGHT };
+}
+
+function anomalyLevelInfo(level?: BalanceAnomalyAnalysis['level'] | null): { label: string; color: [n,n,n]; bg: [n,n,n] } {
+  if (level === 'critico') return { label: 'CRITICO', color: RED, bg: [254,226,226] as [n,n,n] };
+  if (level === 'elevato') return { label: 'ELEVATO', color: [194,65,12] as [n,n,n], bg: [255,237,213] as [n,n,n] };
+  if (level === 'attenzione') return { label: 'ATTENZIONE', color: AMBER, bg: [254,243,199] as [n,n,n] };
+  return { label: 'BASSO', color: GREEN, bg: [220,252,231] as [n,n,n] };
 }
 
 // Carica immagine da URL come base64
@@ -432,6 +446,117 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     y += rowH + 2;
   }
   y += 6;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ANALISI ANOMALIE E POSTE DA VERIFICARE
+  // ══════════════════════════════════════════════════════════════════════
+  if (data.anomaly_analysis) {
+    const analysis = data.anomaly_analysis;
+    const anomalyInfo = anomalyLevelInfo(analysis.level);
+    doc.addPage(); y = 18;
+
+    sectionTitle('Anomalie di Bilancio e Poste da Verificare', '🔎');
+
+    doc.setFillColor(...anomalyInfo.bg);
+    doc.setDrawColor(...anomalyInfo.color);
+    doc.roundedRect(14, y, W - 28, 18, 2, 2, 'FD');
+    doc.setTextColor(...anomalyInfo.color); doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text(`Livello ${anomalyInfo.label} — score anomalie ${analysis.score}/100`, 19, y + 7);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text(
+      `${analysis.findings.length} segnalazioni · motore ${analysis.engine_version}` +
+      (analysis.comparison_year ? ` · confronto con ${analysis.comparison_year}` : ''),
+      19,
+      y + 13,
+    );
+    y += 24;
+
+    if (analysis.findings.length === 0) {
+      doc.setFillColor(240, 253, 244);
+      doc.roundedRect(14, y, W - 28, 16, 2, 2, 'F');
+      doc.setTextColor(22, 101, 52); doc.setFontSize(8.5);
+      doc.text('Nessuna anomalia significativa rilevata dai controlli automatici disponibili.', 19, y + 7);
+      doc.text('Resta necessaria la normale verifica professionale della documentazione.', 19, y + 12);
+      y += 22;
+    } else {
+      const anomalyRows = analysis.findings.map(finding => [
+        finding.severity.toUpperCase(),
+        finding.category.replace(/_/g, ' '),
+        finding.title,
+        finding.evidence.join(' · '),
+        finding.recommended_checks[0] ?? 'Approfondire la documentazione',
+      ]);
+      autoTable(doc, {
+        startY: y,
+        head: [['Gravità', 'Categoria', 'Segnalazione', 'Evidenza', 'Prima verifica']],
+        body: anomalyRows,
+        headStyles: { fillColor: TEAL, textColor: WHITE, fontStyle: 'bold', fontSize: 7 },
+        bodyStyles: { fontSize: 6.8, textColor: DARK, cellPadding: 1.7, overflow: 'linebreak' },
+        columnStyles: {
+          0: { cellWidth: 16, fontStyle: 'bold' },
+          1: { cellWidth: 27 },
+          2: { cellWidth: 39, fontStyle: 'bold' },
+          3: { cellWidth: 58 },
+          4: { cellWidth: 42 },
+        },
+        margin: { left: 14, right: 14 },
+        theme: 'striped',
+        didParseCell(hook) {
+          if (hook.section !== 'body' || hook.column.index !== 0) return;
+          const severity = String(hook.cell.raw).toLowerCase();
+          if (severity === 'alta') {
+            hook.cell.styles.fillColor = [254,226,226];
+            hook.cell.styles.textColor = [185,28,28];
+          } else if (severity === 'media') {
+            hook.cell.styles.fillColor = [254,243,199];
+            hook.cell.styles.textColor = [146,64,14];
+          } else {
+            hook.cell.styles.fillColor = [241,245,249];
+            hook.cell.styles.textColor = [71,85,105];
+          }
+        },
+      });
+      y = (doc as any).lastAutoTable.finalY + 8;
+
+      for (const finding of analysis.findings.filter(item => item.severity !== 'bassa').slice(0, 8)) {
+        checkPage(34);
+        const info = finding.severity === 'alta'
+          ? { color: RED, bg: [254,226,226] as [n,n,n] }
+          : { color: AMBER, bg: [254,243,199] as [n,n,n] };
+        doc.setFillColor(...info.bg);
+        doc.roundedRect(14, y, W - 28, 7, 1, 1, 'F');
+        doc.setTextColor(...info.color); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+        doc.text(`${finding.severity.toUpperCase()} · ${finding.title}`, 18, y + 4.8);
+        y += 10;
+
+        doc.setTextColor(...DARK); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+        const explanation = doc.splitTextToSize(finding.explanation, W - 34) as string[];
+        doc.text(explanation, 17, y);
+        y += explanation.length * 4 + 2;
+
+        const alternatives = `Possibili spiegazioni: ${finding.possible_explanations.join('; ')}.`;
+        const alternativeLines = doc.splitTextToSize(alternatives, W - 34) as string[];
+        doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+        doc.text(alternativeLines, 17, y);
+        y += alternativeLines.length * 4 + 2;
+
+        const checks = `Verifiche: ${finding.recommended_checks.join('; ')}.`;
+        const checkLines = doc.splitTextToSize(checks, W - 34) as string[];
+        doc.setTextColor(...DARK); doc.setFont('helvetica', 'normal');
+        doc.text(checkLines, 17, y);
+        y += checkLines.length * 4 + 5;
+      }
+    }
+
+    checkPage(28);
+    doc.setFillColor(...LIGHT);
+    const disclaimerLines = doc.splitTextToSize(analysis.disclaimer, W - 38) as string[];
+    const disclaimerHeight = Math.max(18, disclaimerLines.length * 4 + 8);
+    doc.roundedRect(14, y, W - 28, disclaimerHeight, 2, 2, 'F');
+    doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic'); doc.setFontSize(7);
+    doc.text(disclaimerLines, 19, y + 6);
+    y += disclaimerHeight + 6;
+  }
 
   // ══════════════════════════════════════════════════════════════════════
   // PAGINA 4 — FINANZIAMENTI IN ESSERE (solo se presenti)

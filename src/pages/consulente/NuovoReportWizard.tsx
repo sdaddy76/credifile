@@ -9,7 +9,13 @@ import { generateReportPdf } from '@/lib/generateReportPdf';
 import jsPDF from 'jspdf';
 import { Document, Paragraph, TextRun, HeadingLevel, Packer } from 'docx';
 import { parseCentraleRischi } from '@/lib/parseCentraleRischi';
-import type { KpiScore, AiSuggerimento, ReportData, FinanziamentoItem } from '@/lib/generateReportPdf';
+import type {
+  KpiScore,
+  AiSuggerimento,
+  ReportData,
+  FinanziamentoItem,
+  BalanceAnomalyAnalysis,
+} from '@/lib/generateReportPdf';
 import {
   KPI_SCORING_CONFIG,
   buildBankabilityAssessment,
@@ -146,6 +152,7 @@ export default function NuovoReportWizard() {
   const [kpiResult,    setKpiResult]      = useState<KpiResult | null>(null);
   const [annoEsercizio, setAnnoEsercizio] = useState<number | null>(null);
   const [ragSociale,   setRagSociale]     = useState('');
+  const [anomalyAnalysis, setAnomalyAnalysis] = useState<BalanceAnomalyAnalysis | null>(null);
 
   // Step 2.5: Finanziamenti
   const crFileInputRef = useRef<HTMLInputElement>(null);
@@ -283,10 +290,14 @@ export default function NuovoReportWizard() {
       setBilancioTestoRelazione(bilancioTesto);
 
       const { data, error } = await supabase.functions.invoke('analizza-bilancio', {
-        body: { bilancio_testo: bilancioTesto }
+        body: {
+          bilancio_testo: bilancioTesto,
+          codice_ateco: client?.codice_ateco ?? null,
+        }
       });
       if (error || !data?.success) { toast.error(data?.error ?? 'Errore analisi bilancio'); return; }
       setKpiResult(data.kpi as KpiResult);
+      setAnomalyAnalysis((data.anomaly_analysis as BalanceAnomalyAnalysis | undefined) ?? null);
       setAnnoEsercizio(data.anno_esercizio ?? parseInt(annoStr));
       if (data.ragione_sociale) setRagSociale(data.ragione_sociale);
       toast.success('Bilancio analizzato con successo');
@@ -373,6 +384,7 @@ export default function NuovoReportWizard() {
           body: {
             bilancio_testo: bilancioTestoRelazione,
             financing: financingPayload,
+            codice_ateco: client?.codice_ateco ?? null,
           },
         });
         if (error || !data?.success) {
@@ -380,6 +392,7 @@ export default function NuovoReportWizard() {
         }
         recalculatedKpi = data.kpi as KpiResult;
         setKpiResult(recalculatedKpi);
+        setAnomalyAnalysis((data.anomaly_analysis as BalanceAnomalyAnalysis | undefined) ?? null);
         setDscrMetodo(data.dscr_source === 'finanziamenti' ? 'finanziamenti' : 'approssimato');
         setServizioDebitoAnnuo(Number(data.servizio_debito_annuo) || 0);
       }
@@ -500,6 +513,7 @@ export default function NuovoReportWizard() {
         kpi_totali:          KPI_SCORING_CONFIG.length,
         dscr_metodo:         dscrMetodo,
         servizio_debito_annuo: servizioDebitoAnnuo || undefined,
+        anomaly_analysis:      anomalyAnalysis,
       };
 
       const { pdfBlob: blob, base64 } = await generateReportPdf(reportData);
@@ -519,6 +533,9 @@ export default function NuovoReportWizard() {
           indice_bancabilita: indice,
           top3_kpi:        top3,
           bottom3_kpi:     bottom3,
+          anomaly_analysis: anomalyAnalysis,
+          anomaly_score:    anomalyAnalysis?.score ?? null,
+          anomaly_level:    anomalyAnalysis?.level ?? null,
         }).select('id').single();
         if (!error && saved) { setReportId(saved.id); setReportSaved(true); }
       }
@@ -963,6 +980,58 @@ export default function NuovoReportWizard() {
                   ? <> · fonte controllata il {new Date(benchmarkData.last_checked_at).toLocaleDateString('it-IT')}</>
                   : null}
                 {benchmarkData.source_dataset ? <> · {benchmarkData.source_dataset}</> : null}
+              </div>
+            )}
+
+            {anomalyAnalysis && (
+              <div className={`rounded-xl border p-4 ${
+                anomalyAnalysis.level === 'critico'
+                  ? 'border-red-300 bg-red-50'
+                  : anomalyAnalysis.level === 'elevato'
+                    ? 'border-orange-300 bg-orange-50'
+                    : anomalyAnalysis.level === 'attenzione'
+                      ? 'border-amber-300 bg-amber-50'
+                      : 'border-green-200 bg-green-50'
+              }`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">Anomalie e poste da verificare</h3>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      {anomalyAnalysis.findings.length} segnalazioni · livello {anomalyAnalysis.level}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-black text-slate-800">{anomalyAnalysis.score}<span className="text-sm text-slate-400">/100</span></div>
+                    <div className="text-[10px] uppercase font-semibold text-slate-500">rischio anomalie</div>
+                  </div>
+                </div>
+                {anomalyAnalysis.findings.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {anomalyAnalysis.findings.slice(0, 5).map(finding => (
+                      <div key={finding.id} className="rounded-lg border border-white/80 bg-white/70 px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                            finding.severity === 'alta'
+                              ? 'bg-red-100 text-red-700'
+                              : finding.severity === 'media'
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-slate-100 text-slate-600'
+                          }`}>{finding.severity}</span>
+                          <span className="text-xs font-semibold text-slate-800">{finding.title}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 mt-1">{finding.evidence.join(' · ')}</p>
+                      </div>
+                    ))}
+                    {anomalyAnalysis.findings.length > 5 && (
+                      <p className="text-[11px] text-slate-500">
+                        Altre {anomalyAnalysis.findings.length - 5} segnalazioni saranno incluse nel PDF.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-green-700">Nessuna anomalia significativa rilevata dai controlli automatici.</p>
+                )}
+                <p className="mt-3 text-[10px] leading-relaxed text-slate-500 italic">{anomalyAnalysis.disclaimer}</p>
               </div>
             )}
 

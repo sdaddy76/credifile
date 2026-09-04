@@ -11,6 +11,7 @@ import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { fmtBenchmark, getAtecoBenchmark, type SectorBenchmark } from '@/lib/sectorBenchmarks';
+import type { BalanceAnomalyAnalysis } from '../../supabase/functions/_shared/balance-anomaly-engine';
 
 interface Props { practiceId: string }
 
@@ -36,6 +37,10 @@ interface BilancioRecord {
   ricavi_vendite: number;
   utile_netto: number;
   kpi: KpiResult;
+  anomaly_analysis: BalanceAnomalyAnalysis | null;
+  anomaly_score: number | null;
+  anomaly_level: BalanceAnomalyAnalysis['level'] | null;
+  anomaly_engine_version: string | null;
   created_at: string;
 }
 
@@ -541,6 +546,52 @@ function generateBancabilitaReport(
 
     y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
 
+    if (bil.anomaly_analysis) {
+      if (y > 225) { doc.addPage(); y = 15; }
+      const analysis = bil.anomaly_analysis;
+      doc.setTextColor(...BLUE);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`ANOMALIE E POSTE DA VERIFICARE — ${analysis.score}/100 (${analysis.level.toUpperCase()})`, 14, y);
+      y += 5;
+
+      if (analysis.findings.length === 0) {
+        doc.setTextColor(22, 101, 52);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text('Nessuna anomalia significativa rilevata dai controlli automatici disponibili.', 14, y);
+        y += 8;
+      } else {
+        autoTable(doc, {
+          startY: y,
+          head: [['Gravità', 'Segnalazione', 'Evidenza', 'Verifica consigliata']],
+          body: analysis.findings.map(finding => [
+            finding.severity.toUpperCase(),
+            finding.title,
+            finding.evidence.join(' · '),
+            finding.recommended_checks[0] ?? 'Approfondire',
+          ]),
+          margin: { left: 14, right: 14 },
+          styles: { fontSize: 6.8, cellPadding: 1.8, overflow: 'linebreak' },
+          headStyles: { fillColor: BLUE, textColor: [255,255,255], fontStyle: 'bold' },
+          columnStyles: {
+            0: { cellWidth: 18, fontStyle: 'bold' },
+            1: { cellWidth: 45 },
+            2: { cellWidth: 65 },
+            3: { cellWidth: 54 },
+          },
+        });
+        y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;
+      }
+
+      const disclaimerLines = doc.splitTextToSize(analysis.disclaimer, W - 28);
+      doc.setTextColor(...DGRAY);
+      doc.setFontSize(6.5);
+      doc.setFont('helvetica', 'italic');
+      doc.text(disclaimerLines, 14, y);
+      y += disclaimerLines.length * 3.5 + 7;
+    }
+
     // Nuova pagina se necessario
     if (y > 260 && bilanci.indexOf(bil) < bilanci.length - 1) {
       doc.addPage();
@@ -1015,6 +1066,19 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                       <span className="text-amber-600">🟡 {s.giallo}</span>
                       <span className="text-red-600">🔴 {s.rosso}</span>
                     </div>
+                    {b.anomaly_analysis && (
+                      <div className={`mt-2 text-[10px] font-semibold ${
+                        b.anomaly_level === 'critico'
+                          ? 'text-red-700'
+                          : b.anomaly_level === 'elevato'
+                            ? 'text-orange-700'
+                            : b.anomaly_level === 'attenzione'
+                              ? 'text-amber-700'
+                              : 'text-green-700'
+                      }`}>
+                        Anomalie: {b.anomaly_score ?? b.anomaly_analysis.score}/100 · {b.anomaly_analysis.findings.length} segnalazioni
+                      </div>
+                    )}
                   </button>
                   {/* pulsante elimina */}
                   <button
@@ -1060,6 +1124,85 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                   )}
                 </CardContent>
               </Card>
+
+              {selectedBilancio.anomaly_analysis && (
+                <Card className={
+                  selectedBilancio.anomaly_level === 'critico'
+                    ? 'border-red-300'
+                    : selectedBilancio.anomaly_level === 'elevato'
+                      ? 'border-orange-300'
+                      : selectedBilancio.anomaly_level === 'attenzione'
+                        ? 'border-amber-300'
+                        : 'border-green-200'
+                }>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600" />
+                        Anomalie di bilancio e poste da verificare
+                      </span>
+                      <Badge variant="outline" className="font-bold">
+                        {selectedBilancio.anomaly_analysis.score}/100 · {selectedBilancio.anomaly_analysis.level}
+                      </Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {selectedBilancio.anomaly_analysis.findings.length === 0 ? (
+                      <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                        Nessuna anomalia significativa rilevata dai controlli automatici disponibili.
+                      </div>
+                    ) : (
+                      selectedBilancio.anomaly_analysis.findings.map(finding => (
+                        <div key={finding.id} className="rounded-lg border bg-card p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge className={
+                              finding.severity === 'alta'
+                                ? 'bg-red-100 text-red-800 hover:bg-red-100'
+                                : finding.severity === 'media'
+                                  ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
+                                  : 'bg-slate-100 text-slate-700 hover:bg-slate-100'
+                            }>
+                              Gravità {finding.severity}
+                            </Badge>
+                            <Badge variant="outline">Confidenza {finding.confidence}</Badge>
+                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                              {finding.category.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                          <h4 className="mt-2 text-sm font-semibold text-foreground">{finding.title}</h4>
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{finding.explanation}</p>
+                          <div className="mt-2 rounded-md bg-muted/50 p-2">
+                            {finding.evidence.map((line, index) => (
+                              <p key={index} className="text-xs font-medium text-foreground">{line}</p>
+                            ))}
+                          </div>
+                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Possibili spiegazioni</p>
+                              <ul className="mt-1 space-y-0.5">
+                                {finding.possible_explanations.map((item, index) => (
+                                  <li key={index} className="text-xs text-muted-foreground">• {item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Verifiche consigliate</p>
+                              <ul className="mt-1 space-y-0.5">
+                                {finding.recommended_checks.map((item, index) => (
+                                  <li key={index} className="text-xs text-foreground">• {item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    <p className="text-[10px] leading-relaxed text-muted-foreground italic">
+                      {selectedBilancio.anomaly_analysis.disclaimer}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
 
               {selectedBilancio.kpi && (
                 <Card>
