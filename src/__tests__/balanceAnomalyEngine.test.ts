@@ -4,6 +4,10 @@ import {
   inferAtecoSectorKey,
   type BalanceSnapshot,
 } from '../../supabase/functions/_shared/balance-anomaly-engine';
+import {
+  extractBalanceValue,
+  splitBalanceDocument,
+} from '../../supabase/functions/_shared/balance-parser';
 
 const baseBalance: BalanceSnapshot = {
   anno_esercizio: 2025,
@@ -18,6 +22,7 @@ const baseBalance: BalanceSnapshot = {
   disponibilita_liquide: 120_000,
   ratei_risconti_attivi: 20_000,
   totale_patrimonio_netto: 300_000,
+  totale_passivo: 1_000_000,
   capitale_sociale: 100_000,
   fondi_rischi: 20_000,
   tfr: 30_000,
@@ -61,6 +66,71 @@ describe('balance anomaly engine', () => {
         previous_value: 45_000,
       },
     ]);
+  });
+
+  it('non concatena colonne numeriche separate nelle righe della nota integrativa', () => {
+    expect(extractBalanceLineItems(
+      'Crediti verso altri iscritti nell’attivo circolante 141.617 118.927 260.544 260.544',
+    )).toEqual([
+      {
+        label: 'Crediti verso altri iscritti nell’attivo circolante',
+        current_value: 141_617,
+        previous_value: 118_927,
+      },
+    ]);
+  });
+
+  it('distingue il totale attivo dal totale attivo circolante', () => {
+    const text = [
+      'Stato patrimoniale',
+      'Attivo',
+      'Totale attivo circolante (C) 1.916.705 1.232.512',
+      'Totale attivo 2.126.798 1.442.605',
+      'Passivo',
+      'Totale passivo 2.126.798 1.442.605',
+      'Conto economico',
+    ].join('\n');
+    const sections = splitBalanceDocument(text);
+
+    expect(extractBalanceValue(sections.attivo, ['Totale attivo'])).toBe(2_126_798);
+    expect(extractBalanceValue(sections.attivo, ['Totale attivo circolante (C)'])).toBe(1_916_705);
+  });
+
+  it('mantiene separate le voci dello stato patrimoniale e del conto economico', () => {
+    const text = [
+      'Stato patrimoniale',
+      'Attivo',
+      'II - Immobilizzazioni materiali 210.093 210.093',
+      'Totale attivo 2.126.798 1.442.605',
+      'Passivo',
+      'C) Trattamento di fine rapporto di lavoro subordinato 46.322 5.066',
+      'Totale passivo 2.126.798 1.442.605',
+      'Conto economico',
+      'a) ammortamento delle immobilizzazioni immateriali - 27.045',
+      'b) ammortamento delle immobilizzazioni materiali 57.216 28.856',
+    ].join('\n');
+    const sections = splitBalanceDocument(text);
+
+    expect(extractBalanceValue(sections.attivo, ['Immobilizzazioni immateriali'])).toBeNull();
+    expect(extractBalanceValue(sections.contoEconomico, ['Ammortamento delle immobilizzazioni immateriali'])).toBe(0);
+    expect(extractBalanceValue(sections.contoEconomico, ['Trattamento di fine rapporto'])).toBeNull();
+  });
+
+  it('usa il totale passivo dichiarato per verificare la quadratura', () => {
+    const result = analyzeBalanceAnomalies({
+      current: {
+        ...baseBalance,
+        totale_attivo: 2_126_798,
+        totale_passivo: 2_126_798,
+        totale_patrimonio_netto: 1_888_155,
+        fondi_rischi: 3_258,
+        tfr: 46_322,
+        totale_debiti: 189_063,
+      },
+      sectorKey: 'commercio',
+    });
+
+    expect(result.findings.some(item => item.id === 'quadratura-stato-patrimoniale')).toBe(false);
   });
 
   it('non genera red flag rilevanti per un bilancio coerente', () => {

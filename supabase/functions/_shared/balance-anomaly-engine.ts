@@ -55,6 +55,7 @@ export interface BalanceSnapshot {
   disponibilita_liquide?: number | null;
   ratei_risconti_attivi?: number | null;
   totale_patrimonio_netto?: number | null;
+  totale_passivo?: number | null;
   capitale_sociale?: number | null;
   fondi_rischi?: number | null;
   tfr?: number | null;
@@ -204,7 +205,7 @@ export function extractBalanceLineItems(rawText: string): BalanceLineItem[] {
       const withoutEnumeration = line
         .replace(/^(?:[A-Z]\)|[IVX]+[).-]?|\d+[).-])\s*/i, '')
         .trim();
-      const numberMatches = [...withoutEnumeration.matchAll(/\(?-?\d+(?:[.\s]\d{3})*(?:,\d+)?\)?/g)];
+      const numberMatches = [...withoutEnumeration.matchAll(/\(?-?\d+(?:\.\d{3})*(?:,\d+)?\)?/g)];
       if (numberMatches.length === 0 || numberMatches[0].index === undefined) continue;
       label = withoutEnumeration.slice(0, numberMatches[0].index).trim();
       numericTokens = numberMatches.map(match => match[0]);
@@ -289,7 +290,7 @@ function scanUnclearItems(
     );
     if (alreadyCapturedFromLine) continue;
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`${escaped}[^\\d(]{0,80}(\\(?\\d[\\d. ]*(?:,\\d+)?\\)?)`, 'gi');
+    const regex = new RegExp(`${escaped}[^\\d(]{0,80}(\\(?\\d[\\d.]*(?:,\\d+)?\\)?)`, 'gi');
     let match: RegExpExecArray | null;
     while ((match = regex.exec(normalized)) !== null) {
       const value = parseItalianNumber(match[1]);
@@ -394,19 +395,23 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     ));
   }
 
-  if (
-    finite(current.totale_attivo) &&
-    finite(current.totale_patrimonio_netto) &&
-    finite(current.totale_debiti)
-  ) {
-    const expectedLiabilities =
-      current.totale_patrimonio_netto +
-      (current.fondi_rischi ?? 0) +
-      (current.tfr ?? 0) +
-      current.totale_debiti +
-      (current.ratei_risconti_passivi ?? 0);
-    if (outsideTolerance(current.totale_attivo, expectedLiabilities, 0.02)) {
+  if (finite(current.totale_attivo)) {
+    const hasReportedTotal = finite(current.totale_passivo);
+    const canReconstruct =
+      finite(current.totale_patrimonio_netto) &&
+      finite(current.totale_debiti);
+    const expectedLiabilities = hasReportedTotal
+      ? current.totale_passivo!
+      : canReconstruct
+        ? current.totale_patrimonio_netto! +
+          (current.fondi_rischi ?? 0) +
+          (current.tfr ?? 0) +
+          current.totale_debiti! +
+          (current.ratei_risconti_passivi ?? 0)
+        : null;
+    if (expectedLiabilities !== null && outsideTolerance(current.totale_attivo, expectedLiabilities, 0.02)) {
       const gap = current.totale_attivo - expectedLiabilities;
+      const comparisonLabel = hasReportedTotal ? 'Totale passivo' : 'Passivo ricostruito';
       findings.push(makeFinding(
         'quadratura-stato-patrimoniale',
         'coerenza_contabile',
@@ -416,7 +421,7 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
         'Il totale attivo non coincide, oltre la tolleranza, con la somma delle principali componenti del passivo estratte.',
         [
           `Totale attivo: ${amount(current.totale_attivo)}`,
-          `Passivo ricostruito: ${amount(expectedLiabilities)}`,
+          `${comparisonLabel}: ${amount(expectedLiabilities)}`,
           `Scostamento: ${amount(gap)}`,
         ],
         ['Voce del passivo non estratta', 'Riclassificazione non standard', 'Errore nel documento o nel parsing'],

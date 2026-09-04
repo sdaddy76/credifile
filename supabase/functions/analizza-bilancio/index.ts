@@ -3,6 +3,10 @@ import {
   inferAtecoSectorKey,
   type BalanceSnapshot,
 } from '../_shared/balance-anomaly-engine.ts';
+import {
+  extractBalanceValue,
+  splitBalanceDocument,
+} from '../_shared/balance-parser.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -68,109 +72,71 @@ async function getPracticeAteco(practiceId: string): Promise<string | null> {
 }
 
 // ─── Parsing numeri in formato italiano ──────────────────────────────────────
-function parseNum(raw: string | undefined | null): number | null {
-  if (!raw) return null;
-  const s = raw.trim().replace(/\s/g, '');
-  if (s === '' || s === '-' || s === '—') return 0;
-  // valori negativi tra parentesi: (78.791) → -78791
-  const negative = s.startsWith('(') && s.endsWith(')');
-  let clean = negative ? s.slice(1, -1) : s;
-  // rimuovi punti separatori migliaia, sostituisci virgola decimale
-  clean = clean.replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(clean);
-  if (isNaN(n)) return null;
-  return negative ? -n : n;
-}
-
-// ─── Estrai valore da tabella markdown cercando l'etichetta ──────────────────
-function extractVal(text: string, patterns: string[]): number | null {
-  const lines = text.split('\n');
-  for (const line of lines) {
-    for (const pat of patterns) {
-      if (!line.toLowerCase().includes(pat.toLowerCase())) continue;
-
-      // Formato markdown: | etichetta | valore1 | valore2 |
-      if (line.includes('|')) {
-        const cols = line.split('|').map(c => c.trim()).filter(c => c && c !== '---');
-        if (cols.length >= 2) {
-          const v = parseNum(cols[1]);
-          if (v !== null) return v;
-        }
-      }
-
-      // Formato testo grezzo da pdfjs: "Totale attivo 1.917.440 65.263"
-      // Cerca i numeri che compaiono DOPO il testo dell'etichetta
-      const patIdx = line.toLowerCase().indexOf(pat.toLowerCase());
-      const afterLabel = line.slice(patIdx + pat.length);
-      // Estrae tutti i token numerici (anche con punti, virgole, parentesi per negativi)
-      const nums = afterLabel.match(/\(?[\d]+(?:[.,][\d]{3})*(?:[.,]\d+)?\)?/g);
-      if (nums && nums.length > 0) {
-        const v = parseNum(nums[0]);
-        if (v !== null) return v;
-      }
-    }
-  }
-  return null;
-}
-
 // ─── Parser XBRL deterministico ──────────────────────────────────────────────
 function parseBilancio(text: string) {
-  const e = (pats: string[]) => extractVal(text, pats);
+  const sections = splitBalanceDocument(text);
+  const e = (source: string, patterns: string[]) => extractBalanceValue(source, patterns);
+  const eAttivo = (patterns: string[]) => e(sections.attivo, patterns);
+  const ePassivo = (patterns: string[]) => e(sections.passivo, patterns);
+  const eCe = (patterns: string[]) => e(sections.contoEconomico, patterns);
 
   // Dati anagrafici — supporta sia markdown (##) che testo grezzo pdfjs
-  const rsMatch = text.match(/(?:##\s+)?([A-Z][A-Z0-9 &'.,-]+(?:SRL|SPA|SAS|SNC|SRLS|SSP|SCRL|COOP)?[A-Z0-9 &'.,-]*)\s*\n[\s\S]{0,200}?Bilancio di esercizio al/i)
-    ?? text.match(/##\s+(.+?)\s*\n/);
+  const rsMatch = text.match(/(?:^|\n)\s*(?:##\s*)?([^\n]{2,160}?)\s+Bilancio di esercizio al/i);
   const ragione_sociale = rsMatch ? rsMatch[1].trim() : null;
   const annoMatch = text.match(/Bilancio di esercizio al\s+\d{1,2}[-/]\d{2}[-/](\d{4})/);
   const anno_esercizio = annoMatch ? parseInt(annoMatch[1]) : null;
+  const atecoMatch = text.match(/(?:ATECO|attività prevalente)[^0-9]{0,30}(\d{4,6}(?:[.,]\d{1,2})?)/i);
+  const codice_ateco = atecoMatch?.[1]?.replace(',', '.') ?? null;
 
   // SP Attivo
-  const totale_attivo = e(['Totale attivo']);
-  const totale_immobilizzazioni = e(['Totale immobilizzazioni (B)', 'Totale immobilizzazioni']);
-  const imm_immateriali = e(['I - Immobilizzazioni immateriali', 'Immobilizzazioni immateriali']);
-  const imm_materiali = e(['II - Immobilizzazioni materiali', 'Immobilizzazioni materiali']);
-  const imm_finanziarie = e(['III - Immobilizzazioni finanziarie', 'Immobilizzazioni finanziarie']);
-  const totale_attivo_circolante = e(['Totale attivo circolante (C)', 'Totale attivo circolante']);
-  const rimanenze = e(['I - Rimanenze', 'Totale rimanenze', 'Rimanenze']);
-  const crediti_circolante = e(['Totale crediti']);
-  const disponibilita_liquide = e(['IV - Disponibilità liquide', 'Disponibilità liquide']);
-  const ratei_risconti_attivi = e(['D) Ratei e risconti', 'Ratei e risconti attivi']);
+  const totale_attivo = eAttivo(['Totale attivo']);
+  const totale_immobilizzazioni = eAttivo(['Totale immobilizzazioni (B)', 'Totale immobilizzazioni']);
+  const imm_immateriali = eAttivo(['I - Immobilizzazioni immateriali', 'Immobilizzazioni immateriali']);
+  const imm_materiali = eAttivo(['II - Immobilizzazioni materiali', 'Immobilizzazioni materiali']);
+  const imm_finanziarie = eAttivo(['III - Immobilizzazioni finanziarie', 'Immobilizzazioni finanziarie']);
+  const totale_attivo_circolante = eAttivo(['Totale attivo circolante (C)', 'Totale attivo circolante']);
+  const rimanenze = eAttivo(['I - Rimanenze', 'Totale rimanenze', 'Rimanenze']);
+  const crediti_circolante = eAttivo(['Totale crediti']);
+  const disponibilita_liquide = eAttivo(['IV - Disponibilità liquide', 'Disponibilità liquide']);
+  const ratei_risconti_attivi = eAttivo(['D) Ratei e risconti', 'Ratei e risconti attivi']);
 
   // SP Passivo
-  const totale_patrimonio_netto = e(['Totale patrimonio netto']);
-  const capitale_sociale = e(['I - Capitale', '| Capitale |']);
-  const utile_perdita_esercizio = e(['IX - Utile (perdita)', 'Utile (perdita) dell\'esercizio']);
-  const fondi_rischi = e(['B) Fondi per rischi', 'Fondi per rischi e oneri']);
-  const tfr = e(['C) Trattamento di fine rapporto', 'Trattamento di fine rapporto di lavoro']);
-  const totale_debiti = e(['Totale debiti']);
-  const ratei_risconti_passivi = e(['E) Ratei e risconti']);
+  const totale_patrimonio_netto = ePassivo(['Totale patrimonio netto']);
+  const capitale_sociale = ePassivo(['I - Capitale', 'Capitale']);
+  const utile_perdita_esercizio = ePassivo(['IX - Utile (perdita)', 'Utile (perdita) dell\'esercizio']);
+  const fondi_rischi = ePassivo(['B) Fondi per rischi', 'Fondi per rischi e oneri']);
+  const tfr = ePassivo(['C) Trattamento di fine rapporto', 'Trattamento di fine rapporto di lavoro']);
+  const totale_debiti = ePassivo(['Totale debiti']);
+  const ratei_risconti_passivi = ePassivo(['E) Ratei e risconti', 'Ratei e risconti passivi']);
+  const totale_passivo = ePassivo(['Totale passivo']);
 
   // Dettaglio debiti (dalla nota integrativa)
-  const debiti_banche_breve = e(['Debiti verso banche']);
-  const debiti_altri_finanziatori = e(['Debiti verso altri finanziatori']);
-  const debiti_fornitori = e(['Debiti verso fornitori']);
-  const debiti_tributari = e(['Debiti tributari']);
+  const debiti_banche_breve = e(sections.full, ['Debiti verso banche']);
+  const debiti_altri_finanziatori = e(sections.full, ['Debiti verso altri finanziatori']);
+  const debiti_fornitori = e(sections.full, ['Debiti verso fornitori']);
+  const debiti_tributari = e(sections.full, ['Debiti tributari']);
 
   // CE
-  const ricavi_vendite = e(['1) ricavi delle vendite', 'ricavi delle vendite e delle prestazioni']);
-  const totale_valore_produzione = e(['Totale valore della produzione']);
-  const costi_materie = e(['per materie prime', 'Materie prime']);
-  const costi_servizi = e(['per servizi', '| Servizi |']);
-  const costo_personale_salari = e(['Salari e stipendi']);
-  const costo_personale_oneri = e(['Oneri sociali']);
-  const costo_personale_tfr_quota = e(['Trattamento di fine rapporto']);
+  const ricavi_vendite = eCe(['1) ricavi delle vendite', 'ricavi delle vendite e delle prestazioni']);
+  const totale_valore_produzione = eCe(['Totale valore della produzione']);
+  const costi_materie = eCe(['per materie prime', 'Materie prime']);
+  const costi_servizi = eCe(['per servizi', 'Servizi']);
+  const costo_personale_salari = eCe(['Salari e stipendi']);
+  const costo_personale_oneri = eCe(['Oneri sociali']);
+  const costo_personale_tfr_quota = eCe(['Trattamento di fine rapporto']);
   const costo_personale = (costo_personale_salari ?? 0) + (costo_personale_oneri ?? 0) + (costo_personale_tfr_quota ?? 0) || null;
-  const amm_imm = e(['Ammortamento immobilizzazioni immateriali']);
-  const amm_mat = e(['Ammortamento immobilizzazioni materiali']);
-  const ammortamenti = ((amm_imm ?? 0) + (amm_mat ?? 0)) || null;
-  const oneri_diversi_gestione = e(['oneri diversi di gestione', '14) oneri diversi']);
-  const totale_costi_produzione = e(['Totale costi della produzione']);
-  const differenza_ab = e(['Differenza tra valore e costi della produzione']);
-  const proventi_partecipazioni = e(['Totale proventi da partecipazioni', 'da imprese controllate']);
-  const interessi_passivi = e(['Interessi e altri oneri finanziari']);
-  const risultato_ante_imposte = e(['Risultato prima delle imposte']);
-  const imposte = e(['21) Imposte', '20) Imposte', 'Imposte sul reddito']);
-  const utile_netto = e([
+  const ammortamentiTotali = eCe(['Totale ammortamenti e svalutazioni']);
+  const amm_imm = eCe(['Ammortamento delle immobilizzazioni immateriali', 'Ammortamento immobilizzazioni immateriali']);
+  const amm_mat = eCe(['Ammortamento delle immobilizzazioni materiali', 'Ammortamento immobilizzazioni materiali']);
+  const ammortamenti = ammortamentiTotali ?? (((amm_imm ?? 0) + (amm_mat ?? 0)) || null);
+  const oneri_diversi_gestione = eCe(['oneri diversi di gestione', '14) oneri diversi']);
+  const totale_costi_produzione = eCe(['Totale costi della produzione']);
+  const differenza_ab = eCe(['Differenza tra valore e costi della produzione']);
+  const proventi_partecipazioni = eCe(['Totale proventi da partecipazioni', 'da imprese controllate']);
+  const interessi_passivi = eCe(['Totale interessi e altri oneri finanziari', 'Interessi e altri oneri finanziari']);
+  const risultato_ante_imposte = eCe(['Risultato prima delle imposte']);
+  const imposte = eCe(['21) Imposte', '20) Imposte', 'Imposte sul reddito']);
+  const utile_netto = eCe([
     '21) Utile (perdita)',
     '22) Utile (perdita)',
     '23) Utile (perdita)',
@@ -188,11 +154,12 @@ function parseBilancio(text: string) {
   const isXbrl = text.includes('tassonomia itcc-ci') || text.includes('Conforme alla tassonomia');
 
   return {
-    ragione_sociale, anno_esercizio,
+    ragione_sociale, anno_esercizio, codice_ateco,
     totale_attivo, totale_immobilizzazioni, imm_immateriali, imm_materiali, imm_finanziarie,
     totale_attivo_circolante, rimanenze, crediti_circolante, disponibilita_liquide, ratei_risconti_attivi,
     totale_patrimonio_netto, capitale_sociale, utile_perdita_esercizio,
     fondi_rischi, tfr,
+    totale_passivo,
     debiti_banche_breve: debiti_banche_breve ?? 0, debiti_banche_lungo: 0,
     debiti_altri_finanziatori: debiti_altri_finanziatori ?? 0,
     debiti_fornitori: debiti_fornitori ?? 0, debiti_tributari: debiti_tributari ?? 0,
@@ -369,7 +336,7 @@ Deno.serve(async (req) => {
     if (bilancio_testo.trim().length < 50) return fail('Contenuto bilancio troppo breve o non leggibile');
     const bilData = parseBilancio(bilancio_testo);
     const { is_holding, kpi, dscr_source, servizio_debito_annuo } = calcolaKpi(bilData, financing ?? []);
-    const codiceAteco: string | null = body.codice_ateco ?? null;
+    const codiceAteco: string | null = body.codice_ateco ?? bilData.codice_ateco ?? null;
     const sector = await getSectorContext(codiceAteco);
     const anomalyAnalysis = analyzeBalanceAnomalies({
       current: { ...bilData, is_holding } as BalanceSnapshot,
@@ -405,7 +372,7 @@ Deno.serve(async (req) => {
     servizio_debito_annuo,
   } = calcolaKpi(bilData, financing ?? []);
 
-  const codiceAteco = await getPracticeAteco(practice_id);
+  const codiceAteco = await getPracticeAteco(practice_id) ?? bilData.codice_ateco ?? null;
   const sector = await getSectorContext(codiceAteco);
   const previousRows = await fetchJson<BalanceSnapshot[]>(
     `bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=*&order=anno_esercizio.desc.nullslast&limit=5`,
