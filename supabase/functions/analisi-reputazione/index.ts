@@ -1,3 +1,5 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -168,16 +170,26 @@ function hasNegationContext(text: string, keyword: string): boolean {
 }
 
 interface NewsItem {
-  title: string; snippet: string; link: string; date: string; source: string
+  title: string; snippet: string; link: string; date: string; source: string;
+  relevance?: number;
+  sourceQuality?: number;
 }
 interface Signal {
   text: string; category: string; weight: number;
-  articleTitle?: string; articleDate?: string; articleLink?: string
+  articleTitle?: string; articleDate?: string; articleLink?: string;
+  confidence?: number;
+  sourceCount?: number;
+  sourceName?: string;
 }
 interface SubjectResult {
   nome: string; tipo: string; score: number;
   news: NewsItem[]; signals: Signal[]; newsRischio: NewsItem[];
   totalNewsFetched: number;
+  relevantNews: number;
+  coverage: number;
+  confidence: 'alta' | 'media' | 'bassa';
+  queriesWithResults: number;
+  queriesAttempted: number;
   cessato?: boolean;
 }
 interface AddressResult {
@@ -187,48 +199,87 @@ interface AddressResult {
   score_delta: number;
 }
 
+function canonicalText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\b(srl|s\.r\.l|spa|s\.p\.a|societa|cooperativa|snc|sas)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function canonicalNewsKey(item: NewsItem): string {
+  const title = canonicalText(item.title.replace(/\s+-\s+[^-]+$/, ''))
+  return title.split(' ').slice(0, 14).join(' ')
+}
+
+function getSourceQuality(source: string, link: string): number {
+  const haystack = `${source} ${link}`.toLowerCase()
+  if (/(gazzettaufficiale|giustizia|interno|guardiadifinanza|agenziaentrate|agcm|bancaditalia|consob|europa\.eu)/.test(haystack)) return 1
+  if (/(ansa|reuters|adnkronos|ilsole24ore|corriere|repubblica|rainews|radiocor)/.test(haystack)) return 0.9
+  if (source === 'DuckDuckGo') return 0.55
+  if (source === 'Google News') return 0.65
+  return 0.72
+}
+
+function identityRelevance(item: NewsItem, name: string, discriminator?: string, city?: string): number {
+  const text = canonicalText(`${item.title} ${item.snippet}`)
+  const normalizedName = canonicalText(name)
+  const nameTokens = normalizedName.split(' ').filter(token => token.length >= 3)
+  const matchedTokens = nameTokens.filter(token => text.includes(token)).length
+  let score = normalizedName && text.includes(normalizedName)
+    ? 0.65
+    : nameTokens.length > 0 ? 0.55 * (matchedTokens / nameTokens.length) : 0
+
+  const cleanDiscriminator = canonicalText(discriminator ?? '')
+  if (cleanDiscriminator && text.includes(cleanDiscriminator)) score += 0.35
+  const cleanCity = canonicalText(city ?? '')
+  if (cleanCity && text.includes(cleanCity)) score += 0.12
+  return Math.min(1, Math.round(score * 100) / 100)
+}
+
 function analyzeTextWithNews(news: NewsItem[], kwList = RISK_KW): { signals: Signal[]; scoreDelta: number } {
-  const seenSignals = new Set<string>()
   const signals: Signal[] = []
   let scoreDelta = 0
 
-  for (const item of news) {
-    const timeW = getTimeWeight(item.date)
-    const fullText = `${item.title} ${item.snippet}`.toLowerCase()
-
-    for (const k of kwList) {
-      if (!fullText.includes(k.w)) continue
-      if (hasNegationContext(fullText, k.w)) continue
-      const dedupKey = k.w
-      if (seenSignals.has(dedupKey)) continue
-      seenSignals.add(dedupKey)
-      const weightedPenalty = Math.round(k.p * timeW)
-      signals.push({
-        text: k.w, category: k.cat, weight: weightedPenalty,
-        articleTitle: item.title.substring(0, 80),
-        articleDate: item.date,
-        articleLink: item.link || undefined,
+  const evaluate = (keyword: { w: string; p: number; cat?: string }, positive: boolean) => {
+    const matches = news
+      .filter(item => {
+        const fullText = `${item.title} ${item.snippet}`.toLowerCase()
+        return fullText.includes(keyword.w) && (positive || !hasNegationContext(fullText, keyword.w))
       })
-      scoreDelta += weightedPenalty
-    }
+      .map(item => {
+        const evidence = getTimeWeight(item.date) * (item.relevance ?? 0.5) * (item.sourceQuality ?? 0.6)
+        return { item, evidence }
+      })
+      .filter(match => positive ? match.evidence >= 0.3 : match.evidence >= 0.18)
+      .sort((a, b) => b.evidence - a.evidence)
 
-    // Positivi solo per analisi soggetti (non indirizzi)
-    if (kwList === RISK_KW) {
-      for (const k of POS_KW) {
-        if (!fullText.includes(k.w)) continue
-        const dedupKey = `pos_${k.w}`
-        if (seenSignals.has(dedupKey)) continue
-        seenSignals.add(dedupKey)
-        const weightedBonus = Math.round(k.p * timeW)
-        signals.push({
-          text: k.w, category: 'Positivo', weight: weightedBonus,
-          articleTitle: item.title.substring(0, 80),
-          articleDate: item.date,
-          articleLink: item.link || undefined,
-        })
-        scoreDelta += weightedBonus
-      }
-    }
+    if (matches.length === 0) return
+    const best = matches[0]
+    const independentSources = new Set(matches.map(match => match.item.source)).size
+    const confidence = Math.min(1, best.evidence + Math.min(0.2, (independentSources - 1) * 0.1))
+    const weighted = Math.round(keyword.p * Math.max(0.25, confidence))
+    if (weighted === 0) return
+    signals.push({
+      text: keyword.w,
+      category: positive ? 'Positivo' : keyword.cat ?? 'Rischio',
+      weight: weighted,
+      articleTitle: best.item.title.substring(0, 80),
+      articleDate: best.item.date,
+      articleLink: best.item.link || undefined,
+      confidence: Math.round(confidence * 100),
+      sourceCount: independentSources,
+      sourceName: best.item.source,
+    })
+    scoreDelta += weighted
+  }
+
+  for (const keyword of kwList) evaluate(keyword, false)
+  if (kwList === RISK_KW) {
+    for (const keyword of POS_KW) evaluate(keyword, true)
   }
   return { signals, scoreDelta }
 }
@@ -273,6 +324,7 @@ async function fetchGoogleNews(query: string): Promise<NewsItem[]> {
       link: linkM?.[1]?.trim() ?? '',
       date: dateM?.[1]?.trim() ?? '',
       source: sourceM?.[1]?.trim() ?? 'Google News',
+      sourceQuality: getSourceQuality(sourceM?.[1]?.trim() ?? 'Google News', linkM?.[1]?.trim() ?? ''),
     })
   }
   return items.slice(0, 10)
@@ -305,6 +357,7 @@ async function fetchDuckDuckGo(query: string): Promise<NewsItem[]> {
       link: links[i],
       date: '',
       source: 'DuckDuckGo',
+      sourceQuality: getSourceQuality('DuckDuckGo', links[i]),
     })
   }
   return items
@@ -325,6 +378,7 @@ async function analyzeSubject(
   // - Per società: P.IVA ha precedenza sulla città
   const isCF = codiceFiscale && /^[A-Z0-9]{16}$/i.test(codiceFiscale)
   const hasPiva = !!piva
+  const discriminatorValue = isCF ? codiceFiscale : hasPiva ? piva : city
   const discriminator = isCF
     ? `"${codiceFiscale}"`
     : hasPiva
@@ -345,36 +399,66 @@ async function analyzeSubject(
       ? `${nameQ} ${discriminator} protesto pignoramento insolvenza fallimento`
       : `${name} protesto pignoramento insolvenza fallimento`),
     // Query fiscale
-    fetchGoogleNews(`${name} evasione fiscale cartella esattoriale debiti INPS`),
+    fetchGoogleNews(discriminator
+      ? `${nameQ} ${discriminator} evasione fiscale cartella esattoriale debiti INPS`
+      : `${nameQ} evasione fiscale cartella esattoriale debiti INPS`),
     // Query antimafia
-    fetchGoogleNews(`${name} antimafia riciclaggio sequestro`),
+    fetchGoogleNews(discriminator
+      ? `${nameQ} ${discriminator} antimafia riciclaggio sequestro`
+      : `${nameQ} antimafia riciclaggio sequestro`),
     // DuckDuckGo con discriminatore
     fetchDuckDuckGo(discriminator
       ? `${nameQ} ${discriminator} fallimento indagato protesto condanna frode`
       : `${nameQ} fallimento indagato protesto condanna frode`),
-    fetchDuckDuckGo(`${nameQ} sanzione multa violazione`),
+    fetchDuckDuckGo(discriminator
+      ? `${nameQ} ${discriminator} sanzione multa violazione`
+      : `${nameQ} sanzione multa violazione`),
   ]
   const results = await Promise.allSettled(queries)
   const allNewsRaw: NewsItem[] = []
+  let queriesWithResults = 0
   for (const r of results) {
-    if (r.status === 'fulfilled') allNewsRaw.push(...r.value)
+    if (r.status === 'fulfilled') {
+      if (r.value.length > 0) queriesWithResults++
+      allNewsRaw.push(...r.value)
+    }
   }
 
-  // Deduplica per link
-  const seenLinks = new Set<string>()
+  // Valuta esplicitamente la corrispondenza dell'identità e scarta le omonimie deboli.
+  const relevantRaw = allNewsRaw
+    .map(item => ({
+      ...item,
+      relevance: identityRelevance(item, name, discriminatorValue, city),
+      sourceQuality: item.sourceQuality ?? getSourceQuality(item.source, item.link),
+    }))
+    .filter(item => (item.relevance ?? 0) >= 0.45)
+
+  // Deduplica per titolo canonico: intercetta anche la stessa notizia sindacata con URL diversi.
+  const seenNews = new Set<string>()
   const allNews: NewsItem[] = []
-  for (const item of allNewsRaw) {
-    const key = item.link || item.title
-    if (!seenLinks.has(key)) { seenLinks.add(key); allNews.push(item) }
+  for (const item of relevantRaw.sort((a, b) =>
+    ((b.relevance ?? 0) * (b.sourceQuality ?? 0)) - ((a.relevance ?? 0) * (a.sourceQuality ?? 0))
+  )) {
+    const key = canonicalNewsKey(item) || item.link
+    if (key && !seenNews.has(key)) {
+      seenNews.add(key)
+      allNews.push(item)
+    }
   }
 
   const { signals, scoreDelta } = analyzeTextWithNews(allNews)
 
-  const hasNegativeSignals = signals.some(s => s.weight < 0)
-  const newsBonus = allNews.length > 0 && !hasNegativeSignals ? 10 : 0
-  const score = Math.max(0, Math.min(100, 60 + newsBonus + scoreDelta))
+  // Assenza di notizie non è un segnale positivo: parte da una base neutrale.
+  const score = Math.max(0, Math.min(100, 70 + scoreDelta))
+  const coverage = Math.round((queriesWithResults / queries.length) * 100)
+  const avgRelevance = allNews.length > 0
+    ? allNews.reduce((sum, item) => sum + (item.relevance ?? 0), 0) / allNews.length
+    : 0
+  const confidenceValue = Math.min(100, Math.round(coverage * 0.45 + avgRelevance * 100 * 0.55))
+  const confidence: 'alta' | 'media' | 'bassa' =
+    confidenceValue >= 70 ? 'alta' : confidenceValue >= 40 ? 'media' : 'bassa'
 
-  const googleNews = allNews.filter(n => n.source === 'Google News').slice(0, 6)
+  const displayedNews = allNews.slice(0, 8)
   const riskNews   = allNews.filter(n =>
     signals.some(sig => sig.weight < 0 && sig.articleTitle &&
       n.title.startsWith(sig.articleTitle.substring(0, 40)))
@@ -382,10 +466,15 @@ async function analyzeSubject(
 
   return {
     nome: name, tipo, score,
-    news: googleNews,
+    news: displayedNews,
     signals,
     newsRischio: riskNews,
-    totalNewsFetched: allNews.length,
+    totalNewsFetched: allNewsRaw.length,
+    relevantNews: allNews.length,
+    coverage,
+    confidence,
+    queriesWithResults,
+    queriesAttempted: queries.length,
     cessato,
   }
 }
@@ -449,6 +538,31 @@ Deno.serve(async (req) => {
     if (!client_id) {
       return new Response(JSON.stringify({ error: 'client_id obbligatorio' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // La funzione usa la service role solo per le ricerche e il salvataggio finale,
+    // ma l'utente chiamante deve essere autenticato e poter leggere la pratica/cliente.
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const accessClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false },
+    })
+    const token = authHeader.replace(/^Bearer\s+/i, '')
+    const { data: authData, error: authError } = await accessClient.auth.getUser(token)
+    if (authError || !authData.user) {
+      return new Response(JSON.stringify({ error: 'Autenticazione richiesta' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const accessQuery = practice_id
+      ? accessClient.from('practices').select('id').eq('id', practice_id).eq('client_id', client_id).maybeSingle()
+      : accessClient.from('clients').select('id').eq('id', client_id).maybeSingle()
+    const { data: accessibleRecord, error: accessError } = await accessQuery
+    if (accessError || !accessibleRecord) {
+      return new Response(JSON.stringify({ error: 'Accesso alla pratica non consentito' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
 
@@ -545,9 +659,14 @@ Deno.serve(async (req) => {
     const indirizziResults= allPersonResults.slice(ammCount + sociCount + ammCessCount + sociCessCount) as unknown as AddressResult[]
 
     // 5. Score globale ponderato (solo soggetti attuali)
-    const scoreAmm     = ammResults.length  ? Math.round(ammResults.reduce((s, r)  => s + r.score, 0) / ammResults.length)  : 100
-    const scoreSoci    = sociResults.length ? Math.round(sociResults.reduce((s, r) => s + r.score, 0) / sociResults.length) : 100
+    const scoreAmm     = ammResults.length  ? Math.round(ammResults.reduce((s, r)  => s + r.score, 0) / ammResults.length)  : 70
+    const scoreSoci    = sociResults.length ? Math.round(sociResults.reduce((s, r) => s + r.score, 0) / sociResults.length) : 70
     const scoreGlobale = Math.round(socRes.score * 0.5 + scoreAmm * 0.3 + scoreSoci * 0.2)
+    const activeSubjects = [socRes, ...ammResults, ...sociResults]
+    const averageCoverage = Math.round(
+      activeSubjects.reduce((sum, subject) => sum + subject.coverage, 0) / activeSubjects.length
+    )
+    const lowConfidenceSubjects = activeSubjects.filter(subject => subject.confidence === 'bassa').length
 
     const risultati = {
       societa:        socRes,
@@ -556,11 +675,16 @@ Deno.serve(async (req) => {
       amm_cessati:    ammCessResults.length  > 0 ? ammCessResults  : undefined,
       soci_cessati:   sociCessResults.length > 0 ? sociCessResults : undefined,
       indirizzi:      indirizziResults.length > 0 ? indirizziResults : undefined,
+      quality_summary: {
+        average_coverage: averageCoverage,
+        low_confidence_subjects: lowConfidenceSubjects,
+        active_subjects: activeSubjects.length,
+        methodology_version: '2.0-deterministic',
+      },
       generato_il:    new Date().toISOString(),
     }
 
     // 6. User corrente
-    const authHeader = req.headers.get('Authorization') ?? `Bearer ${SUPABASE_KEY}`
     let created_by = null
     try {
       const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {

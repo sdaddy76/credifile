@@ -1,15 +1,16 @@
-// @ts-nocheck
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Upload, Trash2, RefreshCw, TrendingUp, TrendingDown, AlertCircle, FileText, Users, Building2, Receipt, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import * as XLSX from 'xlsx';
-import { classificaTransazione } from '@/lib/classificaTransazione';
+import {
+  classificaTransazioneConConfidenza,
+  type ConfidenzaClassificazione,
+} from '@/lib/classificaTransazione';
 
 /* ─────────────────────────────────────────────
    CSV / XLS PARSING
@@ -95,7 +96,7 @@ function detectColumns(headers: string[]): ColMap {
     if (col.avere === undefined && (h === 'avere' || h.includes('accred') || h === 'entrate' || h === 'entrata' || h.includes('credit'))) col.avere = i;
 
     // Importo unico
-    if (col.importo === undefined && !col.dare && !col.avere &&
+    if (col.importo === undefined && col.dare === undefined && col.avere === undefined &&
         (h === 'importo' || h === 'importo (eur)' || h === 'importo eur' || h === 'amount' || h === 'valore' || h.startsWith('importo'))) col.importo = i;
 
     // Saldo
@@ -108,13 +109,28 @@ function detectColumns(headers: string[]): ColMap {
 /** Converte un importo testuale italiano ("1.234,56" o "-1234.56") in numero */
 function parseNum(s: string): number {
   if (!s) return 0;
-  // Rimuove simboli valuta e spazi
-  let t = s.replace(/[€$£\s]/g, '').replace(/'/g, '');
-  // Formato italiano: 1.234,56
-  if (/\d,\d{2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
-  // Formato anglosassone: 1,234.56 — già OK per parseFloat
+  let t = String(s).trim();
+  const parenthesizedNegative = /^\(.*\)$/.test(t);
+  t = t.replace(/[()€$£\s]/g, '').replace(/'/g, '');
+  if (!t) return 0;
+
+  const lastComma = t.lastIndexOf(',');
+  const lastDot = t.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    // L'ultimo separatore è quello decimale: 1.234,56 oppure 1,234.56.
+    if (lastComma > lastDot) t = t.replace(/\./g, '').replace(',', '.');
+    else t = t.replace(/,/g, '');
+  } else if (lastComma >= 0) {
+    const decimals = t.length - lastComma - 1;
+    t = decimals === 2 ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  } else if (lastDot >= 0) {
+    const decimals = t.length - lastDot - 1;
+    if (decimals !== 2) t = t.replace(/\./g, '');
+  }
+
   const n = parseFloat(t);
-  return isNaN(n) ? 0 : n;
+  if (isNaN(n)) return 0;
+  return parenthesizedNegative ? -Math.abs(n) : n;
 }
 
 /** Converte righe tabellari in Transazioni usando la ColMap */
@@ -138,8 +154,8 @@ function righeToTransazioni(
     const rawDate = col.date !== undefined ? row[col.date] : undefined;
     if (rawDate) {
       // Tenta parsing date in vari formati
-      const mIT = /(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})/.exec(rawDate);
-      const mISO = /(\d{4})[.\-](\d{2})[.\-](\d{2})/.exec(rawDate);
+      const mIT = /(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/.exec(rawDate);
+      const mISO = /(\d{4})[.-](\d{2})[.-](\d{2})/.exec(rawDate);
       if (mISO) dataStr = `${mISO[1]}-${mISO[2]}-${mISO[3]}`;
       else if (mIT) {
         const a = mIT[3].length === 2 ? `20${mIT[3]}` : mIT[3];
@@ -149,7 +165,7 @@ function righeToTransazioni(
 
     // Importo e tipo
     let importoAbs = 0;
-    let tipo: 'entrata' | 'uscita' = 'altro' as any;
+    let tipo: 'entrata' | 'uscita';
 
     if (col.dare !== undefined && col.avere !== undefined) {
       const dare = Math.abs(parseNum(row[col.dare] ?? ''));
@@ -163,28 +179,41 @@ function righeToTransazioni(
       importoAbs = Math.abs(val);
       tipo = val >= 0 ? 'entrata' : 'uscita';
     } else {
-      // Fallback: cerca il primo numero nella riga
-      for (const cell of row) {
-        const v = parseNum(cell);
+      // Fallback prudente: evita date e sceglie l'ultimo valore monetario plausibile.
+      const candidates = row
+        .filter((_, index) => index !== col.date && index !== col.date2 && index !== col.saldo)
+        .filter(cell => !/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(cell.trim()))
+        .map(cell => parseNum(cell))
+        .filter(value => Math.abs(value) > 0.005);
+      for (const v of candidates.reverse()) {
         if (Math.abs(v) > 0.005) { importoAbs = Math.abs(v); tipo = v >= 0 ? 'entrata' : 'uscita'; break; }
       }
       if (importoAbs === 0) continue;
     }
 
     // Saldo
-    const saldo = col.saldo !== undefined ? Math.abs(parseNum(row[col.saldo] ?? '')) || undefined : undefined;
+    const saldoRaw = col.saldo !== undefined ? parseNum(row[col.saldo] ?? '') : 0;
+    const saldo = saldoRaw !== 0 ? saldoRaw : undefined;
 
-    const categoria = classificaTransazione(desc, tipo);
+    const classificazione = classificaTransazioneConConfidenza(desc, tipo);
+    const parseConfidence: ConfidenzaClassificazione =
+      dataStr && col.desc !== undefined && (col.importo !== undefined || col.dare !== undefined || col.avere !== undefined)
+        ? 'alta'
+        : dataStr ? 'media' : 'bassa';
 
     result.push({
       practice_id: practiceId,
       data_valuta: dataStr,
       importo: importoAbs,
       tipo,
-      categoria,
+      categoria: classificazione.categoria,
       descrizione: desc.substring(0, 200),
       saldo_progressivo: saldo,
       file_nome: fileName,
+      classification_confidence: classificazione.confidenza,
+      classification_rule: classificazione.regola,
+      parse_confidence: parseConfidence,
+      source_format: fileName.split('.').pop()?.toLowerCase() ?? 'tabellare',
     });
   }
   return result;
@@ -241,6 +270,10 @@ interface Transazione {
   beneficiario_ordinante?: string;
   saldo_progressivo?: number;
   file_nome?: string;
+  classification_confidence?: ConfidenzaClassificazione;
+  classification_rule?: string;
+  parse_confidence?: ConfidenzaClassificazione;
+  source_format?: string;
 }
 
 interface Kpi {
@@ -257,6 +290,10 @@ interface Kpi {
   saldo_netto: number;
   num_transazioni: number;
   indice_liquidita: number;
+  transazioni_da_verificare: number;
+  importo_da_verificare: number;
+  saldo_medio: number | null;
+  saldo_minimo: number | null;
 }
 
 interface KpiMensili {
@@ -328,11 +365,7 @@ async function estraiTestoPdf(arrayBuffer: ArrayBuffer): Promise<string[][]> {
 }
 
 /** Regexp per date italiane */
-const RE_DATA = /\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})\b/;
-/** Regexp per importi con virgola decimale (es. 1.234,56 oppure 1234,56) */
-const RE_IMPORTO = /([+-]?\s?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*([+-])?/;
-/** Regexp per segnale di segno esplicito */
-const RE_SEGNO = /^[+-]$/;
+const RE_DATA = /\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/;
 
 function parseImporto(str: string): number | null {
   // Rimuove punti migliaia, sostituisce virgola con punto
@@ -388,10 +421,8 @@ function parseRighe(righe: string[][]): Transazione[] {
     // Se ci sono ≥2 importi e il massimo è ≥10× il minimo → il massimo è il saldo, prende il minimo
     // (tipico estratto conto IT: data | desc | importo_transazione | saldo_conto)
     let importoVal: number;
-    let importoRaw: string;
     if (allAmounts.length === 1) {
       importoVal = allAmounts[0].val;
-      importoRaw = allAmounts[0].raw;
     } else {
       const absVals = allAmounts.map(a => Math.abs(a.val));
       const maxAbs = Math.max(...absVals);
@@ -400,11 +431,9 @@ function parseRighe(righe: string[][]): Transazione[] {
         // Il massimo è quasi certamente il saldo: sceglie il non-massimo più a sinistra
         const chosen = allAmounts.find(a => Math.abs(a.val) < maxAbs) ?? allAmounts[0];
         importoVal = chosen.val;
-        importoRaw = chosen.raw;
       } else {
         // Valori comparabili: prende il primo in ordine visivo (già ordinato per X)
         importoVal = allAmounts[0].val;
-        importoRaw = allAmounts[0].raw;
       }
     }
     if (importoVal === 0) continue;
@@ -448,22 +477,28 @@ function parseRighe(righe: string[][]): Transazione[] {
 
     if (!desc || importoAbs < 0.01) continue;
 
-    const categoria = classificaTransazione(desc, tipo);
+    const classificazione = classificaTransazioneConConfidenza(desc, tipo);
     const dataISO_str = dataISO(mData[1], mData[2], mData[3]);
 
-    // Saldo progressivo: il valore assoluto massimo tra tutti gli importi trovati
+    // Saldo progressivo: conserva il segno del valore con valore assoluto maggiore.
     let saldo: number | undefined;
     if (allAmounts.length >= 2) {
-      saldo = Math.max(...allAmounts.map(a => Math.abs(a.val)));
+      saldo = allAmounts.reduce((best, current) =>
+        Math.abs(current.val) > Math.abs(best.val) ? current : best
+      ).val;
     }
 
     transazioni.push({
       data_valuta: dataISO_str,
       importo: importoAbs,
       tipo,
-      categoria,
+      categoria: classificazione.categoria,
       descrizione: desc.substring(0, 200),
       saldo_progressivo: saldo,
+      classification_confidence: classificazione.confidenza,
+      classification_rule: classificazione.regola,
+      parse_confidence: allAmounts.length >= 2 ? 'media' : 'bassa',
+      source_format: 'pdf',
     });
   }
 
@@ -498,10 +533,6 @@ function isIncassoCliente(categoria: string) {
   return categoria === 'incasso_cliente' || categoria === 'cliente';
 }
 
-function isAltroEntrata(categoria: string) {
-  return categoria === 'altro_entrata' || categoria === 'altro';
-}
-
 function isAltroUscita(categoria: string) {
   return categoria === 'altro_uscita' || categoria === 'altro';
 }
@@ -511,8 +542,13 @@ function calcolaKpi(transazioni: Transazione[]): Kpi {
   let entrate_clienti = 0, uscite_stipendi = 0;
   let uscite_fornitori = 0, uscite_tributi = 0, uscite_altro = 0;
   let uscite_rate_finanziamenti = 0, uscite_spese_bancarie = 0, uscite_prelievi = 0;
+  let transazioni_da_verificare = 0, importo_da_verificare = 0;
 
   for (const t of transazioni) {
+    if (t.classification_confidence === 'bassa' || t.parse_confidence === 'bassa') {
+      transazioni_da_verificare++;
+      importo_da_verificare += t.importo;
+    }
     if (t.tipo === 'entrata') {
       totale_entrate += t.importo;
       if (isIncassoCliente(t.categoria)) entrate_clienti += t.importo;
@@ -528,6 +564,10 @@ function calcolaKpi(transazioni: Transazione[]): Kpi {
     }
   }
 
+  const saldi = transazioni
+    .map(t => t.saldo_progressivo)
+    .filter((saldo): saldo is number => typeof saldo === 'number' && Number.isFinite(saldo));
+
   return {
     totale_entrate,
     totale_uscite,
@@ -542,6 +582,10 @@ function calcolaKpi(transazioni: Transazione[]): Kpi {
     saldo_netto: totale_entrate - totale_uscite,
     num_transazioni: transazioni.length,
     indice_liquidita: totale_uscite > 0 ? totale_entrate / totale_uscite : 0,
+    transazioni_da_verificare,
+    importo_da_verificare,
+    saldo_medio: saldi.length > 0 ? saldi.reduce((sum, saldo) => sum + saldo, 0) / saldi.length : null,
+    saldo_minimo: saldi.length > 0 ? Math.min(...saldi) : null,
   };
 }
 
@@ -726,7 +770,7 @@ export function EstrattoConto({ practiceId }: Props) {
 
       // Salva su DB
       if (dbAvailable !== false) {
-        const { error: delErr } = await supabase
+        await supabase
           .from('estratto_conto_transactions')
           .delete()
           .eq('practice_id', practiceId)
@@ -851,6 +895,9 @@ export function EstrattoConto({ practiceId }: Props) {
 
   const s = salute();
   const kpiMensili = calcolaKpiMensili(transazioni);
+  const percentualeDaVerificare = kpi && kpi.num_transazioni > 0
+    ? (kpi.transazioni_da_verificare / kpi.num_transazioni) * 100
+    : 0;
 
   /* ── RENDER ── */
   return (
@@ -959,6 +1006,19 @@ export function EstrattoConto({ practiceId }: Props) {
               {fileNome && <> · <span className="text-blue-600">{fileNome}</span></>}
             </span>
           </div>
+
+          {kpi.transazioni_da_verificare > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex gap-2 text-sm text-amber-800">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div>
+                <span className="font-medium">
+                  {kpi.transazioni_da_verificare} transazioni da verificare ({percentualeDaVerificare.toFixed(1)}%)
+                </span>
+                {' '}perché il formato o la causale non consentono una classificazione affidabile.
+                Valore complessivo coinvolto: {fmt(kpi.importo_da_verificare)}.
+              </div>
+            </div>
+          )}
 
           {/* KPI cards row 1: entrate/uscite */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1074,6 +1134,23 @@ export function EstrattoConto({ practiceId }: Props) {
             </Card>
           </div>
 
+          {(kpi.saldo_medio !== null || kpi.saldo_minimo !== null) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Card className="border-slate-200 bg-slate-50">
+                <CardContent className="p-3">
+                  <p className="text-[11px] text-slate-600">Saldo medio rilevato</p>
+                  <p className="text-base font-bold text-slate-800">{fmt(kpi.saldo_medio ?? 0)}</p>
+                </CardContent>
+              </Card>
+              <Card className={`${(kpi.saldo_minimo ?? 0) < 0 ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                <CardContent className="p-3">
+                  <p className={`text-[11px] ${(kpi.saldo_minimo ?? 0) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>Saldo minimo rilevato</p>
+                  <p className={`text-base font-bold ${(kpi.saldo_minimo ?? 0) < 0 ? 'text-red-800' : 'text-emerald-800'}`}>{fmt(kpi.saldo_minimo ?? 0)}</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* KPI Mensili collassabili */}
           {kpiMensili && (
             <Card className="border-slate-200 bg-white">
@@ -1182,6 +1259,7 @@ export function EstrattoConto({ practiceId }: Props) {
                   <th className="text-left px-3 py-2 text-gray-600 font-medium w-24">Data</th>
                   <th className="text-left px-3 py-2 text-gray-600 font-medium">Descrizione</th>
                   <th className="text-center px-3 py-2 text-gray-600 font-medium w-28">Categoria</th>
+                  <th className="text-center px-3 py-2 text-gray-600 font-medium w-24">Affidabilità</th>
                   <th className="text-right px-3 py-2 text-gray-600 font-medium w-28">Importo</th>
                   <th className="text-right px-3 py-2 text-gray-600 font-medium w-28">Saldo</th>
                 </tr>
@@ -1207,6 +1285,24 @@ export function EstrattoConto({ practiceId }: Props) {
                           {cs.label}
                         </span>
                       </td>
+                      <td className="px-3 py-2 text-center">
+                        <span
+                          className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                            t.classification_confidence === 'alta' && t.parse_confidence !== 'bassa'
+                              ? 'bg-green-50 text-green-700 border-green-200'
+                              : t.classification_confidence === 'bassa' || t.parse_confidence === 'bassa'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                          }`}
+                          title={`Regola: ${t.classification_rule ?? 'dato storico'} · Parsing: ${t.parse_confidence ?? 'non disponibile'}`}
+                        >
+                          {t.classification_confidence === 'alta' && t.parse_confidence !== 'bassa'
+                            ? 'Alta'
+                            : t.classification_confidence === 'bassa' || t.parse_confidence === 'bassa'
+                              ? 'Da verificare'
+                              : 'Media'}
+                        </span>
+                      </td>
                       <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${
                         t.tipo === 'entrata' ? 'text-green-700' : 'text-red-700'
                       }`}>
@@ -1227,7 +1323,7 @@ export function EstrattoConto({ practiceId }: Props) {
       {/* Footer note */}
       {transazioni.length > 0 && (
         <p className="text-[10px] text-gray-400 text-center">
-          La classificazione automatica è basata su parole chiave. Verifica le categorie prima dell'utilizzo.
+          La classificazione automatica è basata su formato, segno e parole chiave. Le righe a bassa affidabilità restano separate e devono essere verificate.
         </p>
       )}
     </div>

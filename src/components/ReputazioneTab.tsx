@@ -12,15 +12,24 @@ import { toast } from 'sonner';
 
 interface Props { practiceId: string; clientId: string }
 
-interface NewsItem { title: string; snippet: string; link: string; date: string; source: string }
+interface NewsItem {
+  title: string; snippet: string; link: string; date: string; source: string;
+  relevance?: number; sourceQuality?: number;
+}
 interface Signal {
   text: string; category: string; weight: number;
   articleTitle?: string; articleDate?: string; articleLink?: string;
+  confidence?: number; sourceCount?: number; sourceName?: string;
 }
 interface SubjectResult {
   nome: string; tipo: string; score: number;
   news: NewsItem[]; signals: Signal[]; newsRischio: NewsItem[];
   totalNewsFetched?: number;
+  relevantNews?: number;
+  coverage?: number;
+  confidence?: 'alta' | 'media' | 'bassa';
+  queriesWithResults?: number;
+  queriesAttempted?: number;
   cessato?: boolean;
 }
 interface AddressResult {
@@ -36,6 +45,12 @@ interface Risultati {
   amm_cessati?: SubjectResult[];
   soci_cessati?: SubjectResult[];
   indirizzi?: AddressResult[];
+  quality_summary?: {
+    average_coverage: number;
+    low_confidence_subjects: number;
+    active_subjects: number;
+    methodology_version: string;
+  };
   generato_il: string;
 }
 interface ExcludedSignal {
@@ -290,7 +305,18 @@ function SubjectCard({
               </span>
               {result.totalNewsFetched !== undefined && (
                 <span className="text-[10px] text-muted-foreground/60">
-                  {result.totalNewsFetched} fonti analizzate
+                  {result.totalNewsFetched} risultati · {result.relevantNews ?? result.news.length} pertinenti
+                </span>
+              )}
+              {result.confidence && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                  result.confidence === 'alta'
+                    ? 'bg-green-50 text-green-700 border-green-200'
+                    : result.confidence === 'media'
+                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}>
+                  affidabilità {result.confidence} · copertura {result.coverage ?? 0}%
                 </span>
               )}
             </div>
@@ -360,6 +386,8 @@ function SubjectCard({
                             </span>
                           )}
                           {n.date && <span>{new Date(n.date).toLocaleDateString('it-IT')}</span>}
+                          {n.relevance !== undefined && <span>pertinenza {Math.round(n.relevance * 100)}%</span>}
+                          {n.sourceQuality !== undefined && <span>qualità fonte {Math.round(n.sourceQuality * 100)}%</span>}
                         </div>
                       </div>
                     ))}
@@ -982,6 +1010,22 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
       {/* ── Dashboard risultati ── */}
       {selected && r && (
         <>
+          {r.quality_summary && (
+            <div className={`flex items-start gap-2 text-xs rounded-lg border px-3 py-2 ${
+              r.quality_summary.low_confidence_subjects > 0
+                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                : 'bg-blue-50 border-blue-200 text-blue-800'
+            }`}>
+              <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>
+                Copertura media delle ricerche: <strong>{r.quality_summary.average_coverage}%</strong>.
+                {' '}{r.quality_summary.low_confidence_subjects > 0
+                  ? `${r.quality_summary.low_confidence_subjects} soggetto/i con affidabilità bassa: verificare manualmente omonimie e fonti.`
+                  : 'Nessun soggetto con affidabilità bassa.'}
+              </span>
+            </div>
+          )}
+
           {/* Banner rettifica attiva */}
           {hasAdjustments && (
             <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -1163,7 +1207,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
           {/* Footer */}
           <p className="text-[10px] text-muted-foreground/50 text-right">
             Analisi del {new Date(r.generato_il).toLocaleString('it-IT')} ·
-            Fonti: Google News Italia + DuckDuckGo · I risultati sono indicativi e vanno verificati
+            Fonti: Google News Italia + DuckDuckGo · Deduplicazione, qualità fonte e corrispondenza identità · I risultati sono indicativi e vanno verificati
           </p>
         </>
       )}

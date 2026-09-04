@@ -1,4 +1,4 @@
-import { classificaTransazione } from '@/lib/classificaTransazione';
+import { classificaTransazione, classificaTransazioneConConfidenza } from '@/lib/classificaTransazione';
 
 describe('classificaTransazione', () => {
   it('classifica una riga con importo in DARE come uscita fornitore', () => {
@@ -25,11 +25,25 @@ describe('classificaTransazione', () => {
     expect(classificaTransazione('ADDEBITO RATA MUTUO', 'uscita')).toBe('rata_finanziamento');
   });
 
-  it('classifica una uscita senza keyword nota come fornitore', () => {
-    expect(classificaTransazione('Operazione generica non riconosciuta', 'uscita')).toBe('fornitore');
+  it('non confonde una uscita senza keyword con un fornitore', () => {
+    expect(classificaTransazione('Operazione generica non riconosciuta', 'uscita')).toBe('altro_uscita');
   });
 
-  it('classifica una entrata senza keyword nota come incasso_cliente', () => {
-    expect(classificaTransazione('Operazione generica non riconosciuta', 'entrata')).toBe('incasso_cliente');
+  it('non confonde una entrata senza keyword con un incasso cliente', () => {
+    expect(classificaTransazione('Operazione generica non riconosciuta', 'entrata')).toBe('altro_entrata');
+  });
+
+  it('espone la confidenza e la regola che ha determinato la categoria', () => {
+    expect(classificaTransazioneConConfidenza('DELEGA F24 ERARIO', 'uscita')).toEqual({
+      categoria: 'tributo',
+      confidenza: 'alta',
+      regola: 'F24',
+    });
+
+    expect(classificaTransazioneConConfidenza('Operazione generica', 'entrata')).toEqual({
+      categoria: 'altro_entrata',
+      confidenza: 'bassa',
+      regola: 'NESSUNA REGOLA SPECIFICA',
+    });
   });
 });

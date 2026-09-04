@@ -15,6 +15,14 @@ export type CategoriaTransazione =
   | 'cliente'
   | 'altro';
 
+export type ConfidenzaClassificazione = 'alta' | 'media' | 'bassa';
+
+export interface EsitoClassificazione {
+  categoria: CategoriaTransazione;
+  confidenza: ConfidenzaClassificazione;
+  regola: string;
+}
+
 const KW_STIPENDI = [
   'STIPEND', 'SALARIO', 'RETRIBUZ', 'CEDOLINO', 'PAGHE', 'EMOLUMENT',
   'COMPENSO DIPEND', 'BUSTA PAGA', 'PAGA MENSILE', 'LAVORO DIPEND',
@@ -81,28 +89,49 @@ const KW_ENTRATA_NEUTRA = [
  * - uscite non riconosciute => fornitore
  * - entrate non riconosciute => incasso_cliente
  */
+function matchKeyword(descrizione: string, keywords: string[]): string | undefined {
+  return keywords.find(keyword => descrizione.includes(keyword));
+}
+
+export function classificaTransazioneConConfidenza(
+  descrizione: string,
+  tipo: TipoTransazione,
+): EsitoClassificazione {
+  const d = String(descrizione ?? '').toUpperCase();
+
+  if (tipo === 'entrata') {
+    const anticipo = matchKeyword(d, KW_ANTICIPO_SBF);
+    if (anticipo) return { categoria: 'anticipo_sbf', confidenza: 'alta', regola: anticipo };
+    const versamento = matchKeyword(d, KW_VERSAMENTI);
+    if (versamento) return { categoria: 'versamento', confidenza: 'alta', regola: versamento };
+    const neutra = matchKeyword(d, KW_ENTRATA_NEUTRA);
+    if (neutra) return { categoria: 'altro_entrata', confidenza: 'alta', regola: neutra };
+    const incasso = matchKeyword(d, KW_INCASSI_CLIENTI);
+    if (incasso) return { categoria: 'incasso_cliente', confidenza: 'alta', regola: incasso };
+    if (d.includes('BONIFICO')) return { categoria: 'incasso_cliente', confidenza: 'media', regola: 'BONIFICO GENERICO' };
+    if (d.includes('ACCREDITO')) return { categoria: 'incasso_cliente', confidenza: 'media', regola: 'ACCREDITO GENERICO' };
+    return { categoria: 'altro_entrata', confidenza: 'bassa', regola: 'NESSUNA REGOLA SPECIFICA' };
+  }
+
+  const rules: Array<[CategoriaTransazione, string[]]> = [
+    ['stipendio', KW_STIPENDI],
+    ['tributo', KW_TRIBUTI],
+    ['rata_finanziamento', KW_RATE_FINANZIAMENTI],
+    ['spesa_bancaria', KW_SPESE_BANCARIE],
+    ['prelievo', KW_PRELIEVI],
+    ['fornitore', KW_FORNITORI],
+  ];
+  for (const [categoria, keywords] of rules) {
+    const keyword = matchKeyword(d, keywords);
+    if (keyword) return { categoria, confidenza: 'alta', regola: keyword };
+  }
+
+  return { categoria: 'altro_uscita', confidenza: 'bassa', regola: 'NESSUNA REGOLA SPECIFICA' };
+}
+
 export function classificaTransazione(
   descrizione: string,
   tipo: TipoTransazione,
 ): CategoriaTransazione {
-  const d = String(descrizione ?? '').toUpperCase();
-
-  if (tipo === 'entrata') {
-    if (KW_ANTICIPO_SBF.some(k => d.includes(k))) return 'anticipo_sbf';
-    if (KW_VERSAMENTI.some(k => d.includes(k))) return 'versamento';
-    if (KW_ENTRATA_NEUTRA.some(k => d.includes(k))) return 'altro_entrata';
-    if (KW_INCASSI_CLIENTI.some(k => d.includes(k))) return 'incasso_cliente';
-    if (d.includes('BONIFICO')) return 'incasso_cliente';
-    if (d.includes('ACCREDITO')) return 'incasso_cliente';
-    return 'incasso_cliente';
-  }
-
-  if (KW_STIPENDI.some(k => d.includes(k))) return 'stipendio';
-  if (KW_TRIBUTI.some(k => d.includes(k))) return 'tributo';
-  if (KW_RATE_FINANZIAMENTI.some(k => d.includes(k))) return 'rata_finanziamento';
-  if (KW_SPESE_BANCARIE.some(k => d.includes(k))) return 'spesa_bancaria';
-  if (KW_PRELIEVI.some(k => d.includes(k))) return 'prelievo';
-  if (KW_FORNITORI.some(k => d.includes(k))) return 'fornitore';
-
-  return 'fornitore';
+  return classificaTransazioneConConfidenza(descrizione, tipo).categoria;
 }

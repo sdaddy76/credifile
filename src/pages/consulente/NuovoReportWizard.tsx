@@ -165,6 +165,11 @@ export default function NuovoReportWizard() {
     kpi_data: Record<string, number | null>;
     aggiornato_il: string;
     commento_settore: string | null;
+    last_checked_at?: string | null;
+    source_dataset?: string | null;
+    source_version?: string | null;
+    effective_period?: string | null;
+    last_update_status?: string | null;
   } | null>(null);
   const [ratingBancabile, setRatingBancabile] = useState<'bancabile' | 'attenzione' | 'non_bancabile' | null>(null);
   const [motiviRating,    setMotiviRating]    = useState<string[]>([]);
@@ -402,7 +407,7 @@ export default function NuovoReportWizard() {
     try {
       const { data: benchRow } = await supabase
         .from('sector_benchmarks')
-        .select('kpi_data, aggiornato_il, commento_settore, ateco_label')
+        .select('kpi_data, aggiornato_il, commento_settore, ateco_label, last_checked_at, source_dataset, source_version, effective_period, last_update_status')
         .eq('ateco_macro', atecoBenchKey)
         .maybeSingle();
 
@@ -412,6 +417,11 @@ export default function NuovoReportWizard() {
           kpi_data:        benchRow.kpi_data as Record<string, number | null>,
           aggiornato_il:   benchRow.aggiornato_il,
           commento_settore: benchRow.commento_settore ?? null,
+          last_checked_at: benchRow.last_checked_at ?? null,
+          source_dataset: benchRow.source_dataset ?? null,
+          source_version: benchRow.source_version ?? null,
+          effective_period: benchRow.effective_period ?? null,
+          last_update_status: benchRow.last_update_status ?? null,
         });
       } else {
         setBenchmarkData({
@@ -948,6 +958,11 @@ export default function NuovoReportWizard() {
             {benchmarkData && (
               <div className="bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-700 border border-blue-200">
                 📊 Benchmark settore: <strong>{benchmarkData.settore_label}</strong> — aggiornati al {new Date(benchmarkData.aggiornato_il).toLocaleDateString('it-IT')}
+                {benchmarkData.effective_period ? <> · periodo dati {benchmarkData.effective_period}</> : null}
+                {benchmarkData.last_checked_at
+                  ? <> · fonte controllata il {new Date(benchmarkData.last_checked_at).toLocaleDateString('it-IT')}</>
+                  : null}
+                {benchmarkData.source_dataset ? <> · {benchmarkData.source_dataset}</> : null}
               </div>
             )}
 
