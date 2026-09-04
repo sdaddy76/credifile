@@ -189,16 +189,22 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   const dbBrv = (d.debiti_banche_breve ?? 0) + (d.debiti_banche_lungo ?? 0) + (d.debiti_altri_finanziatori ?? 0);
   const passCorr = td;
   const tvp = d.totale_valore_produzione;
+  // La Differenza A-B è già il risultato operativo (EBIT) prima della gestione finanziaria.
+  // Se non disponibile, ricostruiamo un proxy dal risultato ante imposte neutralizzando
+  // interessi passivi e proventi da partecipazioni.
   const ebit = d.differenza_ab !== null
-    ? d.differenza_ab + (d.proventi_partecipazioni ?? 0) - (d.interessi_passivi ?? 0)
-    : d.risultato_ante_imposte;
+    ? d.differenza_ab
+    : d.risultato_ante_imposte !== null
+      ? d.risultato_ante_imposte + (d.interessi_passivi ?? 0) - (d.proventi_partecipazioni ?? 0)
+      : null;
   const ebitda = ebit !== null ? ebit + (d.ammortamenti ?? 0) : null;
   const intPass = d.interessi_passivi;
   const isHolding = (d.ricavi_vendite === 0 || d.ricavi_vendite === null) && (d.proventi_partecipazioni ?? 0) > 0;
 
   // ── Dati da scheda finanziamenti (se disponibili) ──────────────────────────
   const hasFin = financing.length > 0;
-  const totRataMensile = hasFin ? financing.reduce((s, f) => s + (Number(f.rata) || 0), 0) : 0;
+  const totRataMensile = hasFin ? financing.reduce((s, f) => s + Math.max(0, Number(f.rata) || 0), 0) : 0;
+  const hasDebtService = totRataMensile > 0;
   const servizioDebitoAnnuo = totRataMensile * 12;           // Debt Service = Σrate × 12
   const debitoResidualeTot = hasFin
     ? financing.reduce((s, f) => s + (Number(f.debito_residuo) || 0), 0)
@@ -208,10 +214,10 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   const pfn = debitoResidualeTot - liq;
 
   // DSCR: usa servizio del debito reale se disponibile, altrimenti EBITDA/interessi
-  const dscr = hasFin && servizioDebitoAnnuo > 0 && ebitda !== null
+  const dscr = hasDebtService && ebitda !== null
     ? ebitda / servizioDebitoAnnuo
     : (intPass && intPass > 0 && ebitda !== null ? ebitda / intPass : null);
-  const dscrLabel = hasFin ? 'DSCR (da finanziamenti)' : 'DSCR (approx.)';
+  const dscrLabel = hasDebtService ? 'DSCR (da finanziamenti)' : 'DSCR (approx.)';
 
   function kpi(label: string, valore: number | null, formatted: string, sem: Semaforo): KpiEntry {
     return { valore, formatted, semaforo: sem, label };
@@ -242,6 +248,8 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   return {
     is_holding: isHolding,
     ebit, ebitda, pfn,
+    dscr_source: hasDebtService ? 'finanziamenti' : 'approssimato',
+    servizio_debito_annuo: servizioDebitoAnnuo,
     kpi: {
       liquidita: {
         current_ratio: kpi('Current Ratio', currentRatio, fmtRatio(currentRatio),
@@ -311,8 +319,15 @@ Deno.serve(async (req) => {
   if (bilancio_testo) {
     if (bilancio_testo.trim().length < 50) return fail('Contenuto bilancio troppo breve o non leggibile');
     const bilData = parseBilancio(bilancio_testo);
-    const { is_holding, kpi } = calcolaKpi(bilData, financing ?? []);
-    return ok({ anno_esercizio: bilData.anno_esercizio, ragione_sociale: bilData.ragione_sociale, kpi, is_holding });
+    const { is_holding, kpi, dscr_source, servizio_debito_annuo } = calcolaKpi(bilData, financing ?? []);
+    return ok({
+      anno_esercizio: bilData.anno_esercizio,
+      ragione_sociale: bilData.ragione_sociale,
+      kpi,
+      is_holding,
+      dscr_source,
+      servizio_debito_annuo,
+    });
   }
 
   // Flusso pratiche standard: practice_id e pdf_text obbligatori
@@ -320,7 +335,15 @@ Deno.serve(async (req) => {
 
   // Parse bilancio
   const bilData = parseBilancio(pdf_text);
-  const { is_holding, ebit: _ebit, ebitda: _ebitda, pfn: _pfn, kpi } = calcolaKpi(bilData, financing ?? []);
+  const {
+    is_holding,
+    ebit: _ebit,
+    ebitda: _ebitda,
+    pfn: _pfn,
+    kpi,
+    dscr_source,
+    servizio_debito_annuo,
+  } = calcolaKpi(bilData, financing ?? []);
 
   // Upsert su DB via REST
   const row = {
@@ -386,5 +409,13 @@ Deno.serve(async (req) => {
   }
 
   const saved = await upsertRes.json();
-  return ok({ bilancio_id: saved?.[0]?.id, anno: bilData.anno_esercizio, ragione_sociale: bilData.ragione_sociale, kpi, is_holding });
+  return ok({
+    bilancio_id: saved?.[0]?.id,
+    anno: bilData.anno_esercizio,
+    ragione_sociale: bilData.ragione_sociale,
+    kpi,
+    is_holding,
+    dscr_source,
+    servizio_debito_annuo,
+  });
 });

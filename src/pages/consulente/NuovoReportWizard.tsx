@@ -11,6 +11,16 @@ import { Document, Paragraph, TextRun, HeadingLevel, Packer } from 'docx';
 import { parseCentraleRischi } from '@/lib/parseCentraleRischi';
 import type { KpiScore, AiSuggerimento, ReportData, FinanziamentoItem } from '@/lib/generateReportPdf';
 import {
+  KPI_SCORING_CONFIG,
+  buildBankabilityAssessment,
+  type KpiResult,
+} from '@/lib/bankabilityScoring';
+import {
+  SECTOR_BENCHMARK_UPDATED_AT,
+  getAtecoBenchmark,
+  getAtecoBenchmarkKey,
+} from '@/lib/sectorBenchmarks';
+import {
   Upload, CheckCircle, Loader2, ArrowLeft, ArrowRight,
   FileText, BarChart2, Brain, Send, Download, ShieldCheck, Clock, Mail,
   PlusCircle, Trash2, Banknote, Save,
@@ -31,59 +41,6 @@ async function extractPdfTextWizard(file: File): Promise<string> {
     pages.push(ct.items.map((it: unknown) => (it as { str?: string }).str ?? '').join(' '));
   }
   return pages.join('\n');
-}
-
-interface KpiEntry { valore: number | null; formatted: string; semaforo: string; label: string }
-type KpiResult = Record<string, Record<string, KpiEntry>>;
-
-// Mappa ATECO → chiave settore benchmark (stessa del componente AnalisiFinanziariaTab)
-const ATECO_SECTOR_MAP: [RegExp, string][] = [
-  [/^0[1-3]/,   'agricoltura'],
-  [/^0[5-9]/,   'estrazione'],
-  [/^[12][0-9]|^3[0-3]/,'manifattura'],
-  [/^35/,       'energia'],
-  [/^3[6-9]/,   'acqua_rifiuti'],
-  [/^4[1-3]/,   'costruzioni'],
-  [/^4[5-7]/,   'commercio'],
-  [/^4[9]|^5[0-3]/,'trasporti'],
-  [/^5[5-6]/,   'ristorazione'],
-  [/^5[8-9]|^6[0-3]/,'ict'],
-  [/^6[4-6]/,   'finanza'],
-  [/^68/,       'immobiliare'],
-  [/^6[9]|^7[0-5]/,'professionali'],
-  [/^7[7-9]|^8[0-2]/,'amministrativi'],
-  [/^86|^87|^88/,'sanita'],
-];
-
-function getAtecoBenchmarkKey(codice: string | null | undefined): string {
-  if (!codice) return 'default';
-  const clean = codice.trim().replace(/[^0-9]/g, '');
-  for (const [re, key] of ATECO_SECTOR_MAP) {
-    if (re.test(clean)) return key;
-  }
-  return 'default';
-}
-
-const KPI_CONFIG: { key: string; area: string; label: string; inverso: boolean; peso: number; ottimo: number; suff: number; critica: number }[] = [
-  { key: 'dscr',          area: 'copertura',     label: 'DSCR',              inverso: false, peso: 30, ottimo: 1.25, suff: 1.0,  critica: 0.8 },
-  { key: 'pfn_ebitda',    area: 'indebitamento', label: 'PFN / EBITDA',      inverso: true,  peso: 20, ottimo: 3.0,  suff: 5.0,  critica: 7.0 },
-  { key: 'ebitda_margin', area: 'redditivita',   label: 'EBITDA Margin (%)', inverso: false, peso: 15, ottimo: 15,   suff: 5.0,  critica: 0.0 },
-  { key: 'current_ratio', area: 'liquidita',     label: 'Current Ratio',     inverso: false, peso: 10, ottimo: 1.5,  suff: 1.0,  critica: 0.8 },
-  { key: 'roe',           area: 'redditivita',   label: 'ROE (%)',           inverso: false, peso: 10, ottimo: 10,   suff: 3.0,  critica: 0.0 },
-  { key: 'leverage',      area: 'solidita',      label: 'Leverage',          inverso: true,  peso: 10, ottimo: 2.0,  suff: 4.0,  critica: 6.0 },
-  { key: 'pfn_pn',        area: 'indebitamento', label: 'PFN / PN',          inverso: true,  peso:  5, ottimo: 1.0,  suff: 3.0,  critica: 5.0 },
-];
-
-function calcScore(v: number, ottimo: number, suff: number, critica: number, inv: boolean): number {
-  if (!inv) {
-    if (v >= ottimo) return 100; if (v <= critica) return 0;
-    if (v >= suff) return 55 + ((v - suff) / (ottimo - suff)) * 45;
-    return ((v - critica) / (suff - critica)) * 55;
-  } else {
-    if (v <= ottimo) return 100; if (v >= critica) return 0;
-    if (v <= suff) return 55 + ((suff - v) / (suff - ottimo)) * 45;
-    return ((critica - v) / (critica - suff)) * 55;
-  }
 }
 
 const TIPI_FINANZIAMENTO = ['Mutuo','Leasing','Apertura credito','Factoring','Finanziamento chirografario','Altro'];
@@ -193,6 +150,7 @@ export default function NuovoReportWizard() {
   // Step 2.5: Finanziamenti
   const crFileInputRef = useRef<HTMLInputElement>(null);
   const [importandoCR, setImportandoCR] = useState(false);
+  const [recalculatingScores, setRecalculatingScores] = useState(false);
   const [finanziamenti, setFinanziamenti] = useState<FinanziamentoItem[]>([]);
   const addFinanziamento = () => setFinanziamenti(prev => [...prev, { istituto: '', tipo: 'Mutuo', importo_residuo: 0, rata_mensile: null, scadenza: null, fonte: 'dichiarato' }]);
   const removeFinanziamento = (i: number) => setFinanziamenti(prev => prev.filter((_, idx) => idx !== i));
@@ -210,6 +168,8 @@ export default function NuovoReportWizard() {
   } | null>(null);
   const [ratingBancabile, setRatingBancabile] = useState<'bancabile' | 'attenzione' | 'non_bancabile' | null>(null);
   const [motiviRating,    setMotiviRating]    = useState<string[]>([]);
+  const [dscrMetodo, setDscrMetodo] = useState<'finanziamenti' | 'approssimato'>('approssimato');
+  const [servizioDebitoAnnuo, setServizioDebitoAnnuo] = useState(0);
 
   // Step 4: AI suggestions
   const [aiLoading, setAiLoading] = useState(false);
@@ -376,47 +336,69 @@ export default function NuovoReportWizard() {
     }
   };
 
-  const stepFinanziamentiNext = () => {
-    if (kpiResult) computeScores(kpiResult);
-    setStep(3);
+  const stepFinanziamentiNext = async () => {
+    if (!kpiResult) {
+      toast.error('Analizza prima il bilancio');
+      return;
+    }
+
+    const activeFinancing = finanziamenti.filter(finanziamento => finanziamento.istituto.trim() !== '');
+    const missingResidualDebt = activeFinancing.find(finanziamento => !finanziamento.importo_residuo || finanziamento.importo_residuo <= 0);
+    if (missingResidualDebt) {
+      toast.error(`Inserisci il debito residuo del finanziamento ${missingResidualDebt.istituto} per calcolare correttamente PFN e indice`);
+      return;
+    }
+    const missingInstallment = activeFinancing.find(finanziamento => !finanziamento.rata_mensile || finanziamento.rata_mensile <= 0);
+    if (missingInstallment) {
+      toast.error(`Inserisci la rata mensile del finanziamento ${missingInstallment.istituto} per calcolare correttamente il DSCR`);
+      return;
+    }
+
+    setRecalculatingScores(true);
+    try {
+      let recalculatedKpi = kpiResult;
+      if (bilancioTestoRelazione) {
+        const financingPayload = activeFinancing.map(finanziamento => ({
+          rata: finanziamento.rata_mensile ?? 0,
+          debito_residuo: finanziamento.importo_residuo,
+          durata_mesi: 0,
+          tipologia: finanziamento.tipo,
+        }));
+        const { data, error } = await supabase.functions.invoke('analizza-bilancio', {
+          body: {
+            bilancio_testo: bilancioTestoRelazione,
+            financing: financingPayload,
+          },
+        });
+        if (error || !data?.success) {
+          throw new Error(data?.error ?? error?.message ?? 'Errore ricalcolo KPI');
+        }
+        recalculatedKpi = data.kpi as KpiResult;
+        setKpiResult(recalculatedKpi);
+        setDscrMetodo(data.dscr_source === 'finanziamenti' ? 'finanziamenti' : 'approssimato');
+        setServizioDebitoAnnuo(Number(data.servizio_debito_annuo) || 0);
+      }
+
+      await computeScores(recalculatedKpi);
+      setStep(3);
+    } catch (error) {
+      toast.error(`Impossibile ricalcolare DSCR e indice: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setRecalculatingScores(false);
+    }
   };
 
   // ── STEP 3: calcola scores + carica benchmark ────────────────────────
   const computeScores = async (kpi: KpiResult) => {
-    const scores: KpiScore[] = KPI_CONFIG.map(cfg => {
-      const entry = kpi?.[cfg.area]?.[cfg.key];
-      const v = entry?.valore ?? null;
-      const sc = v !== null ? Math.round(Math.min(100, Math.max(0, calcScore(v, cfg.ottimo, cfg.suff, cfg.critica, cfg.inverso)))) : null;
-      return {
-        kpi_key: cfg.key, kpi_label: cfg.label, kpi_area: cfg.area,
-        valore: v, formatted: entry?.formatted ?? (v !== null ? String(v) : 'N/D'),
-        score: sc, benchmark: cfg.ottimo, benchmark_formatted: String(cfg.ottimo),
-        inverso: cfg.inverso,
-      };
-    });
-    setKpiScores(scores);
-
-    // Calcola indice
-    const avail = scores.filter(s => s.score !== null);
-    let idx: number | null = null;
-    if (avail.length > 0) {
-      const tot = avail.reduce((s, k) => s + (k.score! * KPI_CONFIG.find(c => c.key === k.kpi_key)!.peso), 0);
-      const wp  = avail.reduce((s, k) => s + KPI_CONFIG.find(c => c.key === k.kpi_key)!.peso, 0);
-      idx = Math.round((tot / wp) * 100) / 100;
-      setIndice(idx);
-    }
-
-    // Rating bancabile
-    if (idx !== null) {
-      const rating: 'bancabile' | 'attenzione' | 'non_bancabile' =
-        idx >= 70 ? 'bancabile' : idx >= 55 ? 'attenzione' : 'non_bancabile';
-      setRatingBancabile(rating);
-      const motivi = scores.filter(s => s.score !== null && s.score < 55).map(s => `${s.kpi_label}: score ${s.score}/100`);
-      setMotiviRating(motivi);
-    }
+    const assessment = buildBankabilityAssessment(kpi);
+    setKpiScores(assessment.scores);
+    setIndice(assessment.indice);
+    setRatingBancabile(assessment.rating);
+    setMotiviRating(assessment.motivi);
 
     // Carica benchmark dal DB
     const atecoBenchKey = getAtecoBenchmarkKey(client?.codice_ateco ?? null);
+    const fallbackBenchmark = getAtecoBenchmark(client?.codice_ateco ?? null);
     try {
       const { data: benchRow } = await supabase
         .from('sector_benchmarks')
@@ -431,8 +413,22 @@ export default function NuovoReportWizard() {
           aggiornato_il:   benchRow.aggiornato_il,
           commento_settore: benchRow.commento_settore ?? null,
         });
+      } else {
+        setBenchmarkData({
+          settore_label: fallbackBenchmark.label,
+          kpi_data: fallbackBenchmark.kpi,
+          aggiornato_il: SECTOR_BENCHMARK_UPDATED_AT,
+          commento_settore: null,
+        });
       }
-    } catch { /* usa fallback hardcoded */ }
+    } catch {
+      setBenchmarkData({
+        settore_label: fallbackBenchmark.label,
+        kpi_data: fallbackBenchmark.kpi,
+        aggiornato_il: SECTOR_BENCHMARK_UPDATED_AT,
+        commento_settore: null,
+      });
+    }
   };
 
   // ── STEP 4: AI suggestions ───────────────────────────────────────────
@@ -490,6 +486,10 @@ export default function NuovoReportWizard() {
         finanziamenti:       finanziamenti.filter(f => f.istituto.trim() !== ''),
         rating_bancabile:    ratingBancabile ?? undefined,
         motivi_rating:       motiviRating.length ? motiviRating : undefined,
+        kpi_disponibili:     kpiScores.filter(kpi => kpi.score !== null).length,
+        kpi_totali:          KPI_SCORING_CONFIG.length,
+        dscr_metodo:         dscrMetodo,
+        servizio_debito_annuo: servizioDebitoAnnuo || undefined,
       };
 
       const { pdfBlob: blob, base64 } = await generateReportPdf(reportData);
@@ -809,7 +809,8 @@ export default function NuovoReportWizard() {
             </h2>
             <p className="text-sm text-slate-500">
               Inserisci manualmente i finanziamenti attivi dell'azienda (mutui, leasing, fidi, ecc.).
-              Questi dati verranno inclusi nel report finale e usati per calcolare il DSCR.
+              Questi dati verranno inclusi nel report finale. Il DSCR viene ricalcolato come rapporto tra EBITDA
+              e somma annuale di tutte le rate mensili inserite.
             </p>
 
             <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-4 space-y-3">
@@ -881,12 +882,12 @@ export default function NuovoReportWizard() {
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs font-semibold text-slate-500">Debito residuo (€)</label>
+                      <label className="text-xs font-semibold text-slate-500">Debito residuo (€) *</label>
                       <input type="number" className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" placeholder="0"
                         value={f.importo_residuo || ''} onChange={e => updateFinanziamento(i, 'importo_residuo', parseFloat(e.target.value) || 0)} />
                     </div>
                     <div>
-                      <label className="text-xs font-semibold text-slate-500">Rata mensile (€)</label>
+                      <label className="text-xs font-semibold text-slate-500">Rata mensile (€) *</label>
                       <input type="number" className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" placeholder="—"
                         value={f.rata_mensile ?? ''} onChange={e => updateFinanziamento(i, 'rata_mensile', e.target.value ? parseFloat(e.target.value) : null)} />
                     </div>
@@ -906,8 +907,10 @@ export default function NuovoReportWizard() {
 
             <div className="flex gap-2 pt-2">
               <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="w-4 h-4 mr-1" /> Indietro</Button>
-              <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={stepFinanziamentiNext}>
-                Calcola score KPI <ArrowRight className="w-4 h-4 ml-1" />
+              <Button className="flex-1 bg-teal-600 hover:bg-teal-700" onClick={stepFinanziamentiNext} disabled={recalculatingScores}>
+                {recalculatingScores
+                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Ricalcolo DSCR e 14 KPI...</>
+                  : <>Calcola score su 14 KPI <ArrowRight className="w-4 h-4 ml-1" /></>}
               </Button>
             </div>
           </div>
@@ -922,11 +925,23 @@ export default function NuovoReportWizard() {
               <div className="text-center py-3 bg-gradient-to-br from-teal-50 to-slate-50 rounded-xl border">
                 <div className="text-4xl font-black text-teal-700">{Math.round(indice)}<span className="text-xl text-slate-400">/100</span></div>
                 <div className="text-sm font-semibold text-teal-600 mt-1">Indice di Bancabilità</div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Calcolato su {kpiScores.filter(kpi => kpi.score !== null).length}/{KPI_SCORING_CONFIG.length} KPI disponibili
+                </div>
                 {ratingBancabile && (
                   <div className={`inline-block mt-2 px-3 py-1 rounded-full text-xs font-bold ${ratingBancabile === 'bancabile' ? 'bg-green-100 text-green-700' : ratingBancabile === 'attenzione' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
                     {ratingBancabile === 'bancabile' ? '✅ BANCABILE' : ratingBancabile === 'attenzione' ? '⚠️ ATTENZIONE' : '❌ NON BANCABILE'}
                   </div>
                 )}
+              </div>
+            )}
+
+            {kpiScores.some(kpi => kpi.kpi_key === 'dscr' && kpi.score !== null) && (
+              <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800">
+                <strong>DSCR:</strong>{' '}
+                {dscrMetodo === 'finanziamenti'
+                  ? `calcolato includendo € ${servizioDebitoAnnuo.toLocaleString('it-IT', { maximumFractionDigits: 0 })} di rate annue complessive.`
+                  : 'calcolo approssimato su EBITDA e interessi passivi perché non risultano finanziamenti con rate mensili.'}
               </div>
             )}
 
@@ -944,6 +959,7 @@ export default function NuovoReportWizard() {
                     <div className={`h-full rounded-full transition-all ${k.score! >= 70 ? 'bg-green-500' : k.score! >= 40 ? 'bg-yellow-400' : 'bg-red-500'}`}
                       style={{ width: `${k.score}%` }} />
                   </div>
+                  <span className="w-10 text-right text-[10px] font-semibold text-slate-400">{k.peso}%</span>
                   <span className="w-12 text-right text-xs font-bold tabular-nums text-slate-600">{k.score}/100</span>
                   <span className="text-xs text-slate-400 w-16 text-right">{k.formatted}</span>
                 </div>
@@ -1011,7 +1027,8 @@ export default function NuovoReportWizard() {
                 <div className="bg-teal-50 rounded-xl p-4 text-left mb-4 space-y-1 text-xs text-teal-800 border border-teal-200">
                   <p className="font-bold">Il report includerà:</p>
                   <p>📄 Copertina con gauge bancabilità e badge rating</p>
-                  <p>📊 Tabella KPI vs benchmark settore {benchmarkData ? `(${benchmarkData.settore_label})` : ''}</p>
+                  <p>📊 14 KPI ponderati vs benchmark settore {benchmarkData ? `(${benchmarkData.settore_label})` : ''}</p>
+                  <p>🏦 DSCR ricalcolato sulle rate annue complessive dei finanziamenti</p>
                   <p>🌐 Commento situazione settore</p>
                   <p>📋 Top 3 / Bottom 3 KPI con barre visive</p>
                   {finanziamenti.filter(f => f.istituto).length > 0 && <p>🏦 {finanziamenti.filter(f => f.istituto).length} finanziamenti in essere</p>}

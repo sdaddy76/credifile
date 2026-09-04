@@ -5,6 +5,8 @@ export interface KpiScore {
   kpi_key: string; kpi_label: string; kpi_area: string;
   valore: number | null; formatted: string; score: number | null;
   benchmark: number | null; benchmark_formatted: string;
+  benchmark_key?: string;
+  peso?: number;
   inverso: boolean;
 }
 export interface AiSuggerimento {
@@ -39,6 +41,10 @@ export interface ReportData {
   finanziamenti?: FinanziamentoItem[];
   rating_bancabile?: 'bancabile' | 'attenzione' | 'non_bancabile';
   motivi_rating?: string[];
+  kpi_disponibili?: number;
+  kpi_totali?: number;
+  dscr_metodo?: 'finanziamenti' | 'approssimato';
+  servizio_debito_annuo?: number;
 }
 
 // ── Colori ─────────────────────────────────────────────────────────────────
@@ -221,6 +227,17 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     doc.text(`${label.toUpperCase()} — ${Math.round(score)}/100`, W / 2, y, { align: 'center' });
     y += 6;
 
+    if (data.kpi_totali) {
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...GRAY);
+      doc.text(
+        `Indice ponderato calcolato su ${data.kpi_disponibili ?? data.kpi_scores.length}/${data.kpi_totali} KPI disponibili`,
+        W / 2,
+        y,
+        { align: 'center' },
+      );
+      y += 5;
+    }
+
     // Barra soglie
     const barX = 24; const barW = W - 48; const barH = 5;
     doc.setFillColor(230, 230, 230);
@@ -279,7 +296,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
   const kpiRows = data.kpi_scores.map(k => {
     const sc        = k.score ?? null;
     const scLabel   = sc === null ? 'N/D' : sc >= 70 ? '🟢 OK' : sc >= 40 ? '🟡 Att.' : '🔴 Crit.';
-    const benchVal  = data.benchmark_settore?.[k.kpi_label] ?? k.benchmark;
+    const benchVal  = data.benchmark_settore?.[k.benchmark_key ?? k.kpi_label] ?? k.benchmark;
     const delta     = (benchVal !== null && benchVal !== undefined && k.valore !== null)
       ? (k.inverso ? benchVal - k.valore : k.valore - benchVal)
       : null;
@@ -464,7 +481,10 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
 
     y += 20;
     doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
-    doc.text('DSCR calcolato sui finanziamenti dichiarati / Centrale dei Rischi', 14, y);
+    const dscrNote = data.dscr_metodo === 'finanziamenti'
+      ? `DSCR operativo = EBITDA / servizio del debito annuo${data.servizio_debito_annuo ? ` (${fmtEur(data.servizio_debito_annuo)})` : ''}.`
+      : 'DSCR approssimato tramite EBITDA / interessi passivi in assenza delle rate complete.';
+    doc.text(dscrNote, 14, y);
     y += 8;
   }
 
