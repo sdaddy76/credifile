@@ -59,6 +59,37 @@ import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
 
 type AssignedAgent = { id: string; nome?: string; email: string };
 type IntegrationRequestDraft = { nome: string; descrizione: string };
+type PracticeBankStatus =
+  | 'assegnata'
+  | 'inviata'
+  | 'istruttoria'
+  | 'in_delibera'
+  | 'deliberata'
+  | 'erogata'
+  | 'rifiutata';
+
+const PRACTICE_BANK_STATUS_OPTIONS: Array<{ value: PracticeBankStatus; label: string }> = [
+  { value: 'assegnata', label: 'Assegnata' },
+  { value: 'inviata', label: 'Inviata alla banca' },
+  { value: 'istruttoria', label: 'In istruttoria' },
+  { value: 'in_delibera', label: 'In delibera' },
+  { value: 'deliberata', label: 'Deliberata' },
+  { value: 'erogata', label: 'Erogata' },
+  { value: 'rifiutata', label: 'Rifiutata' },
+];
+
+const PRACTICE_BANK_STATUS_LABELS = Object.fromEntries(
+  PRACTICE_BANK_STATUS_OPTIONS.map(option => [option.value, option.label])
+) as Record<PracticeBankStatus, string>;
+
+function practiceBankStatusClass(status: string): string {
+  if (status === 'erogata' || status === 'deliberata') return 'bg-green-100 text-green-700 border-green-200';
+  if (status === 'rifiutata') return 'bg-red-100 text-red-700 border-red-200';
+  if (status === 'in_delibera') return 'bg-amber-100 text-amber-700 border-amber-200';
+  if (status === 'istruttoria') return 'bg-cyan-100 text-cyan-700 border-cyan-200';
+  if (status === 'inviata') return 'bg-blue-100 text-blue-700 border-blue-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+}
 type ClientQuestion = {
   id: string;
   integration_request_id?: string | null;
@@ -167,7 +198,8 @@ export default function PraticaDetailPage() {
   const [showClientEdit, setShowClientEdit] = useState(false);
   const [clientEditForm, setClientEditForm] = useState<ClientEditForm>(EMPTY_CLIENT_EDIT_FORM);
   const [savingClientEdit, setSavingClientEdit] = useState(false);
-  const [practiceBanks, setPracticeBanks] = useState<{id:string;bank_id:string;status:string;note?:string;data_invio?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
+  const [practiceBanks, setPracticeBanks] = useState<{id:string;bank_id:string;status:PracticeBankStatus;note?:string;data_invio?:string;status_updated_at?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
+  const [updatingBankStatusId, setUpdatingBankStatusId] = useState<string | null>(null);
   const [addingBank, setAddingBank] = useState('');
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [bankNote, setBankNote] = useState('');
@@ -1423,6 +1455,66 @@ export default function PraticaDetailPage() {
     load();
   };
 
+  const handlePracticeBankStatusChange = async (
+    practiceBank: (typeof practiceBanks)[number],
+    newBankStatus: PracticeBankStatus,
+  ) => {
+    if (!id || practiceBank.status === newBankStatus) return;
+
+    setUpdatingBankStatusId(practiceBank.id);
+    try {
+      const changedAt = new Date().toISOString();
+      const updatePayload: Record<string, unknown> = {
+        status: newBankStatus,
+        status_updated_by: user?.id ?? null,
+      };
+
+      if (newBankStatus === 'inviata' && !practiceBank.data_invio) {
+        updatePayload.data_invio = changedAt;
+      }
+
+      const { error } = await supabase
+        .from('practice_banks')
+        .update(updatePayload)
+        .eq('id', practiceBank.id)
+        .eq('practice_id', id);
+
+      if (error) throw error;
+
+      const bankName = practiceBank.banks?.nome ?? 'Banca';
+      await supabase.from('practice_activity_log').insert({
+        practice_id: id,
+        action: `Stato ${bankName}: ${PRACTICE_BANK_STATUS_LABELS[practiceBank.status]} → ${PRACTICE_BANK_STATUS_LABELS[newBankStatus]}`,
+        actor_id: user?.id ?? null,
+        actor_nome: user?.email ?? 'Admin',
+        actor_ruolo: 'admin',
+        metadata: {
+          practice_bank_id: practiceBank.id,
+          bank_id: practiceBank.bank_id,
+          banca: bankName,
+          old_status: practiceBank.status,
+          new_status: newBankStatus,
+        },
+      });
+
+      setPracticeBanks(current => current.map(item => (
+        item.id === practiceBank.id
+          ? {
+              ...item,
+              status: newBankStatus,
+              status_updated_at: changedAt,
+              data_invio: newBankStatus === 'inviata' && !item.data_invio ? changedAt : item.data_invio,
+            }
+          : item
+      )));
+      toast.success(`Stato presso ${bankName} aggiornato`);
+    } catch (error) {
+      toast.error(`Errore aggiornamento stato banca: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setUpdatingBankStatusId(null);
+    }
+  };
+
   // Approva/rifiuta documento
   const approveDoc = async (docId: string) => {
     await supabase.from('practice_documents').update({ status: 'approvato' }).eq('id', docId);
@@ -1688,7 +1780,7 @@ export default function PraticaDetailPage() {
         )}
         {canApprove && (
           <Button variant="outline" size="sm" onClick={() => { setNewStatus(practice.status); setShowStatusChange(true); }}>
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia Stato
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Cambia fase generale
           </Button>
         )}
         {(isSuperAdmin || isSegreteria) && practice.status === 'raccolta_documenti' && (
@@ -2284,11 +2376,41 @@ export default function PraticaDetailPage() {
                               <p className="font-semibold text-foreground">{pb.banks?.nome}</p>
                               <p className="text-xs text-muted-foreground">{bankEmail || 'Email non configurata'}</p>
                               {pb.data_invio && <p className="text-xs text-green-600 mt-0.5">✅ Inviata il {new Date(pb.data_invio).toLocaleDateString('it-IT')}</p>}
+                              {pb.status_updated_at && (
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  Stato aggiornato il {new Date(pb.status_updated_at).toLocaleString('it-IT')}
+                                </p>
+                              )}
                             </div>
                             <div className="flex gap-2 items-center">
-                              <span className={`text-xs px-2 py-1 rounded-full font-medium ${pb.status === 'inviata' ? 'bg-blue-100 text-blue-700' : pb.status === 'deliberata' ? 'bg-green-100 text-green-700' : pb.status === 'rifiutata' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {pb.status === 'assegnata' ? '🕐 Assegnata' : pb.status === 'inviata' ? '📤 Inviata' : pb.status === 'deliberata' ? '✅ Deliberata' : pb.status === 'rifiutata' ? '❌ Rifiutata' : pb.status}
-                              </span>
+                              {canApprove ? (
+                                <div className="flex items-center gap-2">
+                                  {updatingBankStatusId === pb.id && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                                  <Select
+                                    value={pb.status}
+                                    onValueChange={value => handlePracticeBankStatusChange(pb, value as PracticeBankStatus)}
+                                    disabled={updatingBankStatusId === pb.id}
+                                  >
+                                    <SelectTrigger
+                                      className={`h-8 min-w-[170px] text-xs font-medium border ${practiceBankStatusClass(pb.status)}`}
+                                      aria-label={`Stato presso ${pb.banks?.nome}`}
+                                    >
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {PRACTICE_BANK_STATUS_OPTIONS.map(option => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : (
+                                <span className={`text-xs px-2 py-1 rounded-full border font-medium ${practiceBankStatusClass(pb.status)}`}>
+                                  {PRACTICE_BANK_STATUS_LABELS[pb.status] ?? pb.status}
+                                </span>
+                              )}
                               {canApprove && (
                                 bankEmail ? (
                                   <Button size="sm" variant="outline" className="gap-1.5 text-blue-700 border-blue-300 hover:bg-blue-50"
@@ -3571,10 +3693,13 @@ export default function PraticaDetailPage() {
       {/* Dialog cambio stato */}
       <Dialog open={showStatusChange} onOpenChange={(open) => { setShowStatusChange(open); if (!open) { setNoteDeclino(''); setStatusNote(''); } }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Cambia Stato Pratica</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Cambia fase generale della pratica</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              Questa modifica riguarda la fase complessiva della pratica. Gli stati delle singole banche si modificano separatamente nel tab Banche.
+            </div>
             <div className="space-y-2">
-              <Label>Nuovo Stato</Label>
+              <Label>Nuova fase generale</Label>
               <Select value={newStatus} onValueChange={setNewStatus}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
