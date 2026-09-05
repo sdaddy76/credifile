@@ -836,8 +836,33 @@ export default function ClientPortalPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        {/* Menu rapido del portale cliente: resta disponibile anche dopo la richiesta di mediazione */}
+        <nav
+          aria-label="Menu pratica"
+          className="sticky top-[57px] z-[5] -mx-1 overflow-x-auto rounded-lg border border-border bg-card/95 px-2 py-2 shadow-sm backdrop-blur"
+        >
+          <div className="flex min-w-max items-center gap-1">
+            {[
+              ['#stato-pratica', 'Stato pratica'],
+              ['#documenti-richiesti', 'Documenti'],
+              ['#integrazioni-richieste', 'Integrazioni'],
+              ['#domande-consulente', 'Domande'],
+              ['#situazione-banche', 'Banche'],
+              ['#finanziamenti', 'Finanziamenti'],
+            ].map(([href, label]) => (
+              <a
+                key={href}
+                href={href}
+                className="whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                {label}
+              </a>
+            ))}
+          </div>
+        </nav>
+
         {/* Stato pratica */}
-        <Card className="border-border">
+        <Card id="stato-pratica" className="scroll-mt-24 border-border">
           <CardContent className="pt-5 pb-4">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
@@ -1015,7 +1040,7 @@ export default function ClientPortalPage() {
           const timeline = buildPracticeTimeline(currentKey, integrationRequests);
 
           return (
-            <Card className="border-border">
+            <Card id="avanzamento-pratica" className="scroll-mt-24 border-border">
               <CardContent className="pt-5 pb-5">
                 <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">
                   Avanzamento Pratica
@@ -1125,6 +1150,56 @@ export default function ClientPortalPage() {
             </Card>
           );
         })()}
+
+        {/* Integrazioni richieste: dettaglio sempre accessibile dal menu */}
+        <Card id="integrazioni-richieste" className="scroll-mt-24 border-amber-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600" />
+                  Integrazioni richieste
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Qui trovi le richieste aggiuntive inviate dal tuo agente durante la pratica.
+                </p>
+              </div>
+              <Badge className={openIntegrationRequests.length > 0
+                ? 'bg-amber-100 text-amber-800 border-amber-200 text-xs shrink-0'
+                : 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+              }>
+                {openIntegrationRequests.length > 0
+                  ? `${openIntegrationRequests.length} aperte`
+                  : 'Nessuna aperta'}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="pb-4">
+            {integrationRequests.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Non ci sono richieste di integrazione per questa pratica.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {integrationRequests.map(request => (
+                  <div key={request.id} className="rounded-lg border border-border bg-muted/20 px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">
+                        {request.status === 'open' ? 'Da completare' : request.status === 'completed' ? 'Completata' : 'Annullata'}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(request.requested_at).toLocaleDateString('it-IT')}
+                      </span>
+                    </div>
+                    {request.note && (
+                      <p className="mt-1 text-sm text-muted-foreground whitespace-pre-line">{request.note}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Autorizzazione privacy obbligatoria */}
         <Card className={privacyConsentAcceptedAt
@@ -1258,7 +1333,7 @@ export default function ClientPortalPage() {
 
         {/* Domande dell'agente */}
         {clientQuestions.length > 0 && (
-          <Card className="border-blue-200">
+          <Card id="domande-consulente" className="scroll-mt-24 border-blue-200">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-blue-600" />
@@ -1308,7 +1383,7 @@ export default function ClientPortalPage() {
 
         {/* Situazione banche — visibile solo se richiesta nella pratica */}
         {showBankSituationSection && (
-          <Card className="border-indigo-200">
+          <Card id="situazione-banche" className="scroll-mt-24 border-indigo-200">
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -1446,7 +1521,7 @@ export default function ClientPortalPage() {
 
         {/* Finanziamenti in essere — visibile solo se richiesto nella pratica */}
         {showFinancingSection && (
-        <Card className="border-border">
+        <Card id="finanziamenti" className="scroll-mt-24 border-border">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2">
@@ -1613,7 +1688,7 @@ export default function ClientPortalPage() {
         )}
 
         {/* ── Carica i tuoi Documenti ─────────────────────────────────────── */}
-        <Card className="border-border">
+        <Card id="documenti-richiesti" className="scroll-mt-24 border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <Upload className="w-4 h-4 text-primary" />
