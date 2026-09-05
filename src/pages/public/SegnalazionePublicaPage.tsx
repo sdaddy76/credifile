@@ -8,8 +8,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Upload, X, FileText, Send, Plus, Loader2, CheckCircle2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Upload, X, FileText, Send, Plus, Loader2, CheckCircle2, ShieldCheck, BadgeEuro } from 'lucide-react';
 import { extractPdfText, parseVisuraCompleta } from '@/lib/parseVisura';
+
+const PRIVACY_CONSENT_VERSION = '2026-09-05-v1';
+const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell’informativa privacy e, in qualità di interessato e/o legale rappresentante della società, autorizzo Credifile e il consulente o intermediario incaricato a raccogliere e trattare i dati e i documenti trasmessi con questa richiesta. Autorizzo inoltre la successiva trasmissione alle banche e agli intermediari finanziari coinvolti, esclusivamente per la valutazione della bancabilità, l’istruttoria e l’eventuale perfezionamento di una richiesta di finanziamento. Dichiaro di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti.`;
+const PAYMENT_DISCLAIMER_VERSION = '2026-09-05-v1';
+const PAYMENT_DISCLAIMER_TEXT = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. L’eventuale attività di mediazione creditizia sarà svolta esclusivamente previa stipula di un apposito contratto di mediazione, con compenso regolato secondo il modello success fee e subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
 
 interface FileItem {
   id: string;
@@ -50,6 +56,8 @@ export default function SegnalazionePublicaPage() {
   const [errore,   setErrore]   = useState('');
   const [website, setWebsite] = useState('');
   const [formStartedAt, setFormStartedAt] = useState(() => Date.now());
+  const [privacyConsentChecked, setPrivacyConsentChecked] = useState(false);
+  const [paymentDisclaimerChecked, setPaymentDisclaimerChecked] = useState(false);
 
   // ── Gestione visura ────────────────────────────────────────────────────────
   const handleVisura = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -101,6 +109,8 @@ export default function SegnalazionePublicaPage() {
     const normalizedPiva = piva.replace(/\D/g, '');
     if (!/^\d{11}$/.test(normalizedPiva)) { setErrore('Inserisci una P.IVA italiana di 11 cifre'); return; }
     if (!visura)                { setErrore('Carica la visura camerale (PDF)'); return; }
+    if (!privacyConsentChecked) { setErrore('Accetta l’autorizzazione privacy e alla trasmissione dei documenti'); return; }
+    if (!paymentDisclaimerChecked) { setErrore('Accetta l’avviso relativo al servizio a pagamento'); return; }
     if (Date.now() - formStartedAt < 2500) {
       setErrore('Attendi qualche secondo prima di inviare la richiesta.');
       return;
@@ -140,6 +150,10 @@ export default function SegnalazionePublicaPage() {
           altri_docs: altriB64,
           website,
           form_started_at: formStartedAt,
+          privacy_consent: privacyConsentChecked,
+          privacy_consent_version: PRIVACY_CONSENT_VERSION,
+          payment_disclaimer: paymentDisclaimerChecked,
+          payment_disclaimer_version: PAYMENT_DISCLAIMER_VERSION,
         }),
       });
 
@@ -162,6 +176,7 @@ export default function SegnalazionePublicaPage() {
     setVisura(null); setAltriDocs([]); setInviata(false); setErrore('');
     setPraticaEsistente(null);
     setWebsite(''); setFormStartedAt(Date.now());
+    setPrivacyConsentChecked(false); setPaymentDisclaimerChecked(false);
   };
 
   // ── Schermata successo ─────────────────────────────────────────────────────
@@ -174,7 +189,7 @@ export default function SegnalazionePublicaPage() {
           </div>
           <div className="space-y-1">
             <h2 className="text-2xl font-bold">
-              {praticaEsistente ? 'Richiesta collegata' : 'Segnalazione inviata!'}
+              {praticaEsistente ? 'Richiesta collegata' : 'Richiesta inviata!'}
             </h2>
             <p className="text-muted-foreground text-sm">
               {praticaEsistente ? (
@@ -207,10 +222,10 @@ export default function SegnalazionePublicaPage() {
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Send className="w-6 h-6 text-orange-500" /> Nuova Segnalazione
+            <Send className="w-6 h-6 text-orange-500" /> Richiedi una valutazione di bancabilità
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Carica la visura, inserisci i recapiti del cliente e invia la segnalazione.
+            Carica la visura camerale e i documenti disponibili. Credifile registrerà la richiesta e ti contatterà per i passaggi successivi.
           </p>
         </div>
 
@@ -358,6 +373,50 @@ export default function SegnalazionePublicaPage() {
           </div>
         )}
 
+        <Card className="border-teal-200 bg-teal-50/40">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+              <ShieldCheck className="h-4 w-4 text-teal-700" />
+              Autorizzazione privacy e trasmissione documenti
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed text-teal-950">
+              <Checkbox
+                checked={privacyConsentChecked}
+                onCheckedChange={checked => setPrivacyConsentChecked(checked === true)}
+                className="mt-0.5"
+              />
+              <span>
+                {PRIVACY_CONSENT_TEXT}
+                <span className="mt-1 block text-xs text-teal-800">Versione {PRIVACY_CONSENT_VERSION} · Accettazione obbligatoria prima dell’invio.</span>
+              </span>
+            </label>
+          </CardContent>
+        </Card>
+
+        <Card className="border-amber-200 bg-amber-50/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-amber-950">
+              <BadgeEuro className="h-4 w-4 text-amber-700" />
+              Servizio a pagamento e mediazione
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed text-amber-950">
+              <Checkbox
+                checked={paymentDisclaimerChecked}
+                onCheckedChange={checked => setPaymentDisclaimerChecked(checked === true)}
+                className="mt-0.5"
+              />
+              <span>
+                {PAYMENT_DISCLAIMER_TEXT}
+                <span className="mt-1 block text-xs text-amber-800">Versione {PAYMENT_DISCLAIMER_VERSION} · Presa visione obbligatoria.</span>
+              </span>
+            </label>
+          </CardContent>
+        </Card>
+
         {/* Campo honeypot anti-bot: resta invisibile agli utenti reali */}
         <div
           aria-hidden="true"
@@ -378,15 +437,15 @@ export default function SegnalazionePublicaPage() {
         <Button
           className="w-full gap-2 bg-orange-600 hover:bg-orange-700 h-12 text-base"
           onClick={handleInvia}
-          disabled={sending || !ragioneSociale.trim() || !/^\d{11}$/.test(piva) || !visura}
+          disabled={sending || !ragioneSociale.trim() || !/^\d{11}$/.test(piva) || !visura || !privacyConsentChecked || !paymentDisclaimerChecked}
         >
           {sending
             ? <><Loader2 className="w-4 h-4 animate-spin" /> Invio in corso...</>
-            : <><Send className="w-4 h-4" /> Invia Segnalazione</>}
+            : <><Send className="w-4 h-4" /> Invia richiesta di valutazione</>}
         </Button>
 
         <p className="text-xs text-muted-foreground text-center -mt-2">
-          I tuoi dati sono trattati in conformità con il GDPR. Non saranno condivisi con terze parti.
+          I dati vengono trattati per gestire la richiesta e, solo nei limiti dell’autorizzazione accettata, potranno essere trasmessi agli intermediari coinvolti nella valutazione.
         </p>
 
       </div>

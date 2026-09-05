@@ -31,6 +31,7 @@ interface Segnalazione {
   piva?: string | null;
   tipo_richiesta?: string | null;
   disclaimer_pagamento_accettato_at?: string | null;
+  privacy_consent_accepted_at?: string | null;
   agente?: { nome: string; nome_cognome: string } | null;
 }
 
@@ -275,6 +276,11 @@ export default function SegnalazioniRicevutePage() {
                             Ricerca banca · Report autonomo
                           </Badge>
                         )}
+                        {seg.tipo_richiesta === 'report_autonomo' && (
+                          <Badge className="text-[10px] bg-cyan-100 text-cyan-800 border-cyan-200">
+                            Richiesta valutazione · Impresa
+                          </Badge>
+                        )}
                         {seg.tipo_richiesta === 'richiesta_su_pratica_esistente' && (
                           <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200">
                             P.IVA già in lavorazione
@@ -304,6 +310,12 @@ export default function SegnalazioniRicevutePage() {
                         <p className="text-xs text-muted-foreground mt-1">
                           Disclaimer servizio a pagamento accettato il{' '}
                           {new Date(seg.disclaimer_pagamento_accettato_at).toLocaleString('it-IT')}
+                        </p>
+                      )}
+                      {seg.privacy_consent_accepted_at && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Privacy e trasmissione documenti autorizzate il{' '}
+                          {new Date(seg.privacy_consent_accepted_at).toLocaleString('it-IT')}
                         </p>
                       )}
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">

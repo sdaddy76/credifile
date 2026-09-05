@@ -10,6 +10,10 @@ const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || 'stefano@daddino.com'
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX = 6;
 const requestBuckets = new Map();
+const PRIVACY_CONSENT_VERSION = '2026-09-05-v1';
+const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell’informativa privacy e, in qualità di interessato e/o legale rappresentante della società, autorizzo Credifile e il consulente o intermediario incaricato a raccogliere e trattare i dati e i documenti trasmessi con questa richiesta. Autorizzo inoltre la successiva trasmissione alle banche e agli intermediari finanziari coinvolti, esclusivamente per la valutazione della bancabilità, l’istruttoria e l’eventuale perfezionamento di una richiesta di finanziamento. Dichiaro di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti.`;
+const PAYMENT_DISCLAIMER_VERSION = '2026-09-05-v1';
+const PAYMENT_DISCLAIMER_TEXT = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. L’eventuale attività di mediazione creditizia sarà svolta esclusivamente previa stipula di un apposito contratto di mediazione, con compenso regolato secondo il modello success fee e subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
 const ACTIVE_PRACTICE_STATUSES = [
   'bozza',
   'raccolta_documenti',
@@ -50,6 +54,15 @@ function normalizePiva(value) {
 
 function isValidPiva(value) {
   return /^[0-9]{11}$/.test(value);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 // ── Upload file su Supabase Storage via REST ───────────────────────────────
@@ -180,6 +193,10 @@ export default async function handler(req, res) {
     altri_docs,   // [{ name, type, nomeDescrittivo, data: base64 }]
     website,      // honeypot invisibile: deve restare vuoto
     form_started_at,
+    privacy_consent,
+    privacy_consent_version,
+    payment_disclaimer,
+    payment_disclaimer_version,
   } = req.body ?? {};
 
   // Protezioni anti-bot: honeypot, tempo minimo di compilazione e limite per IP.
@@ -201,6 +218,15 @@ export default async function handler(req, res) {
   if (!visura?.data) {
     return res.status(400).json({ error: 'visura camerale obbligatoria' });
   }
+  if (privacy_consent !== true || privacy_consent_version !== PRIVACY_CONSENT_VERSION) {
+    return res.status(400).json({ error: 'Autorizzazione privacy obbligatoria' });
+  }
+  if (payment_disclaimer !== true || payment_disclaimer_version !== PAYMENT_DISCLAIMER_VERSION) {
+    return res.status(400).json({ error: 'Presa visione del servizio a pagamento obbligatoria' });
+  }
+
+  const consentAcceptedAt = new Date().toISOString();
+  const consentUserAgent = String(req.headers?.['user-agent'] ?? '').slice(0, 500) || null;
 
   // Se l'impresa ha già una pratica operativa, non aprire una seconda pratica.
   // La segnalazione viene comunque tracciata e collegata per la presa in carico.
@@ -219,6 +245,13 @@ export default async function handler(req, res) {
       tipo_richiesta: 'richiesta_su_pratica_esistente',
       practice_id: existingPractice.id,
       file_urls: [],
+      privacy_consent_accepted_at: consentAcceptedAt,
+      privacy_consent_version: PRIVACY_CONSENT_VERSION,
+      privacy_consent_text: PRIVACY_CONSENT_TEXT,
+      privacy_consent_user_agent: consentUserAgent,
+      disclaimer_pagamento_accettato_at: consentAcceptedAt,
+      disclaimer_pagamento_version: PAYMENT_DISCLAIMER_VERSION,
+      disclaimer_pagamento_text: PAYMENT_DISCLAIMER_TEXT,
     });
 
     if (!duplicateInsert.ok) {
@@ -299,7 +332,15 @@ export default async function handler(req, res) {
     telefono:        telefono?.trim()        || null,
     note:            note?.trim()            || null,
     stato:           'nuova',
+    tipo_richiesta:  'report_autonomo',
     file_urls:       fileUrls,
+    privacy_consent_accepted_at: consentAcceptedAt,
+    privacy_consent_version: PRIVACY_CONSENT_VERSION,
+    privacy_consent_text: PRIVACY_CONSENT_TEXT,
+    privacy_consent_user_agent: consentUserAgent,
+    disclaimer_pagamento_accettato_at: consentAcceptedAt,
+    disclaimer_pagamento_version: PAYMENT_DISCLAIMER_VERSION,
+    disclaimer_pagamento_text: PAYMENT_DISCLAIMER_TEXT,
   });
 
   if (!insert.ok) {
@@ -312,7 +353,7 @@ export default async function handler(req, res) {
   // 4. Email notifica al super admin
   const fileLinksHtml = fileUrls.length > 0
     ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px;vertical-align:top"><strong>Documenti:</strong></td>
-       <td style="padding:8px 0;font-size:14px">${fileUrls.map(f => `<a href="${f.url}" style="color:#f97316">${f.nome}</a>`).join('<br>')}</td></tr>`
+       <td style="padding:8px 0;font-size:14px">${fileUrls.map(f => `<a href="${escapeHtml(f.url)}" style="color:#f97316">${escapeHtml(f.nome)}</a>`).join('<br>')}</td></tr>`
     : '';
 
   const emailHtml = `
@@ -323,13 +364,18 @@ export default async function handler(req, res) {
   <div style="border:1px solid #e5e7eb;border-top:0;border-radius:0 0 8px 8px;padding:20px">
     <table style="width:100%;border-collapse:collapse">
       <tr><td style="padding:8px 0;color:#6b7280;font-size:14px;width:35%"><strong>Azienda:</strong></td>
-          <td style="padding:8px 0;font-size:14px;font-weight:bold">${ragione_sociale}</td></tr>
-      ${nome_referente ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px"><strong>Referente:</strong></td><td style="padding:8px 0;font-size:14px">${nome_referente}</td></tr>` : ''}
-      ${email_referente ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px"><strong>Email:</strong></td><td style="padding:8px 0;font-size:14px">${email_referente}</td></tr>` : ''}
-      ${telefono ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px"><strong>Telefono:</strong></td><td style="padding:8px 0;font-size:14px">${telefono}</td></tr>` : ''}
-      ${note ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px;vertical-align:top"><strong>Note:</strong></td><td style="padding:8px 0;font-size:14px">${note}</td></tr>` : ''}
+          <td style="padding:8px 0;font-size:14px;font-weight:bold">${escapeHtml(ragione_sociale)}</td></tr>
+      <tr><td style="padding:8px 0;color:#6b7280;font-size:14px"><strong>P.IVA:</strong></td><td style="padding:8px 0;font-size:14px">${escapeHtml(normalizedPiva)}</td></tr>
+      ${nome_referente ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px"><strong>Referente:</strong></td><td style="padding:8px 0;font-size:14px">${escapeHtml(nome_referente)}</td></tr>` : ''}
+      ${email_referente ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px"><strong>Email:</strong></td><td style="padding:8px 0;font-size:14px">${escapeHtml(email_referente)}</td></tr>` : ''}
+      ${telefono ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px"><strong>Telefono:</strong></td><td style="padding:8px 0;font-size:14px">${escapeHtml(telefono)}</td></tr>` : ''}
+      ${note ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px;vertical-align:top"><strong>Note:</strong></td><td style="padding:8px 0;font-size:14px">${escapeHtml(note)}</td></tr>` : ''}
       ${fileLinksHtml}
     </table>
+    <div style="margin-top:16px;padding:12px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:6px;font-size:13px;color:#155e75">
+      Privacy e trasmissione documenti autorizzate il ${escapeHtml(new Date(consentAcceptedAt).toLocaleString('it-IT'))}.<br>
+      Presa visione del servizio a pagamento registrata.
+    </div>
     <div style="margin-top:20px;padding:12px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;font-size:13px;color:#9a3412">
       ⚡ Accedi a Credifile → <em>Segnalazioni Ricevute</em> per assegnare questa segnalazione a un agente.
     </div>
