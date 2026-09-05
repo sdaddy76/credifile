@@ -1738,7 +1738,7 @@ export default function PraticaDetailPage() {
     ? practice.tipologia_azienda
     : null;
   const baseChecklistProfile = classifyFinPromoterCompany(
-    client?.forma_giuridica,
+    [client?.forma_giuridica, client?.ragione_sociale].filter(Boolean).join(' '),
     practice.regime_contabile as RegimeContabile,
     overrideTipologia as FinPromoterCompanyType | null,
   );

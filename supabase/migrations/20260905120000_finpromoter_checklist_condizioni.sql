@@ -87,7 +87,9 @@ BEGIN
   -- La relazione sull'operazione è parte della checklist base FinPromoter:
   -- riallinea eventuali configurazioni storiche lasciate facoltative.
   UPDATE public.bank_document_requirements
-     SET obbligatorio = TRUE
+     SET obbligatorio = TRUE,
+         ordine = 100,
+         descrizione = 'Descrizione della finalità, dello scopo e della natura dell’operazione.'
    WHERE bank_id = v_bank_id
      AND lower(nome) = lower('Relazione sullo scopo e sulla natura dell’operazione')
      AND condizione = 'sempre';

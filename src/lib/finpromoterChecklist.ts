@@ -54,7 +54,7 @@ export function classifyFinPromoterCompany(
   if (tipo === 'sconosciuta') {
     if (/\bCOOPERATIVA\b/.test(normalized)) tipo = 'cooperativa';
     else if (/\b(?:IMPRESA|DITTA)\s+INDIVIDUALE\b/.test(normalized)) tipo = 'impresa_individuale';
-    else if (/\b(?:SNC|SAS|SOCIETA\s+SEMPLICE|SOCIETA\s+DI\s+PERSONE|SS)\b/.test(normalized)) tipo = 'societa_persone';
+    else if (/\b(?:SNC|S N C|SAS|S A S|SOCIETA\s+SEMPLICE|SOCIETA\s+DI\s+PERSONE|SS|S S)\b/.test(normalized)) tipo = 'societa_persone';
     else if (/\b(?:SRL|S R L|SPA|S P A|SAPA|S A P A|SOCIETA\s+DI\s+CAPITALI)\b/.test(normalized)) tipo = 'societa_capitali';
   }
 
