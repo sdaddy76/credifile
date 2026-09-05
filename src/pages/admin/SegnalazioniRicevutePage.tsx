@@ -11,7 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, Trash2 } from 'lucide-react';
+import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, AlertTriangle, Trash2 } from 'lucide-react';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
 interface Segnalazione {
@@ -54,6 +54,7 @@ export default function SegnalazioniRicevutePage() {
   const [segnalazioni, setSegnalazioni] = useState<Segnalazione[]>([]);
   const [agenti, setAgenti]             = useState<Agente[]>([]);
   const [loading, setLoading]           = useState(true);
+  const [duplicateCount, setDuplicateCount] = useState(0);
   const [filtroStato, setFiltroStato]   = useState('nuova');
   const [assigning, setAssigning]       = useState<string | null>(null);
   const [noteInterne, setNoteInterne]   = useState<Record<string, string>>({});
@@ -94,6 +95,12 @@ export default function SegnalazioniRicevutePage() {
       });
     }
     setSegnalazioni(rows);
+    const { count } = await supabase
+      .from('segnalazioni_pubbliche')
+      .select('id', { count: 'exact', head: true })
+      .eq('tipo_richiesta', 'richiesta_su_pratica_esistente')
+      .in('stato', ['nuova', 'assegnata', 'lavorazione']);
+    setDuplicateCount(count ?? 0);
     setLoading(false);
   };
 
@@ -194,6 +201,28 @@ export default function SegnalazioniRicevutePage() {
         </Button>
       </div>
 
+      {isSuperAdmin && duplicateCount > 0 && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div className="flex-1 text-sm">
+            <p className="font-semibold">
+              Attenzione: {duplicateCount} {duplicateCount === 1 ? 'richiesta ha' : 'richieste hanno'} una P.IVA già associata a una pratica in lavorazione.
+            </p>
+            <p className="mt-0.5 text-amber-800">
+              Verifica la pratica esistente prima di creare nuove pratiche o richiedere nuovamente i documenti.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-amber-300 text-amber-900 hover:bg-amber-100"
+            onClick={() => setFiltroStato('tutte')}
+          >
+            Vedi elenco
+          </Button>
+        </div>
+      )}
+
       {/* Filtri stato */}
       <div className="flex gap-1 flex-wrap">
         {(['nuova','assegnata','lavorazione','chiusa','tutte'] as const).map(s => (
@@ -226,7 +255,13 @@ export default function SegnalazioniRicevutePage() {
       ) : (
         <div className="space-y-3">
           {segnalazioni.map(seg => (
-            <Card key={seg.id} className={`border ${seg.stato === 'nuova' ? 'border-orange-200 bg-orange-50/30' : ''}`}>
+            <Card key={seg.id} className={`border ${
+              seg.tipo_richiesta === 'richiesta_su_pratica_esistente'
+                ? 'border-amber-400 bg-amber-50/40'
+                : seg.stato === 'nuova'
+                  ? 'border-orange-200 bg-orange-50/30'
+                  : ''
+            }`}>
               <CardContent className="pt-4 pb-4">
                 <div className="flex flex-col gap-3">
                   {/* Riga superiore */}
