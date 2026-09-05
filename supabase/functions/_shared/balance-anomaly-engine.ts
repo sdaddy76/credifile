@@ -7,6 +7,7 @@ export type BalanceAnomalyCategory =
 
 export type BalanceAnomalySeverity = 'alta' | 'media' | 'bassa';
 export type BalanceAnomalyConfidence = 'alta' | 'media' | 'bassa';
+export type BalanceValidationCheckStatus = 'passed' | 'attention' | 'unavailable';
 
 export interface BalanceAnomalyFinding {
   id: string;
@@ -21,6 +22,13 @@ export interface BalanceAnomalyFinding {
   suggested_question: string;
 }
 
+export interface BalanceValidationCheck {
+  id: string;
+  label: string;
+  status: BalanceValidationCheckStatus;
+  detail: string;
+}
+
 export interface BalanceAnomalyAnalysis {
   engine_version: string;
   score: number;
@@ -33,6 +41,7 @@ export interface BalanceAnomalyAnalysis {
   comparison_year?: number | null;
   line_items_analyzed: number;
   line_items_flagged: number;
+  validation_checks?: BalanceValidationCheck[];
   disclaimer: string;
 }
 
@@ -94,7 +103,7 @@ export interface AnalyzeBalanceAnomaliesInput {
   benchmark?: Record<string, number | null> | null;
 }
 
-export const BALANCE_ANOMALY_ENGINE_VERSION = '1.1.0';
+export const BALANCE_ANOMALY_ENGINE_VERSION = '1.2.0';
 
 export const BALANCE_ANOMALY_DISCLAIMER =
   'L’analisi evidenzia anomalie di bilancio da approfondire, incoerenze e poste che richiedono maggiori informazioni. ' +
@@ -367,6 +376,14 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     current.utile_netto ?? current.utile_perdita_esercizio,
   ];
   const missingCore = coreFields.filter(value => !finite(value)).length;
+  const validationChecks: BalanceValidationCheck[] = [{
+    id: 'completezza-dati-principali',
+    label: 'Completezza dei dati principali',
+    status: missingCore === 0 ? 'passed' : 'attention',
+    detail: missingCore === 0
+      ? `Disponibili tutte le ${coreFields.length} voci principali necessarie ai controlli.`
+      : `Voci principali disponibili: ${coreFields.length - missingCore} su ${coreFields.length}.`,
+  }];
   if (missingCore >= 3) {
     findings.push(makeFinding(
       'qualita-dati-principali',
@@ -409,6 +426,26 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
           current.totale_debiti! +
           (current.ratei_risconti_passivi ?? 0)
         : null;
+    if (expectedLiabilities === null) {
+      validationChecks.push({
+        id: 'quadratura-stato-patrimoniale',
+        label: 'Quadratura stato patrimoniale',
+        status: 'unavailable',
+        detail: 'Non verificabile: manca il totale passivo dichiarato e non sono disponibili tutte le voci per ricostruirlo.',
+      });
+    } else {
+      const gap = current.totale_attivo - expectedLiabilities;
+      const comparisonLabel = hasReportedTotal ? 'Totale passivo dichiarato' : 'Passivo ricostruito';
+      const matches = !outsideTolerance(current.totale_attivo, expectedLiabilities, 0.02);
+      validationChecks.push({
+        id: 'quadratura-stato-patrimoniale',
+        label: 'Quadratura stato patrimoniale',
+        status: matches ? 'passed' : 'attention',
+        detail: matches
+          ? `Totale attivo ${amount(current.totale_attivo)} coerente con ${comparisonLabel.toLocaleLowerCase('it-IT')} ${amount(expectedLiabilities)}.`
+          : `Totale attivo ${amount(current.totale_attivo)}; ${comparisonLabel.toLocaleLowerCase('it-IT')} ${amount(expectedLiabilities)}; scostamento ${amount(gap)}.`,
+      });
+    }
     if (expectedLiabilities !== null && outsideTolerance(current.totale_attivo, expectedLiabilities, 0.02)) {
       const gap = current.totale_attivo - expectedLiabilities;
       const comparisonLabel = hasReportedTotal ? 'Totale passivo' : 'Passivo ricostruito';
@@ -428,6 +465,15 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
         ['Riconciliare attivo e passivo', 'Controllare fondi, TFR e ratei/risconti', 'Verificare il prospetto XBRL originale'],
       ));
     }
+  }
+
+  if (!finite(current.totale_attivo)) {
+    validationChecks.push({
+      id: 'quadratura-stato-patrimoniale',
+      label: 'Quadratura stato patrimoniale',
+      status: 'unavailable',
+      detail: 'Non verificabile: totale attivo non disponibile.',
+    });
   }
 
   if (
@@ -462,6 +508,15 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     finite(current.differenza_ab)
   ) {
     const expected = current.totale_valore_produzione - current.totale_costi_produzione;
+    const matches = !outsideTolerance(current.differenza_ab, expected, 0.02);
+    validationChecks.push({
+      id: 'quadratura-risultato-operativo',
+      label: 'Coerenza risultato operativo (A-B)',
+      status: matches ? 'passed' : 'attention',
+      detail: matches
+        ? `A-B riportato ${amount(current.differenza_ab)} coerente con il valore ricostruito.`
+        : `A-B riportato ${amount(current.differenza_ab)}; valore ricostruito ${amount(expected)}.`,
+    });
     if (outsideTolerance(current.differenza_ab, expected, 0.02)) {
       findings.push(makeFinding(
         'quadratura-differenza-ab',
@@ -478,11 +533,27 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
         ['Riconciliare il conto economico', 'Verificare la colonna dell’esercizio analizzato'],
       ));
     }
+  } else {
+    validationChecks.push({
+      id: 'quadratura-risultato-operativo',
+      label: 'Coerenza risultato operativo (A-B)',
+      status: 'unavailable',
+      detail: 'Non verificabile: valore della produzione, costi della produzione o A-B non disponibili.',
+    });
   }
 
   const netIncome = current.utile_netto ?? current.utile_perdita_esercizio;
   if (finite(current.risultato_ante_imposte) && finite(current.imposte) && finite(netIncome)) {
     const expected = current.risultato_ante_imposte - current.imposte;
+    const matches = !outsideTolerance(netIncome, expected, 0.03);
+    validationChecks.push({
+      id: 'quadratura-utile-netto',
+      label: 'Coerenza utile netto',
+      status: matches ? 'passed' : 'attention',
+      detail: matches
+        ? `Utile netto ${amount(netIncome)} coerente con il risultato al netto delle imposte.`
+        : `Utile netto ${amount(netIncome)}; risultato ricostruito ${amount(expected)}.`,
+    });
     if (outsideTolerance(netIncome, expected, 0.03)) {
       findings.push(makeFinding(
         'quadratura-utile-netto',
@@ -499,6 +570,13 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
         ['Verificare il dettaglio delle imposte', 'Riconciliare risultato ante imposte e utile netto'],
       ));
     }
+  } else {
+    validationChecks.push({
+      id: 'quadratura-utile-netto',
+      label: 'Coerenza utile netto',
+      status: 'unavailable',
+      detail: 'Non verificabile: risultato ante imposte, imposte o utile netto non disponibili.',
+    });
   }
 
   if (finite(current.totale_debiti)) {
@@ -831,6 +909,7 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     comparison_year: previous?.anno_esercizio ?? null,
     line_items_analyzed: lineItems.length,
     line_items_flagged: uniqueFindings.filter(finding => finding.category === 'posta_da_chiarire').length,
+    validation_checks: validationChecks,
     disclaimer: BALANCE_ANOMALY_DISCLAIMER,
   };
 }

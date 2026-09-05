@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck, Download, Trash2, MessageSquare, CircleSlash2, UserRoundCheck } from 'lucide-react';
+import { TrendingUp, Upload, RefreshCw, AlertCircle, CheckCircle2, Building2, BarChart3, FileText, ShieldCheck, Download, Trash2, MessageSquare, CircleSlash2, UserRoundCheck, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { jsPDF } from 'jspdf';
@@ -1436,6 +1436,36 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                       <span>Poste poco chiare: <strong className="text-foreground">{selectedBilancio.anomaly_analysis.line_items_flagged ?? 0}</strong></span>
                       <span>Alert aperti: <strong className="text-foreground">{selectedAlerts.filter(alert => alert.status === 'open').length}</strong></span>
                     </div>
+                    {selectedBilancio.anomaly_analysis.validation_checks && selectedBilancio.anomaly_analysis.validation_checks.length > 0 && (
+                      <div className="rounded-lg border bg-slate-50/70 p-3">
+                        <div className="flex items-start gap-2">
+                          <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-600" />
+                          <div>
+                            <p className="text-xs font-semibold text-slate-800">Controlli eseguiti e qualità dei dati</p>
+                            <p className="mt-0.5 text-[11px] text-muted-foreground">
+                              Questi esiti spiegano quali verifiche automatiche hanno prodotto gli alert e quali dati non erano disponibili.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {selectedBilancio.anomaly_analysis.validation_checks.map(check => (
+                            <div key={check.id} className="flex items-start gap-2 text-xs">
+                              {check.status === 'passed' ? (
+                                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
+                              ) : check.status === 'attention' ? (
+                                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                              ) : (
+                                <CircleSlash2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
+                              )}
+                              <div>
+                                <span className="font-medium text-foreground">{check.label}</span>
+                                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{check.detail}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {selectedBilancio.anomaly_analysis.findings.length === 0 ? (
                       <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
                         Nessuna anomalia significativa rilevata dai controlli automatici disponibili.

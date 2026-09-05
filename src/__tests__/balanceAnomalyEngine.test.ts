@@ -144,6 +144,20 @@ describe('balance anomaly engine', () => {
     expect(result.findings).toHaveLength(0);
     expect(result.score).toBe(0);
     expect(result.level).toBe('basso');
+    expect(result.validation_checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'quadratura-stato-patrimoniale',
+        status: 'passed',
+      }),
+      expect.objectContaining({
+        id: 'quadratura-risultato-operativo',
+        status: 'passed',
+      }),
+      expect.objectContaining({
+        id: 'quadratura-utile-netto',
+        status: 'passed',
+      }),
+    ]));
   });
 
   it('segnala uno stato patrimoniale non quadrato con confidenza alta', () => {
@@ -244,5 +258,11 @@ describe('balance anomaly engine', () => {
     expect(finding?.category).toBe('qualita_dato');
     expect(result.disclaimer.toLowerCase()).toContain('anomalie di bilancio da approfondire');
     expect(result.disclaimer.toLowerCase()).not.toContain('frode');
+    expect(result.validation_checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'quadratura-stato-patrimoniale',
+        status: 'unavailable',
+      }),
+    ]));
   });
 });
