@@ -84,6 +84,14 @@ BEGIN
        AND existing.condizione = seed.condizione
   );
 
+  -- La relazione sull'operazione è parte della checklist base FinPromoter:
+  -- riallinea eventuali configurazioni storiche lasciate facoltative.
+  UPDATE public.bank_document_requirements
+     SET obbligatorio = TRUE
+   WHERE bank_id = v_bank_id
+     AND lower(nome) = lower('Relazione sullo scopo e sulla natura dell’operazione')
+     AND condizione = 'sempre';
+
   -- Rimuove il vecchio requisito equivalente solo se non è mai stato
   -- utilizzato in una pratica, evitando duplicazioni nella checklist.
   DELETE FROM public.bank_document_requirements legacy
