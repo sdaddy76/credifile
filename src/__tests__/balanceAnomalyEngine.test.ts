@@ -5,6 +5,7 @@ import {
   type BalanceSnapshot,
 } from '../../supabase/functions/_shared/balance-anomaly-engine';
 import {
+  BALANCE_VALUE_PATTERNS,
   extractBalanceValue,
   splitBalanceDocument,
 } from '../../supabase/functions/_shared/balance-parser';
@@ -114,6 +115,30 @@ describe('balance anomaly engine', () => {
     expect(extractBalanceValue(sections.attivo, ['Immobilizzazioni immateriali'])).toBeNull();
     expect(extractBalanceValue(sections.contoEconomico, ['Ammortamento delle immobilizzazioni immateriali'])).toBe(0);
     expect(extractBalanceValue(sections.contoEconomico, ['Trattamento di fine rapporto'])).toBeNull();
+  });
+
+  it('legge la voce completa dei costi per materie prime dal bilancio XBRL PDF', () => {
+    const text = [
+      'Conto economico',
+      'B) Costi della produzione',
+      '6) per materie prime, sussidiarie, di consumo e di merci 3.915.657 3.495.876',
+      '7) per servizi 769.360 595.794',
+    ].join('\n');
+    const sections = splitBalanceDocument(text);
+
+    expect(extractBalanceValue(
+      sections.contoEconomico,
+      [...BALANCE_VALUE_PATTERNS.costiMaterie],
+    )).toBe(3_915_657);
+  });
+
+  it('non segnala come costo materie zero un valore non estratto', () => {
+    const result = analyzeBalanceAnomalies({
+      current: { ...baseBalance, costi_materie: null },
+      sectorKey: 'commercio',
+    });
+
+    expect(result.findings.some(item => item.id === 'materie-prime-atipiche-settore')).toBe(false);
   });
 
   it('usa il totale passivo dichiarato per verificare la quadratura', () => {

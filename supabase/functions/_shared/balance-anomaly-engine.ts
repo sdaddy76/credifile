@@ -107,7 +107,7 @@ export interface AnalyzeBalanceAnomaliesInput {
   benchmark?: Record<string, number | null> | null;
 }
 
-export const BALANCE_ANOMALY_ENGINE_VERSION = '1.3.0';
+export const BALANCE_ANOMALY_ENGINE_VERSION = '1.3.1';
 
 export const BALANCE_ANOMALY_DISCLAIMER =
   'L’analisi evidenzia anomalie di bilancio da approfondire, incoerenze e poste che richiedono maggiori informazioni. ' +
@@ -751,7 +751,9 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
   const revenue = current.ricavi_vendite ?? current.totale_valore_produzione ?? 0;
   const asset = current.totale_attivo ?? 0;
   const inventoryRatio = asset > 0 ? ((current.rimanenze ?? 0) / asset) * 100 : 0;
-  const materialCostRatio = revenue > 0 ? ((current.costi_materie ?? 0) / revenue) * 100 : null;
+  const materialCostRatio = revenue > 0 && current.costi_materie !== null && current.costi_materie !== undefined
+    ? (current.costi_materie / revenue) * 100
+    : null;
   const personnelRatio = revenue > 0 ? ((current.costo_personale ?? 0) / revenue) * 100 : null;
   const tangibleRatio = asset > 0 ? ((current.imm_materiali ?? 0) / asset) * 100 : null;
   const financialAssetsRatio = asset > 0 ? ((current.imm_finanziarie ?? 0) / asset) * 100 : null;
@@ -773,7 +775,8 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
   if (
     ['manifattura', 'commercio', 'costruzioni'].includes(sectorKey) &&
     revenue >= 100_000 &&
-    (materialCostRatio === null || materialCostRatio < 1)
+    materialCostRatio !== null &&
+    materialCostRatio < 1
   ) {
     findings.push(makeFinding(
       'materie-prime-atipiche-settore',

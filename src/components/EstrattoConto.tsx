@@ -258,6 +258,14 @@ function parseXlsxFile(arrayBuffer: ArrayBuffer, fileName: string, practiceId: s
 
 interface Props { practiceId: string }
 
+interface PracticeStatementFile {
+  id: string;
+  nome_file: string;
+  storage_path: string;
+  mime_type?: string | null;
+  created_at: string;
+}
+
 interface Transazione {
   id?: string;
   practice_id?: string;
@@ -684,6 +692,16 @@ const CATEGORIE_FILTRO = [
   'prelievo', 'altro_uscita', 'cliente', 'altro',
 ] as const;
 
+const SUPPORTED_STATEMENT_EXTENSIONS = new Set(['pdf', 'csv', 'xls', 'xlsx', 'ods']);
+
+function fileExtension(fileName: string): string {
+  return fileName.split('.').pop()?.toLowerCase() ?? '';
+}
+
+function isLikelyStatement(fileName: string): boolean {
+  return /estratt|conto|movimenti|scalare/i.test(fileName);
+}
+
 /* ─────────────────────────────────────────────
    MAIN COMPONENT
 ───────────────────────────────────────────── */
@@ -699,6 +717,10 @@ export function EstrattoConto({ practiceId }: Props) {
   const [filtroTipo, setFiltroTipo] = useState<string>('tutti');
   const [dbAvailable, setDbAvailable] = useState<boolean | null>(null);
   const [fileNome, setFileNome] = useState<string>('');
+  const [practiceFiles, setPracticeFiles] = useState<PracticeStatementFile[]>([]);
+  const [selectedPracticeFileId, setSelectedPracticeFileId] = useState('');
+  const [loadingPracticeFiles, setLoadingPracticeFiles] = useState(false);
+  const [downloadingPracticeFile, setDownloadingPracticeFile] = useState(false);
 
   /* ── Load from DB ── */
   const loadFromDb = useCallback(async () => {
@@ -731,17 +753,86 @@ export function EstrattoConto({ practiceId }: Props) {
     setLoading(false);
   }, [practiceId]);
 
-  useEffect(() => { loadFromDb(); }, [loadFromDb]);
+  const loadPracticeFiles = useCallback(async () => {
+    setLoadingPracticeFiles(true);
+    try {
+      const { data, error } = await supabase
+        .from('uploaded_files')
+        .select('id,nome_file,storage_path,mime_type,created_at')
+        .eq('practice_id', practiceId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
 
-  /* ── Upload & Parse ── */
-  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      toast.error('Seleziona un file PDF');
+      const compatible = ((data ?? []) as PracticeStatementFile[])
+        .filter(file => SUPPORTED_STATEMENT_EXTENSIONS.has(fileExtension(file.nome_file)))
+        .sort((a, b) => {
+          const statementPriority = Number(isLikelyStatement(b.nome_file)) - Number(isLikelyStatement(a.nome_file));
+          if (statementPriority !== 0) return statementPriority;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+      setPracticeFiles(compatible);
+      setSelectedPracticeFileId(current =>
+        compatible.some(file => file.id === current)
+          ? current
+          : compatible.find(file => isLikelyStatement(file.nome_file))?.id ?? compatible[0]?.id ?? ''
+      );
+    } catch (error) {
+      console.error('Errore caricamento documenti pratica:', error);
+      toast.error('Impossibile caricare i documenti già presenti nella pratica');
+    } finally {
+      setLoadingPracticeFiles(false);
+    }
+  }, [practiceId]);
+
+  useEffect(() => {
+    loadFromDb();
+    loadPracticeFiles();
+  }, [loadFromDb, loadPracticeFiles]);
+
+  const saveParsedTransactions = useCallback(async (
+    parsed: Transazione[],
+    fileName: string,
+    successMessage: string,
+  ) => {
+    const withMeta = parsed.map(transaction => ({
+      ...transaction,
+      practice_id: practiceId,
+      file_nome: fileName,
+    }));
+
+    setTransazioni(withMeta);
+    setKpi(calcolaKpi(withMeta));
+    setFileNome(fileName);
+    toast.success(successMessage);
+
+    if (dbAvailable === false) return;
+
+    await supabase
+      .from('estratto_conto_transactions')
+      .delete()
+      .eq('practice_id', practiceId)
+      .eq('file_nome', fileName);
+
+    const { error: insertError } = await supabase
+      .from('estratto_conto_transactions')
+      .insert(withMeta);
+
+    if (insertError) {
+      if (insertError.code === '42P01') {
+        setDbAvailable(false);
+        toast.warning('Transazioni analizzate ma non salvate — applica la migration SQL dal Supabase Dashboard');
+      } else {
+        console.error('Errore salvataggio:', insertError);
+        toast.warning('Analisi completata, ma salvataggio su DB non riuscito');
+      }
       return;
     }
 
+    setDbAvailable(true);
+    toast.success('Transazioni salvate nel database');
+  }, [dbAvailable, practiceId]);
+
+  const analyzePdfFile = useCallback(async (file: File) => {
     setParsing(true);
     setFileNome(file.name);
     toast.info('Analisi estratto conto in corso…');
@@ -753,54 +844,59 @@ export function EstrattoConto({ practiceId }: Props) {
 
       if (parsed.length === 0) {
         toast.warning('Nessuna transazione rilevata. Il formato del PDF potrebbe non essere supportato.');
-        setParsing(false);
         return;
       }
 
-      // Aggiunge nome file e practice_id
-      const withMeta = parsed.map(t => ({
-        ...t,
-        practice_id: practiceId,
-        file_nome: file.name,
-      }));
-
-      setTransazioni(withMeta);
-      setKpi(calcolaKpi(withMeta));
-      toast.success(`Rilevate ${parsed.length} transazioni`);
-
-      // Salva su DB
-      if (dbAvailable !== false) {
-        await supabase
-          .from('estratto_conto_transactions')
-          .delete()
-          .eq('practice_id', practiceId)
-          .eq('file_nome', file.name);
-
-        const { error: insErr } = await supabase
-          .from('estratto_conto_transactions')
-          .insert(withMeta);
-
-        if (insErr) {
-          if (insErr.code === '42P01') {
-            setDbAvailable(false);
-            toast.warning('Transazioni analizzate ma non salvate — applica la migration SQL dal Supabase Dashboard');
-          } else {
-            console.error('Errore salvataggio:', insErr);
-            toast.warning('Analisi completata, ma salvataggio su DB non riuscito');
-          }
-        } else {
-          setDbAvailable(true);
-          toast.success('Transazioni salvate nel database');
-        }
-      }
-    } catch (err) {
-      console.error('Errore parsing PDF:', err);
-      toast.error('Errore durante l\'analisi del PDF');
+      await saveParsedTransactions(parsed, file.name, `Rilevate ${parsed.length} transazioni`);
+    } catch (error) {
+      console.error('Errore parsing PDF:', error);
+      toast.error('Errore durante l’analisi del PDF');
+    } finally {
+      setParsing(false);
     }
-    setParsing(false);
-    // Reset input
+  }, [saveParsedTransactions]);
+
+  const analyzeTabularFile = useCallback(async (file: File) => {
+    const extension = fileExtension(file.name);
+    setParsingCsv(true);
+    setFileNome(file.name);
+    toast.info('Importazione CSV/XLS in corso…');
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const parsed = extension === 'csv'
+        ? parseCsvFile(new TextDecoder('utf-8').decode(arrayBuffer), file.name, practiceId)
+        : parseXlsxFile(arrayBuffer, file.name, practiceId);
+
+      if (parsed.length === 0) {
+        toast.warning('Nessuna transazione rilevata. Verifica che il file abbia intestazioni riconoscibili (es. Data, Descrizione, Dare/Avere o Importo).');
+        return;
+      }
+
+      await saveParsedTransactions(
+        parsed,
+        file.name,
+        `Importate ${parsed.length} transazioni da ${extension.toUpperCase()}`,
+      );
+    } catch (error) {
+      console.error('Errore importazione CSV/XLS:', error);
+      toast.error('Errore durante l’importazione del file');
+    } finally {
+      setParsingCsv(false);
+    }
+  }, [practiceId, saveParsedTransactions]);
+
+  /* ── Upload & Parse ── */
+  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Seleziona un file PDF');
+      return;
+    }
+    await analyzePdfFile(file);
     e.target.value = '';
-  }, [practiceId, dbAvailable]);
+  }, [analyzePdfFile]);
 
   /* ── Upload CSV / XLS ── */
   const handleUploadCsv = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -812,54 +908,48 @@ export function EstrattoConto({ practiceId }: Props) {
       return;
     }
 
-    setParsingCsv(true);
-    setFileNome(file.name);
-    toast.info('Importazione CSV/XLS in corso…');
-
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      let parsed: Transazione[] = [];
-
-      if (ext === 'csv') {
-        const text = new TextDecoder('utf-8').decode(arrayBuffer);
-        parsed = parseCsvFile(text, file.name, practiceId);
-      } else {
-        parsed = parseXlsxFile(arrayBuffer, file.name, practiceId);
-      }
-
-      if (parsed.length === 0) {
-        toast.warning('Nessuna transazione rilevata. Verifica che il file abbia intestazioni riconoscibili (es. Data, Descrizione, Dare/Avere o Importo).');
-        setParsingCsv(false);
-        return;
-      }
-
-      setTransazioni(parsed);
-      setKpi(calcolaKpi(parsed));
-      toast.success(`Importate ${parsed.length} transazioni da ${ext.toUpperCase()}`);
-
-      // Salva su DB
-      if (dbAvailable !== false) {
-        await supabase.from('estratto_conto_transactions').delete().eq('practice_id', practiceId).eq('file_nome', file.name);
-        const { error: insErr } = await supabase.from('estratto_conto_transactions').insert(parsed);
-        if (insErr) {
-          if (insErr.code === '42P01') {
-            setDbAvailable(false);
-            toast.warning('Importate ma non salvate — applica la migration SQL');
-          } else {
-            toast.warning('Importazione completata, salvataggio DB non riuscito');
-          }
-        } else {
-          setDbAvailable(true);
-          toast.success('Transazioni salvate nel database');
-        }
-      }
-    } catch (err) {
-      console.error('Errore importazione CSV/XLS:', err);
-      toast.error('Errore durante l\'importazione del file');
-    }
-    setParsingCsv(false);
+    await analyzeTabularFile(file);
     e.target.value = '';
-  }, [practiceId, dbAvailable]);
+  }, [analyzeTabularFile]);
+
+  const handleAnalyzePracticeFile = useCallback(async () => {
+    const selectedFile = practiceFiles.find(file => file.id === selectedPracticeFileId);
+    if (!selectedFile) {
+      toast.error('Seleziona un documento della pratica');
+      return;
+    }
+
+    const extension = fileExtension(selectedFile.nome_file);
+    if (!SUPPORTED_STATEMENT_EXTENSIONS.has(extension)) {
+      toast.error('Il formato del documento non è supportato');
+      return;
+    }
+
+    setDownloadingPracticeFile(true);
+    try {
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from('practice-files')
+        .createSignedUrl(selectedFile.storage_path, 120);
+      if (signedError || !signedData?.signedUrl) {
+        throw signedError ?? new Error('URL del documento non disponibile');
+      }
+
+      const response = await fetch(signedData.signedUrl);
+      if (!response.ok) throw new Error(`Download fallito (${response.status})`);
+      const blob = await response.blob();
+      const file = new File([blob], selectedFile.nome_file, {
+        type: selectedFile.mime_type || blob.type,
+      });
+
+      if (extension === 'pdf') await analyzePdfFile(file);
+      else await analyzeTabularFile(file);
+    } catch (error) {
+      console.error('Errore analisi documento pratica:', error);
+      toast.error(`Impossibile analizzare il documento selezionato: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setDownloadingPracticeFile(false);
+    }
+  }, [analyzePdfFile, analyzeTabularFile, practiceFiles, selectedPracticeFileId]);
 
   /* ── Delete All ── */
   const handleDeleteAll = useCallback(async () => {
@@ -907,18 +997,21 @@ export function EstrattoConto({ practiceId }: Props) {
         <div>
           <h3 className="text-base font-semibold text-gray-800">Analisi Estratto Conto</h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Carica il PDF oppure importa il CSV/XLS dall'area clienti della banca per rilevare incassi, anticipi SBF, fornitori, rate, tributi e spese bancarie
+            Usa un estratto conto già presente nei documenti della pratica oppure carica un PDF, CSV o XLS per rilevare incassi, anticipi SBF, fornitori, rate, tributi e spese bancarie
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={loadFromDb}
-            disabled={loading}
+            onClick={() => {
+              loadFromDb();
+              loadPracticeFiles();
+            }}
+            disabled={loading || loadingPracticeFiles}
             className="gap-1.5"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${loading || loadingPracticeFiles ? 'animate-spin' : ''}`} />
             Aggiorna
           </Button>
           {transazioni.length > 0 && (
@@ -969,6 +1062,49 @@ export function EstrattoConto({ practiceId }: Props) {
         </div>
       </div>
 
+      <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+          <div className="min-w-0 flex-1">
+            <label htmlFor="practice-statement-file" className="text-xs font-semibold text-blue-900">
+              Usa un documento già caricato nella pratica
+            </label>
+            <p className="mb-2 mt-0.5 text-[11px] text-blue-700">
+              Sono mostrati i documenti PDF, CSV, XLS, XLSX e ODS. Gli estratti conto riconosciuti dal nome vengono proposti per primi.
+            </p>
+            <select
+              id="practice-statement-file"
+              value={selectedPracticeFileId}
+              onChange={event => setSelectedPracticeFileId(event.target.value)}
+              disabled={loadingPracticeFiles || downloadingPracticeFile || parsing || parsingCsv || practiceFiles.length === 0}
+              className="h-9 w-full rounded-md border border-blue-200 bg-white px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-blue-300"
+            >
+              {practiceFiles.length === 0 ? (
+                <option value="">
+                  {loadingPracticeFiles ? 'Caricamento documenti…' : 'Nessun documento compatibile presente'}
+                </option>
+              ) : practiceFiles.map(file => (
+                <option key={file.id} value={file.id}>
+                  {isLikelyStatement(file.nome_file) ? 'Estratto conto · ' : ''}{file.nome_file}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="gap-1.5 bg-blue-700 hover:bg-blue-800"
+            onClick={handleAnalyzePracticeFile}
+            disabled={!selectedPracticeFileId || loadingPracticeFiles || downloadingPracticeFile || parsing || parsingCsv}
+          >
+            {downloadingPracticeFile || parsing || parsingCsv ? (
+              <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Analisi…</>
+            ) : (
+              <><FileText className="h-3.5 w-3.5" /> Analizza documento</>
+            )}
+          </Button>
+        </div>
+      </div>
+
       {/* DB warning */}
       {dbAvailable === false && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex gap-2 text-sm text-amber-800">
@@ -989,7 +1125,7 @@ export function EstrattoConto({ practiceId }: Props) {
         <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
           <FileText className="h-10 w-10 text-gray-300 mx-auto mb-3" />
           <p className="text-sm text-gray-500">Nessuna transazione caricata</p>
-          <p className="text-xs text-gray-400 mt-1">Carica il PDF dell'estratto conto bancario</p>
+          <p className="text-xs text-gray-400 mt-1">Seleziona un documento della pratica oppure carica un nuovo estratto conto</p>
         </div>
       )}
 

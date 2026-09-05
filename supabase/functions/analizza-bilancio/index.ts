@@ -4,6 +4,7 @@ import {
   type BalanceSnapshot,
 } from '../_shared/balance-anomaly-engine.ts';
 import {
+  BALANCE_VALUE_PATTERNS,
   extractBalanceValue,
   splitBalanceDocument,
 } from '../_shared/balance-parser.ts';
@@ -119,7 +120,7 @@ function parseBilancio(text: string) {
   // CE
   const ricavi_vendite = eCe(['1) ricavi delle vendite', 'ricavi delle vendite e delle prestazioni']);
   const totale_valore_produzione = eCe(['Totale valore della produzione']);
-  const costi_materie = eCe(['per materie prime', 'Materie prime']);
+  const costi_materie = eCe([...BALANCE_VALUE_PATTERNS.costiMaterie]);
   const costi_servizi = eCe(['per servizi', 'Servizi']);
   const costo_personale_salari = eCe(['Salari e stipendi']);
   const costo_personale_oneri = eCe(['Oneri sociali']);

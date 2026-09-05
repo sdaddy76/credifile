@@ -5,6 +5,15 @@ export interface BalanceDocumentSections {
   contoEconomico: string;
 }
 
+export const BALANCE_VALUE_PATTERNS = {
+  costiMaterie: [
+    '6) per materie prime, sussidiarie, di consumo e di merci',
+    'per materie prime, sussidiarie, di consumo e di merci',
+    'per materie prime',
+    'Materie prime',
+  ],
+} as const;
+
 function normalizeLabel(value: string): string {
   return value
     .toLocaleLowerCase('it-IT')
