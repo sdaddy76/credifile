@@ -816,6 +816,14 @@ export default function ClientPortalPage() {
     URL.revokeObjectURL(url);
     toast.success('Riepilogo pratica scaricato');
   };
+  const portalMenuItems: Array<[string, string, boolean]> = [
+    ['#stato-pratica', 'Stato pratica', true],
+    ['#documenti-richiesti', 'Documenti', true],
+    ['#integrazioni-richieste', 'Integrazioni', true],
+    ['#domande-consulente', 'Domande', clientQuestions.length > 0],
+    ['#situazione-banche', 'Banche', showBankSituationSection],
+    ['#finanziamenti', 'Finanziamenti', showFinancingSection],
+  ];
 
   return (
     <div className="min-h-screen bg-background">
@@ -842,14 +850,7 @@ export default function ClientPortalPage() {
           className="sticky top-[57px] z-[5] -mx-1 overflow-x-auto rounded-lg border border-border bg-card/95 px-2 py-2 shadow-sm backdrop-blur"
         >
           <div className="flex min-w-max items-center gap-1">
-            {[
-              ['#stato-pratica', 'Stato pratica'],
-              ['#documenti-richiesti', 'Documenti'],
-              ['#integrazioni-richieste', 'Integrazioni'],
-              ['#domande-consulente', 'Domande'],
-              ['#situazione-banche', 'Banche'],
-              ['#finanziamenti', 'Finanziamenti'],
-            ].map(([href, label]) => (
+            {portalMenuItems.filter(([, , visible]) => visible).map(([href, label]) => (
               <a
                 key={href}
                 href={href}
