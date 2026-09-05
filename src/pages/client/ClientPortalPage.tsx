@@ -762,6 +762,12 @@ export default function ClientPortalPage() {
                   <p className="text-sm font-medium text-foreground">{bank.nome}</p>
                 </div>
               )}
+              {!bank && (
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Percorso</p>
+                  <p className="text-sm font-medium text-foreground">Nessuna banca associata</p>
+                </div>
+              )}
             </div>
             <div className="mb-4 flex justify-end">
               <Button variant="outline" size="sm" className="gap-1.5" onClick={downloadClientSummary}>

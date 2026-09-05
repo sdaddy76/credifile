@@ -52,7 +52,7 @@ export function generateClientSummaryPdf(data: ClientSummaryReportData): Blob {
   doc.text(data.stato_pratica, 22, y + 10);
   doc.setTextColor(...gray);
   doc.setFontSize(9);
-  doc.text(data.banca ? `Istituto di riferimento: ${data.banca}` : 'Istituto di riferimento: in definizione', 22, y + 17);
+  doc.text(data.banca ? `Istituto di riferimento: ${data.banca}` : 'Nessuna banca associata a questa richiesta', 22, y + 17);
   y += 36;
 
   doc.setTextColor(...dark);
