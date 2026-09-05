@@ -7,6 +7,32 @@ const SUPABASE_URL  = process.env.VITE_SUPABASE_URL || 'https://fhieppjqlefdlanv
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_KEY    = process.env.RESEND_API_KEY;
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || 'stefano@daddino.com';
+const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const RATE_LIMIT_MAX = 6;
+const requestBuckets = new Map();
+
+function getClientIp(req) {
+  const forwarded = req.headers?.['x-forwarded-for'] || req.headers?.['x-real-ip'] || 'unknown';
+  return String(forwarded).split(',')[0].trim().slice(0, 120) || 'unknown';
+}
+
+function consumeRateLimit(req) {
+  const key = getClientIp(req);
+  const now = Date.now();
+  const current = (requestBuckets.get(key) ?? []).filter(timestamp => timestamp > now - RATE_LIMIT_WINDOW_MS);
+  if (current.length >= RATE_LIMIT_MAX) {
+    requestBuckets.set(key, current);
+    return false;
+  }
+  current.push(now);
+  requestBuckets.set(key, current);
+  if (requestBuckets.size > 2000) {
+    for (const [bucketKey, timestamps] of requestBuckets) {
+      if (timestamps.every(timestamp => timestamp <= now - RATE_LIMIT_WINDOW_MS)) requestBuckets.delete(bucketKey);
+    }
+  }
+  return true;
+}
 
 // ── Upload file su Supabase Storage via REST ───────────────────────────────
 async function uploadToStorage(base64Data, mimeType, storagePath) {
@@ -92,7 +118,18 @@ export default async function handler(req, res) {
     note,
     visura,       // { name, type, data: base64 }
     altri_docs,   // [{ name, type, nomeDescrittivo, data: base64 }]
+    website,      // honeypot invisibile: deve restare vuoto
+    form_started_at,
   } = req.body ?? {};
+
+  // Protezioni anti-bot: honeypot, tempo minimo di compilazione e limite per IP.
+  const elapsed = Date.now() - Number(form_started_at);
+  if (website || !Number.isFinite(elapsed) || elapsed < 2500 || elapsed > 24 * 60 * 60 * 1000) {
+    return res.status(400).json({ error: 'Richiesta non valida' });
+  }
+  if (!consumeRateLimit(req)) {
+    return res.status(429).json({ error: 'Troppe richieste. Riprova più tardi.' });
+  }
 
   if (!ragione_sociale?.trim()) {
     return res.status(400).json({ error: 'ragione_sociale obbligatoria' });

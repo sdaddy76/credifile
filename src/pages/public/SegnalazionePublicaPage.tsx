@@ -45,6 +45,8 @@ export default function SegnalazionePublicaPage() {
   const [sending,  setSending]  = useState(false);
   const [inviata,  setInviata]  = useState(false);
   const [errore,   setErrore]   = useState('');
+  const [website, setWebsite] = useState('');
+  const [formStartedAt, setFormStartedAt] = useState(() => Date.now());
 
   // ── Gestione visura ────────────────────────────────────────────────────────
   const handleVisura = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -77,6 +79,10 @@ export default function SegnalazionePublicaPage() {
   const handleInvia = async () => {
     if (!ragioneSociale.trim()) { setErrore('Inserisci la ragione sociale'); return; }
     if (!visura)                { setErrore('Carica la visura camerale (PDF)'); return; }
+    if (Date.now() - formStartedAt < 2500) {
+      setErrore('Attendi qualche secondo prima di inviare la richiesta.');
+      return;
+    }
     setErrore('');
     setSending(true);
 
@@ -109,6 +115,8 @@ export default function SegnalazionePublicaPage() {
             data: visuraB64,
           },
           altri_docs: altriB64,
+          website,
+          form_started_at: formStartedAt,
         }),
       });
 
@@ -126,6 +134,7 @@ export default function SegnalazionePublicaPage() {
   const handleNuova = () => {
     setRagioneSociale(''); setCellulare(''); setEmailCliente(''); setNote('');
     setVisura(null); setAltriDocs([]); setInviata(false); setErrore('');
+    setWebsite(''); setFormStartedAt(Date.now());
   };
 
   // ── Schermata successo ─────────────────────────────────────────────────────
@@ -298,6 +307,22 @@ export default function SegnalazionePublicaPage() {
             <span className="shrink-0">⚠️</span> {errore}
           </div>
         )}
+
+        {/* Campo honeypot anti-bot: resta invisibile agli utenti reali */}
+        <div
+          aria-hidden="true"
+          className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden"
+        >
+          <label htmlFor="website">Lascia vuoto</label>
+          <Input
+            id="website"
+            name="website"
+            tabIndex={-1}
+            autoComplete="off"
+            value={website}
+            onChange={e => setWebsite(e.target.value)}
+          />
+        </div>
 
         {/* Bottone invio */}
         <Button

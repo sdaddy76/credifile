@@ -213,6 +213,20 @@ export default function LoginPage() {
         <p className="text-center text-xs text-muted-foreground mt-6">
           Area riservata agli agenti autorizzati
         </p>
+        <div className="mt-5 rounded-lg border border-teal-200 bg-teal-50/60 p-4 text-center">
+          <p className="text-sm font-medium text-teal-900">Sei un’impresa e vuoi richiedere un report?</p>
+          <p className="mt-1 text-xs text-teal-800">
+            Puoi inviare la richiesta senza creare un account.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 w-full border-teal-300 text-teal-800 hover:bg-teal-100"
+            onClick={() => navigate('/segnala')}
+          >
+            Richiedi un report autonomo
+          </Button>
+        </div>
       </div>
     </div>
   );
