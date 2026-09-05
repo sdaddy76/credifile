@@ -36,6 +36,25 @@ interface AgentDocumentNotificationParams {
   uploadedFileId?: string;
 }
 
+interface BankSearchRequest {
+  id: string;
+  practice_id: string;
+  numero_pratica?: string | null;
+  ragione_sociale: string;
+  email_referente?: string | null;
+  stato: 'nuova' | 'assegnata' | 'lavorazione' | 'chiusa' | 'annullata' | string;
+  agente_id?: string | null;
+  created_at: string;
+  updated_at?: string;
+  disclaimer_pagamento_accettato_at?: string | null;
+  agente?: {
+    id: string;
+    nome?: string | null;
+    nome_cognome?: string | null;
+    email?: string | null;
+  } | null;
+}
+
 const notifyAgentDocumentUpload = async ({
   practiceId,
   session,
@@ -62,6 +81,8 @@ const notifyAgentDocumentUpload = async ({
 
 const PRIVACY_CONSENT_VERSION = '2026-09-03-v1';
 const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell'informativa privacy relativa alla pratica e, in qualità di interessato e/o legale rappresentante della società, autorizzo il consulente o intermediario incaricato a raccogliere, trattare e trasmettere alle banche e agli intermediari finanziari coinvolti nella valutazione della pratica i documenti e le informazioni personali, societarie, economiche e finanziarie da me caricati, esclusivamente per l'istruttoria, la valutazione e l'eventuale perfezionamento della richiesta di finanziamento. Dichiaro inoltre di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti. Sono informato che l'autorizzazione può essere revocata per i trattamenti basati sul consenso, senza pregiudicare la liceità dei trattamenti già effettuati, contattando il consulente che gestisce la pratica.`;
+const PAYMENT_DISCLAIMER_VERSION = '2026-09-05-v1';
+const PAYMENT_DISCLAIMER_TEXT = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. L’eventuale attività di mediazione creditizia sarà svolta esclusivamente previa stipula di un apposito contratto di mediazione, con compenso regolato secondo il modello success fee e subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
 
 const isFinancingRequestDocument = (doc: PracticeDocument) => {
   const normalizedName = doc.nome
@@ -159,6 +180,12 @@ export default function ClientPortalPage() {
   }
   const [clientBanks, setClientBanks] = useState<ClientBankPosition[]>([]);
   const [savingClientBanks, setSavingClientBanks] = useState(false);
+
+  // ── Percorso Report autonomo impresa ────────────────────────────────────
+  const [bankSearchRequest, setBankSearchRequest] = useState<BankSearchRequest | null>(null);
+  const [loadingBankSearch, setLoadingBankSearch] = useState(false);
+  const [submittingBankSearch, setSubmittingBankSearch] = useState(false);
+  const [bankSearchDisclaimerChecked, setBankSearchDisclaimerChecked] = useState(false);
 
   const BANK_RELATIONSHIP_TYPES = [
     'Conto corrente',
@@ -440,6 +467,68 @@ export default function ClientPortalPage() {
     setSession(s);
   }, [practiceId, navigate]);
 
+  const loadBankSearchRequest = async () => {
+    if (!practiceId || !session) return;
+    setLoadingBankSearch(true);
+    try {
+      const params = new URLSearchParams({
+        practice_id: practiceId,
+        access_code: session.codice,
+        email_cliente: session.email,
+      });
+      const response = await fetch(`/api/richiesta-ricerca-banca?${params.toString()}`);
+      const json = await response.json();
+      if (response.ok && json.success) {
+        setBankSearchRequest((json.request ?? null) as BankSearchRequest | null);
+      }
+    } catch (error) {
+      console.error('Impossibile caricare lo stato della ricerca banca:', error);
+    } finally {
+      setLoadingBankSearch(false);
+    }
+  };
+
+  const submitBankSearchRequest = async () => {
+    if (!practiceId || !session) return;
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
+    if (!bankSearchDisclaimerChecked) {
+      toast.error('Prendi visione del disclaimer del servizio a pagamento');
+      return;
+    }
+
+    setSubmittingBankSearch(true);
+    try {
+      const response = await fetch('/api/richiesta-ricerca-banca', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          practice_id: practiceId,
+          access_code: session.codice,
+          email_cliente: session.email,
+          disclaimer_pagamento_accettato: true,
+          disclaimer_pagamento_version: PAYMENT_DISCLAIMER_VERSION,
+          disclaimer_pagamento_text: PAYMENT_DISCLAIMER_TEXT,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.success) {
+        throw new Error(json.error ?? 'Errore invio richiesta');
+      }
+      setBankSearchRequest((json.request ?? null) as BankSearchRequest | null);
+      setBankSearchDisclaimerChecked(false);
+      toast.success(json.already_exists
+        ? 'La richiesta di ricerca banca è già stata presa in carico'
+        : 'Richiesta di ricerca banca inviata al Super Admin');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Errore invio richiesta');
+    } finally {
+      setSubmittingBankSearch(false);
+    }
+  };
+
   const load = async () => {
     if (!practiceId || !session) return;
     const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes, accessRes, integrationsRes] = await Promise.all([
@@ -495,6 +584,7 @@ export default function ClientPortalPage() {
     }
     setLoading(false);
     loadFinancing();
+    loadBankSearchRequest();
   };
 
   const downloadModuloTemplate = async (filePath: string, nome: string) => {
@@ -681,6 +771,14 @@ export default function ClientPortalPage() {
 
   const client = (practice as Practice & { clients?: { ragione_sociale: string } }).clients;
   const bank = (practice as Practice & { banks?: { nome: string } }).banks;
+  const showAutonomousReportSection = !bank;
+  const bankSearchStatusLabel: Record<string, string> = {
+    nuova: 'In attesa di assegnazione',
+    assegnata: 'Agente assegnato',
+    lavorazione: 'In lavorazione',
+    chiusa: 'Richiesta chiusa',
+    annullata: 'Richiesta annullata',
+  };
 
   const totalDocs = documents.length;
   const completedDocs = documents.filter(d => d.status === 'caricato' || d.status === 'approvato').length;
@@ -805,6 +903,96 @@ export default function ClientPortalPage() {
             )}
           </CardContent>
         </Card>
+
+        {showAutonomousReportSection && (
+          <Card className="border-teal-200 bg-teal-50/30">
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between gap-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-teal-700" />
+                  Report autonomo impresa
+                </CardTitle>
+                {bankSearchRequest && (
+                  <Badge className="bg-teal-100 text-teal-800 border-teal-200 text-xs shrink-0">
+                    {bankSearchStatusLabel[bankSearchRequest.stato] ?? bankSearchRequest.stato}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Non hai ancora una banca di riferimento. Puoi chiedere a Credifile di individuare
+                una banca adatta alla tua richiesta.
+              </p>
+            </CardHeader>
+            <CardContent className="pb-4 space-y-4">
+              {loadingBankSearch ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Verifica richiesta in corso...
+                </div>
+              ) : bankSearchRequest ? (
+                <div className="rounded-lg border border-teal-200 bg-white p-3 space-y-2 text-sm text-teal-900">
+                  <p>
+                    La richiesta è stata registrata il{' '}
+                    <strong>{new Date(bankSearchRequest.created_at).toLocaleString('it-IT')}</strong>.
+                  </p>
+                  {bankSearchRequest.numero_pratica && (
+                    <p>Pratica: <strong>{bankSearchRequest.numero_pratica}</strong></p>
+                  )}
+                  {bankSearchRequest.agente && (
+                    <p>
+                      Il referente assegnato è{' '}
+                      <strong>
+                        {bankSearchRequest.agente.nome_cognome
+                          || bankSearchRequest.agente.nome
+                          || bankSearchRequest.agente.email
+                          || 'un agente Credifile'}
+                      </strong>.
+                    </p>
+                  )}
+                  {!bankSearchRequest.agente_id && (
+                    <p className="text-teal-800">
+                      Il Super Admin sta per assegnare la richiesta a un agente.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
+                    <strong>Servizio a pagamento.</strong> {PAYMENT_DISCLAIMER_TEXT}
+                  </div>
+                  <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-border bg-white p-3">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 rounded border-border accent-teal-700"
+                      checked={bankSearchDisclaimerChecked}
+                      onChange={event => setBankSearchDisclaimerChecked(event.target.checked)}
+                      disabled={!privacyConsentAcceptedAt || submittingBankSearch}
+                    />
+                    <span className="text-sm font-medium leading-relaxed">
+                      Ho letto e accetto il disclaimer del servizio a pagamento e prendo atto
+                      che l’eventuale mediazione sarà regolata da un contratto a success fee.
+                    </span>
+                  </label>
+                  <Button
+                    type="button"
+                    className="w-full gap-2 bg-teal-700 hover:bg-teal-800 text-white"
+                    disabled={!privacyConsentAcceptedAt || !bankSearchDisclaimerChecked || submittingBankSearch}
+                    onClick={submitBankSearchRequest}
+                  >
+                    {submittingBankSearch
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Invio richiesta...</>
+                      : <><Building2 className="w-4 h-4" /> Ricerca banca</>
+                    }
+                  </Button>
+                  {!privacyConsentAcceptedAt && (
+                    <p className="text-xs text-amber-800">
+                      Accetta prima l’autorizzazione privacy per attivare la richiesta.
+                    </p>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* ── Stepper stati pratica ───────────────────────────────────────── */}
         {(() => {

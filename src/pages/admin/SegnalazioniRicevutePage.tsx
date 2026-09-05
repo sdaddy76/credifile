@@ -26,6 +26,10 @@ interface Segnalazione {
   note_interne?: string | null;
   created_at: string;
   file_urls?: { nome: string; url: string }[] | null;
+  practice_id?: string | null;
+  numero_pratica?: string | null;
+  tipo_richiesta?: string | null;
+  disclaimer_pagamento_accettato_at?: string | null;
   agente?: { nome: string; nome_cognome: string } | null;
 }
 
@@ -97,6 +101,29 @@ export default function SegnalazioniRicevutePage() {
       .eq('id', seg.id);
     if (error) { toast.error('Errore assegnazione: ' + error.message); }
     else {
+      if (seg.practice_id) {
+        const { error: practiceError } = await supabase
+          .from('practices')
+          .update({ assigned_to: agenteId, updated_at: new Date().toISOString() })
+          .eq('id', seg.practice_id);
+        if (practiceError) {
+          toast.error('Segnalazione assegnata, ma aggiornamento pratica non riuscito: ' + practiceError.message);
+        }
+      }
+
+      const { error: notificationError } = await supabase.from('notifications').insert({
+        user_id: agenteId,
+        tipo: seg.tipo_richiesta === 'ricerca_banca' ? 'ricerca_banca_assegnata' : 'segnalazione_assegnata',
+        titolo: seg.tipo_richiesta === 'ricerca_banca'
+          ? 'Richiesta di ricerca banca assegnata'
+          : 'Nuova segnalazione assegnata',
+        testo: `${seg.ragione_sociale}${seg.practice_id ? ` — pratica ${seg.practice_id.slice(0, 8)}` : ''} è stata assegnata a te.`,
+        link: seg.practice_id ? `/admin/pratiche/${seg.practice_id}` : '/admin/segnalazioni-ricevute',
+        practice_id: seg.practice_id ?? null,
+      });
+      if (notificationError) {
+        console.warn('Notifica agente non registrata:', notificationError.message);
+      }
       toast.success('Segnalazione assegnata!');
       await load();
     }
@@ -193,6 +220,11 @@ export default function SegnalazioniRicevutePage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <Building2 className="w-4 h-4 text-orange-500 shrink-0" />
                         <span className="font-semibold text-sm">{seg.ragione_sociale}</span>
+                        {seg.tipo_richiesta === 'ricerca_banca' && (
+                          <Badge className="text-[10px] bg-teal-100 text-teal-800 border-teal-200">
+                            Ricerca banca · Report autonomo
+                          </Badge>
+                        )}
                         <Badge className={`text-[10px] ${STATO_COLOR[seg.stato] ?? 'bg-gray-100'}`}>
                           {seg.stato}
                         </Badge>
@@ -202,6 +234,18 @@ export default function SegnalazioniRicevutePage() {
                           </span>
                         )}
                       </div>
+                      {seg.practice_id && (
+                        <p className="text-xs text-teal-700 mt-1">
+                          Pratica collegata:{' '}
+                          <code className="font-mono">{seg.numero_pratica ?? `${seg.practice_id.slice(0, 8)}…`}</code>
+                        </p>
+                      )}
+                      {seg.disclaimer_pagamento_accettato_at && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Disclaimer servizio a pagamento accettato il{' '}
+                          {new Date(seg.disclaimer_pagamento_accettato_at).toLocaleString('it-IT')}
+                        </p>
+                      )}
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
                         {seg.nome_referente && <span className="flex items-center gap-1"><User className="w-3 h-3" />{seg.nome_referente}</span>}
                         {seg.telefono && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{seg.telefono}</span>}
