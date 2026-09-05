@@ -369,17 +369,17 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         upsert: true,
         contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
-      if (docxErr) throw docxErr;
+      if (docxErr) throw new Error(`Salvataggio DOCX: ${docxErr.message}`);
       const { error: pdfErr } = await supabase.storage.from('practice-files').upload(pdfPath, pdfBlob, {
         upsert: true,
         contentType: 'application/pdf',
       });
-      if (pdfErr) throw pdfErr;
+      if (pdfErr) throw new Error(`Salvataggio PDF: ${pdfErr.message}`);
       const { error: updErr } = await supabase
         .from('relazioni_commerciali')
         .update({ docx_url: docxPath, pdf_url: pdfPath, status: 'generata', updated_at: new Date().toISOString(), risposte: answersToGenerate })
         .eq('id', activeRelazione.id);
-      if (updErr) throw updErr;
+      if (updErr) throw new Error(`Aggiornamento relazione: ${updErr.message}`);
       setRelazioni(prev => prev.map(r => r.id === activeRelazione.id ? { ...r, docx_url: docxPath, pdf_url: pdfPath, status: 'generata', risposte: answersToGenerate } : r));
       toast.success('DOCX e PDF generati');
     } catch (error: any) {
