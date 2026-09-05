@@ -52,10 +52,11 @@ async function extractPdfText(file: File): Promise<string> {
 import {
   STATUS_LABELS, STATUS_COLORS, DOC_STATUS_LABELS, DOC_STATUS_COLORS,
   type Practice, type PracticeDocument, type PracticeStatusLog,
-  type Bank, type PracticeAccessCode, type Client, type Socio, type Amministratore,
+  type Bank, type BankDocumentRequirement, type PracticeAccessCode, type Client, type Socio, type Amministratore,
   type PracticeIntegrationRequest, type PracticeStatus
 } from '@/lib/types';
 import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
+import { classifyFinPromoterCompany, requirementApplies, type FinPromoterCompanyType, type RegimeContabile } from '@/lib/finpromoterChecklist';
 
 type AssignedAgent = { id: string; nome?: string; email: string };
 type IntegrationRequestDraft = { nome: string; descrizione: string };
@@ -137,6 +138,8 @@ type ClientEditForm = {
   motivazione: string;
   soci: Socio[];
   amministratori: Amministratore[];
+  tipologia_azienda: Exclude<NonNullable<Practice['tipologia_azienda']>, 'auto'> | 'auto';
+  regime_contabile: Exclude<NonNullable<Practice['regime_contabile']>, null> | '';
 };
 
 const EMPTY_CLIENT_EDIT_FORM: ClientEditForm = {
@@ -157,6 +160,8 @@ const EMPTY_CLIENT_EDIT_FORM: ClientEditForm = {
   motivazione: '',
   soci: [],
   amministratori: [],
+  tipologia_azienda: 'auto',
+  regime_contabile: '',
 };
 
 function parseItalianAmount(value: string): number | null {
@@ -201,6 +206,7 @@ export default function PraticaDetailPage() {
   const [practiceBanks, setPracticeBanks] = useState<{id:string;bank_id:string;status:PracticeBankStatus;note?:string;data_invio?:string;status_updated_at?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
   const [updatingBankStatusId, setUpdatingBankStatusId] = useState<string | null>(null);
   const [addingBank, setAddingBank] = useState('');
+  const [addingBankRequirements, setAddingBankRequirements] = useState<BankDocumentRequirement[]>([]);
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [bankNote, setBankNote] = useState('');
   const [showSendBankDialog, setShowSendBankDialog] = useState<string|null>(null);
@@ -995,6 +1001,20 @@ export default function PraticaDetailPage() {
     supabase.from('banks').select('*').eq('attiva', true).then(r => setBanks(r.data ?? []));
   }, [load]);
 
+  // Carica in anteprima la checklist della banca selezionata.
+  useEffect(() => {
+    if (!addingBank) {
+      setAddingBankRequirements([]);
+      return;
+    }
+    supabase
+      .from('bank_document_requirements')
+      .select('*')
+      .eq('bank_id', addingBank)
+      .order('ordine')
+      .then(({ data }) => setAddingBankRequirements((data ?? []) as BankDocumentRequirement[]));
+  }, [addingBank]);
+
   // Carica dati aggiuntivi dopo load principale
   useEffect(() => {
     if (!id) return;
@@ -1069,6 +1089,8 @@ export default function PraticaDetailPage() {
         codice_ateco: nullable(clientEditForm.codice_ateco.toUpperCase()),
         importo_richiesto: importoRichiesto,
         motivazione: nullable(clientEditForm.motivazione),
+        tipologia_azienda: clientEditForm.tipologia_azienda,
+        regime_contabile: clientEditForm.regime_contabile || null,
       };
 
       const [clientResult, practiceResult] = await Promise.all([
@@ -1710,6 +1732,90 @@ export default function PraticaDetailPage() {
   const integrationCycleById = new Map(integrationCycles.map(cycle => [cycle.id, cycle]));
   const openIntegrationCycles = integrationCycles.filter(cycle => cycle.status === 'open');
   const completedDocs = documents.filter(d => d.status === 'caricato' || d.status === 'approvato').length;
+  const isFinPromoter = (candidate?: { nome?: string; codice?: string } | null) =>
+    Boolean(candidate && (/finpromoter/i.test(candidate.nome ?? '') || /finpro/i.test(candidate.codice ?? '')));
+  const overrideTipologia = practice.tipologia_azienda && practice.tipologia_azienda !== 'auto'
+    ? practice.tipologia_azienda
+    : null;
+  const baseChecklistProfile = classifyFinPromoterCompany(
+    client?.forma_giuridica,
+    practice.regime_contabile as RegimeContabile,
+    overrideTipologia as FinPromoterCompanyType | null,
+  );
+  const checklistProfile = {
+    ...baseChecklistProfile,
+    condizioni: {
+      ...baseChecklistProfile.condizioni,
+      ...(practice.checklist_condizioni ?? {}),
+    },
+  };
+  const applicableAddingBankRequirements = addingBankRequirements.filter(requirement =>
+    requirementApplies(requirement, checklistProfile)
+  );
+  const selectedAddingBank = banks.find(candidate => candidate.id === addingBank);
+  const finPromoterChecklistVisible = isFinPromoter(selectedAddingBank)
+    || practiceBanks.some(item => /finpromoter/i.test(item.banks?.nome ?? ''));
+  const updateChecklistProfile = async (patch: {
+    tipologia_azienda?: Practice['tipologia_azienda'];
+    regime_contabile?: Practice['regime_contabile'];
+    checklist_condizioni?: Practice['checklist_condizioni'];
+  }) => {
+    const { error } = await supabase.from('practices').update(patch).eq('id', practice.id);
+    if (error) {
+      toast.error('Errore aggiornamento checklist: ' + error.message);
+      return false;
+    }
+    setPractice(prev => prev ? { ...prev, ...patch } : prev);
+    return true;
+  };
+  const updateChecklistCondition = async (
+    key: keyof NonNullable<Practice['checklist_condizioni']>,
+    value: boolean,
+  ) => {
+    await updateChecklistProfile({
+      checklist_condizioni: { ...(practice.checklist_condizioni ?? {}), [key]: value },
+    });
+  };
+  const handleAssignBank = async () => {
+    if (!addingBank || !id) return;
+    const selectedBank = banks.find(candidate => candidate.id === addingBank);
+    if (!selectedBank) return;
+    const selectedIsFinPromoter = isFinPromoter(selectedBank);
+    const needsRegime = checklistProfile.tipo === 'societa_persone' || checklistProfile.tipo === 'impresa_individuale';
+    if (selectedIsFinPromoter && needsRegime && !checklistProfile.regime) {
+      toast.error('Seleziona prima il regime contabile nella sezione checklist FinPromoter.');
+      return;
+    }
+
+    const { error } = await supabase.from('practice_banks').insert({ practice_id: id, bank_id: addingBank, status: 'assegnata' });
+    if (error) { toast.error('Errore: ' + error.message); return; }
+    const applicable = selectedIsFinPromoter
+      ? applicableAddingBankRequirements
+      : addingBankRequirements;
+    if (applicable.length > 0) {
+      const existingNames = new Set(documents.map(document => document.nome.trim().toLowerCase()));
+      const rows = applicable
+        .filter(requirement => !existingNames.has(requirement.nome.trim().toLowerCase()))
+        .map(requirement => ({
+          practice_id: id,
+          bank_requirement_id: requirement.id,
+          nome: requirement.nome,
+          descrizione: requirement.descrizione,
+          tipo: 'banca' as const,
+          obbligatorio: requirement.obbligatorio,
+          status: 'richiesto' as const,
+        }));
+      if (rows.length > 0) {
+        const { error: docsError } = await supabase.from('practice_documents').insert(rows);
+        if (docsError) {
+          toast.error('Banca assegnata, ma checklist non caricata: ' + docsError.message);
+        }
+      }
+    }
+    toast.success('Banca assegnata' + (applicable.length ? ` — ${applicable.length} documenti applicabili` : ''));
+    setAddingBank('');
+    await load();
+  };
 
   return (
     <div className="space-y-5 max-w-5xl">
@@ -1848,6 +1954,8 @@ export default function PraticaDetailPage() {
                         motivazione: practice.motivazione ?? '',
                         soci: client?.soci ?? [],
                         amministratori: client?.amministratori ?? [],
+                        tipologia_azienda: practice.tipologia_azienda ?? 'auto',
+                        regime_contabile: practice.regime_contabile ?? '',
                       });
                       setShowClientEdit(true);
                     }}>
@@ -2330,6 +2438,67 @@ export default function PraticaDetailPage() {
                   <span>L'assegnazione e l'invio alle banche è gestita dalla <strong>segreteria</strong>. Di seguito puoi vedere a quale banca è stata assegnata questa pratica.</span>
                 </div>
               )}
+              {finPromoterChecklistVisible && (
+                <Card className="border-indigo-200 bg-indigo-50/40">
+                  <CardContent className="p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold text-indigo-900">Checklist FinPromoter</p>
+                      <p className="text-xs text-indigo-800/80 mt-0.5">
+                        Tipologia rilevata: <strong>{checklistProfile.tipo === 'societa_capitali' ? 'società di capitali' : checklistProfile.tipo === 'societa_persone' ? 'società di persone' : checklistProfile.tipo === 'impresa_individuale' ? 'impresa individuale' : checklistProfile.tipo === 'cooperativa' ? 'società cooperativa' : 'da specificare'}</strong>.
+                        {' '}I documenti condizionati vengono aggiunti solo se applicabili.
+                      </p>
+                    </div>
+                    {(checklistProfile.tipo === 'societa_persone' || checklistProfile.tipo === 'impresa_individuale' || checklistProfile.tipo === 'sconosciuta') && (
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs text-indigo-900 whitespace-nowrap">Regime contabile</Label>
+                        <Select
+                          value={practice.regime_contabile ?? 'non_impostato'}
+                          onValueChange={value => updateChecklistProfile({ regime_contabile: value === 'non_impostato' ? null : value as RegimeContabile })}
+                        >
+                          <SelectTrigger className="h-8 text-xs bg-white"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="non_impostato">Da specificare</SelectItem>
+                            <SelectItem value="ordinaria">Contabilità ordinaria</SelectItem>
+                            <SelectItem value="semplificata">Contabilità semplificata</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="grid sm:grid-cols-2 gap-2 text-xs">
+                      {([
+                        ['gruppo', 'Imprese collegate/associate'],
+                        ['investimento', 'Pratica con investimento'],
+                        ['garante', 'Presenza di garanti'],
+                        ['mediazione', 'Presentata da mediatore'],
+                        ['ammissione_socio', 'Ammissione a socio FinPromoter'],
+                      ] as const).map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-indigo-900">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(checklistProfile.condizioni[key])}
+                            onChange={event => updateChecklistCondition(key, event.target.checked)}
+                            className="rounded border-indigo-300"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                    {addingBank && isFinPromoter(selectedAddingBank) && (
+                      <div className="border-t border-indigo-200 pt-3">
+                        <p className="text-xs font-semibold text-indigo-900 mb-1">
+                          Documenti che verranno richiesti ({applicableAddingBankRequirements.length})
+                        </p>
+                        <ul className="space-y-0.5 text-xs text-indigo-900/80 list-disc pl-4 max-h-40 overflow-auto">
+                          {applicableAddingBankRequirements.map(requirement => <li key={requirement.id}>{requirement.nome}</li>)}
+                        </ul>
+                        {applicableAddingBankRequirements.length === 0 && (
+                          <p className="text-xs text-indigo-800/70">Configura i requisiti della banca nella pagina Banche.</p>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
               {/* Assegna nuova banca — solo canApprove */}
               {canApprove && (
                 <div className="flex gap-2">
@@ -2342,20 +2511,7 @@ export default function PraticaDetailPage() {
                     </SelectContent>
                   </Select>
                   <Button disabled={!addingBank} onClick={async () => {
-                    if (!addingBank || !id) return;
-                    // Inserisci in practice_banks
-                    const { error } = await supabase.from('practice_banks').insert({ practice_id: id, bank_id: addingBank, status: 'assegnata' });
-                    if (error) { toast.error('Errore: ' + error.message); return; }
-                    // Crea documenti specifici banca
-                    const { data: bankReqs } = await supabase.from('bank_document_requirements').select('*').eq('bank_id', addingBank);
-                    if (bankReqs && bankReqs.length > 0) {
-                      await supabase.from('practice_documents').insert(bankReqs.map(r => ({
-                        practice_id: id, bank_requirement_id: r.id, nome: r.nome,
-                        descrizione: r.descrizione, tipo: 'banca', obbligatorio: r.obbligatorio, status: 'richiesto',
-                      })));
-                    }
-                    toast.success('Banca assegnata' + (bankReqs?.length ? ` — ${bankReqs.length} documenti aggiunti` : ''));
-                    setAddingBank(''); load();
+                    await handleAssignBank();
                   }}>Assegna</Button>
                 </div>
               )}
@@ -3571,6 +3727,40 @@ export default function PraticaDetailPage() {
                     onChange={e => setClientEditForm(f => ({ ...f, capitale_sociale_versato: e.target.value }))}
                     disabled={savingClientEdit} />
                 </div>
+                <div className="space-y-1.5">
+                  <Label>Tipologia azienda per checklist</Label>
+                  <Select
+                    value={clientEditForm.tipologia_azienda}
+                    onValueChange={value => setClientEditForm(f => ({ ...f, tipologia_azienda: value as ClientEditForm['tipologia_azienda'] }))}
+                    disabled={savingClientEdit}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Rileva dalla forma giuridica</SelectItem>
+                      <SelectItem value="societa_capitali">Società di capitali</SelectItem>
+                      <SelectItem value="societa_persone">Società di persone</SelectItem>
+                      <SelectItem value="impresa_individuale">Impresa individuale</SelectItem>
+                      <SelectItem value="cooperativa">Società cooperativa</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {(clientEditForm.tipologia_azienda === 'societa_persone' || clientEditForm.tipologia_azienda === 'impresa_individuale' || clientEditForm.tipologia_azienda === 'auto') && (
+                  <div className="space-y-1.5">
+                    <Label>Regime contabile</Label>
+                    <Select
+                      value={clientEditForm.regime_contabile || 'non_impostato'}
+                      onValueChange={value => setClientEditForm(f => ({ ...f, regime_contabile: value === 'non_impostato' ? '' : value as 'ordinaria' | 'semplificata' }))}
+                      disabled={savingClientEdit}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Seleziona regime" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="non_impostato">Da specificare</SelectItem>
+                        <SelectItem value="ordinaria">Contabilità ordinaria</SelectItem>
+                        <SelectItem value="semplificata">Contabilità semplificata</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             </section>
 

@@ -12,6 +12,7 @@ import { Plus, Building2, Pencil, Trash2, ChevronDown, ChevronUp, FileText, BarC
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Bank, BankDocumentRequirement } from '@/lib/types';
+import { finPromoterConditionLabel, type FinPromoterCondition } from '@/lib/finpromoterChecklist';
 
 // Catalogo KPI — stesso ordine del report (per area)
 const KPI_CATALOG = [
@@ -46,7 +47,8 @@ interface GeoReq   { id: string; livello: 'provincia' | 'regione'; valore: strin
 interface BankModulo { id: string; nome: string; descrizione: string | null; file_path: string; created_at: string }
 
 const emptyBank = { nome: '', codice: '', contatto: '', email: '', email_invio_banca: '', note: '', attiva: true, logo_url: '' };
-const emptyReq = { nome: '', descrizione: '', obbligatorio: true };
+const emptyReq: { nome: string; descrizione: string; obbligatorio: boolean; condizione: FinPromoterCondition } =
+  { nome: '', descrizione: '', obbligatorio: true, condizione: 'sempre' };
 
 export default function BanchePage() {
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -308,7 +310,7 @@ export default function BanchePage() {
     const existing = requirements[bankId] ?? [];
     await supabase.from('bank_document_requirements').insert({
       bank_id: bankId, nome: reqForm.nome, descrizione: reqForm.descrizione || null,
-      obbligatorio: reqForm.obbligatorio, ordine: existing.length,
+      obbligatorio: reqForm.obbligatorio, ordine: existing.length, condizione: reqForm.condizione,
     });
     toast.success('Documento aggiunto');
     setShowReqForm(null);
@@ -396,6 +398,11 @@ export default function BanchePage() {
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               {r.obbligatorio && <span className="text-xs text-red-500 font-medium">Obbl.</span>}
+                              {r.condizione && r.condizione !== 'sempre' && (
+                                <span className="text-[10px] rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-indigo-700">
+                                  {finPromoterConditionLabel(r.condizione)}
+                                </span>
+                              )}
                               <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => handleDeleteReq(r.id, b.id)}><Trash2 className="w-3 h-3" /></Button>
                             </div>
                           </div>
@@ -412,6 +419,24 @@ export default function BanchePage() {
                         <div className="space-y-1.5">
                           <Label className="text-xs">Descrizione</Label>
                           <Input placeholder="Istruzioni per il cliente..." value={reqForm.descrizione} onChange={e => setReqForm(f => ({ ...f, descrizione: e.target.value }))} className="h-8 text-sm" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Quando mostrarlo</Label>
+                          <Select value={reqForm.condizione} onValueChange={v => setReqForm(f => ({ ...f, condizione: v as FinPromoterCondition }))}>
+                            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="sempre">Tutte le imprese</SelectItem>
+                              <SelectItem value="societa_capitali">Società di capitali</SelectItem>
+                              <SelectItem value="persone_ordinaria">Persone / individuale — ordinaria</SelectItem>
+                              <SelectItem value="persone_semplificata">Persone / individuale — semplificata</SelectItem>
+                              <SelectItem value="cooperativa">Società cooperativa</SelectItem>
+                              <SelectItem value="gruppo">Imprese collegate/associate</SelectItem>
+                              <SelectItem value="investimento">Investimento</SelectItem>
+                              <SelectItem value="garante">Presenza di garanti</SelectItem>
+                              <SelectItem value="mediazione">Pratica presentata da mediatore</SelectItem>
+                              <SelectItem value="ammissione_socio">Ammissione a socio FinPromoter</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                         <div className="flex items-center gap-2">
                           <Switch checked={reqForm.obbligatorio} onCheckedChange={v => setReqForm(f => ({ ...f, obbligatorio: v }))} />

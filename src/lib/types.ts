@@ -96,6 +96,7 @@ export interface BankDocumentRequirement {
   descrizione?: string;
   obbligatorio: boolean;
   ordine: number;
+  condizione?: string | null;
   created_at: string;
 }
 
@@ -111,6 +112,15 @@ export interface Practice {
   note_admin?: string;
   assigned_to?: string;
   codice_ateco?: string;
+  tipologia_azienda?: 'auto' | 'societa_capitali' | 'societa_persone' | 'impresa_individuale' | 'cooperativa' | null;
+  regime_contabile?: 'ordinaria' | 'semplificata' | null;
+  checklist_condizioni?: {
+    gruppo?: boolean;
+    investimento?: boolean;
+    garante?: boolean;
+    mediazione?: boolean;
+    ammissione_socio?: boolean;
+  } | null;
   created_at: string;
   updated_at: string;
   clients?: Client;
