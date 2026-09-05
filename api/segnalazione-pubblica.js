@@ -10,6 +10,16 @@ const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || 'stefano@daddino.com'
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX = 6;
 const requestBuckets = new Map();
+const ACTIVE_PRACTICE_STATUSES = [
+  'bozza',
+  'raccolta_documenti',
+  'inviata_banca',
+  'integrazioni_richieste',
+  'istruttoria',
+  'in_delibera',
+  'deliberata',
+  'completata',
+];
 
 function getClientIp(req) {
   const forwarded = req.headers?.['x-forwarded-for'] || req.headers?.['x-real-ip'] || 'unknown';
@@ -32,6 +42,14 @@ function consumeRateLimit(req) {
     }
   }
   return true;
+}
+
+function normalizePiva(value) {
+  return String(value ?? '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+function isValidPiva(value) {
+  return /^[0-9]{11}$/.test(value);
 }
 
 // ── Upload file su Supabase Storage via REST ───────────────────────────────
@@ -102,6 +120,47 @@ async function sendEmail(to, subject, html) {
   });
 }
 
+async function findActivePracticeByPiva(piva) {
+  const clients = await rest(
+    `clients?piva=eq.${encodeURIComponent(piva)}&select=id,ragione_sociale,email&limit=20`
+  );
+  if (!clients.ok || !Array.isArray(clients.data)) return null;
+
+  for (const client of clients.data) {
+    const statusFilter = `(${ACTIVE_PRACTICE_STATUSES.join(',')})`;
+    const practices = await rest(
+      `practices?client_id=eq.${encodeURIComponent(client.id)}&status=in.${encodeURIComponent(statusFilter)}&select=id,numero_pratica,status&order=updated_at.desc&limit=1`
+    );
+    if (practices.ok && Array.isArray(practices.data) && practices.data[0]) {
+      return { client, practice: practices.data[0] };
+    }
+  }
+  return null;
+}
+
+async function notifySuperAdmin(subject, html, practiceId, notification) {
+  const admins = await rest('admin_profiles?ruolo=eq.super_admin&select=id');
+  const adminRows = Array.isArray(admins.data) ? admins.data : [];
+  const notificationRows = adminRows
+    .filter(admin => admin?.id)
+    .map(admin => ({
+      user_id: admin.id,
+      tipo: notification.tipo,
+      titolo: notification.titolo,
+      testo: notification.testo,
+      link: '/admin/segnalazioni-ricevute',
+      practice_id: practiceId ?? null,
+    }));
+  if (notificationRows.length > 0) {
+    await rest('notifications', {
+      method: 'POST',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify(notificationRows),
+    });
+  }
+  await sendEmail(SUPER_ADMIN_EMAIL, subject, html);
+}
+
 // ── Handler principale ─────────────────────────────────────────────────────
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -112,6 +171,7 @@ export default async function handler(req, res) {
 
   const {
     ragione_sociale,
+    piva,
     nome_referente,
     email_referente,
     telefono,
@@ -134,8 +194,77 @@ export default async function handler(req, res) {
   if (!ragione_sociale?.trim()) {
     return res.status(400).json({ error: 'ragione_sociale obbligatoria' });
   }
+  const normalizedPiva = normalizePiva(piva);
+  if (!isValidPiva(normalizedPiva)) {
+    return res.status(400).json({ error: 'P.IVA non valida' });
+  }
   if (!visura?.data) {
     return res.status(400).json({ error: 'visura camerale obbligatoria' });
+  }
+
+  // Se l'impresa ha già una pratica operativa, non aprire una seconda pratica.
+  // La segnalazione viene comunque tracciata e collegata per la presa in carico.
+  const activeMatch = await findActivePracticeByPiva(normalizedPiva);
+  if (activeMatch) {
+    const existingPractice = activeMatch.practice;
+    const existingNote = `Richiesta di valutazione ricevuta: P.IVA già associata alla pratica ${existingPractice.numero_pratica}, attualmente in lavorazione. Verificare la pratica esistente prima di aprirne una nuova.`;
+    const duplicateInsert = await dbInsert({
+      ragione_sociale: ragione_sociale.trim(),
+      piva: normalizedPiva,
+      nome_referente: nome_referente?.trim() || null,
+      email_referente: email_referente?.trim() || null,
+      telefono: telefono?.trim() || null,
+      note: [note?.trim(), existingNote].filter(Boolean).join('\n\n'),
+      stato: 'nuova',
+      tipo_richiesta: 'richiesta_su_pratica_esistente',
+      practice_id: existingPractice.id,
+      file_urls: [],
+    });
+
+    if (!duplicateInsert.ok) {
+      console.error('Errore registrazione richiesta su pratica esistente:', duplicateInsert.data);
+      return res.status(500).json({ error: 'Errore salvataggio richiesta' });
+    }
+
+    const duplicateRequest = Array.isArray(duplicateInsert.data)
+      ? duplicateInsert.data[0]
+      : duplicateInsert.data;
+    const duplicateHtml = `
+      <div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:20px">
+        <div style="background:#b45309;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <h2 style="margin:0;font-size:18px">⚠️ Richiesta su pratica già esistente</h2>
+        </div>
+        <div style="border:1px solid #d1d5db;border-top:0;padding:20px;border-radius:0 0 8px 8px">
+          <p>Una nuova richiesta contiene una P.IVA già associata a una pratica in lavorazione.</p>
+          <p><strong>Azienda:</strong> ${escapeHtml(ragione_sociale)}<br>
+          <strong>P.IVA:</strong> ${escapeHtml(normalizedPiva)}<br>
+          <strong>Pratica esistente:</strong> ${escapeHtml(existingPractice.numero_pratica)}<br>
+          <strong>Stato:</strong> ${escapeHtml(existingPractice.status)}</p>
+          <p>Verifica la pratica esistente e contatta il cliente tramite il portale già attivo.</p>
+        </div>
+      </div>`;
+    await notifySuperAdmin(
+      `Richiesta collegata a pratica esistente: ${ragione_sociale}`,
+      duplicateHtml,
+      existingPractice.id,
+      {
+        tipo: 'valutazione_pratica_esistente',
+        titolo: 'P.IVA già associata a pratica in lavorazione',
+        testo: `${ragione_sociale} ha inviato una richiesta, ma la P.IVA è già collegata alla pratica ${existingPractice.numero_pratica}.`,
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      already_in_progress: true,
+      existing_practice: {
+        id: existingPractice.id,
+        numero_pratica: existingPractice.numero_pratica,
+        status: existingPractice.status,
+      },
+      request: duplicateRequest,
+      message: `Abbiamo trovato una pratica già in lavorazione (${existingPractice.numero_pratica}). La richiesta è stata collegata alla pratica esistente.`,
+    });
   }
 
   const ts   = Date.now();
@@ -164,6 +293,7 @@ export default async function handler(req, res) {
   // 3. Salva nel DB
   const insert = await dbInsert({
     ragione_sociale: ragione_sociale.trim(),
+    piva: normalizedPiva,
     nome_referente:  nome_referente?.trim()  || null,
     email_referente: email_referente?.trim() || null,
     telefono:        telefono?.trim()        || null,

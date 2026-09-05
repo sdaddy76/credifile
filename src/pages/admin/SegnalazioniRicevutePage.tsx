@@ -28,6 +28,7 @@ interface Segnalazione {
   file_urls?: { nome: string; url: string }[] | null;
   practice_id?: string | null;
   numero_pratica?: string | null;
+  piva?: string | null;
   tipo_richiesta?: string | null;
   disclaimer_pagamento_accettato_at?: string | null;
   agente?: { nome: string; nome_cognome: string } | null;
@@ -239,6 +240,11 @@ export default function SegnalazioniRicevutePage() {
                             Ricerca banca · Report autonomo
                           </Badge>
                         )}
+                        {seg.tipo_richiesta === 'richiesta_su_pratica_esistente' && (
+                          <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200">
+                            P.IVA già in lavorazione
+                          </Badge>
+                        )}
                         <Badge className={`text-[10px] ${STATO_COLOR[seg.stato] ?? 'bg-gray-100'}`}>
                           {seg.stato}
                         </Badge>
@@ -252,6 +258,11 @@ export default function SegnalazioniRicevutePage() {
                         <p className="text-xs text-teal-700 mt-1">
                           Pratica collegata:{' '}
                           <code className="font-mono">{seg.numero_pratica ?? `${seg.practice_id.slice(0, 8)}…`}</code>
+                        </p>
+                      )}
+                      {seg.piva && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          P.IVA: <code className="font-mono">{seg.piva}</code>
                         </p>
                       )}
                       {seg.disclaimer_pagamento_accettato_at && (

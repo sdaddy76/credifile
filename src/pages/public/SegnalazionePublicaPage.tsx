@@ -29,6 +29,7 @@ async function fileToBase64(file: File): Promise<string> {
 export default function SegnalazionePublicaPage() {
   // Campi cliente
   const [ragioneSociale, setRagioneSociale] = useState('');
+  const [piva,            setPiva]            = useState('');
   const [cellulare,      setCellulare]      = useState('');
   const [emailCliente,   setEmailCliente]   = useState('');
   const [note,           setNote]           = useState('');
@@ -44,6 +45,7 @@ export default function SegnalazionePublicaPage() {
   // Stato invio
   const [sending,  setSending]  = useState(false);
   const [inviata,  setInviata]  = useState(false);
+  const [praticaEsistente, setPraticaEsistente] = useState<{ numero_pratica: string; status: string } | null>(null);
   const [errore,   setErrore]   = useState('');
   const [website, setWebsite] = useState('');
   const [formStartedAt, setFormStartedAt] = useState(() => Date.now());
@@ -78,6 +80,8 @@ export default function SegnalazionePublicaPage() {
   // ── Invio segnalazione ─────────────────────────────────────────────────────
   const handleInvia = async () => {
     if (!ragioneSociale.trim()) { setErrore('Inserisci la ragione sociale'); return; }
+    const normalizedPiva = piva.replace(/\D/g, '');
+    if (!/^\d{11}$/.test(normalizedPiva)) { setErrore('Inserisci una P.IVA italiana di 11 cifre'); return; }
     if (!visura)                { setErrore('Carica la visura camerale (PDF)'); return; }
     if (Date.now() - formStartedAt < 2500) {
       setErrore('Attendi qualche secondo prima di inviare la richiesta.');
@@ -105,6 +109,7 @@ export default function SegnalazionePublicaPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ragione_sociale: ragioneSociale.trim(),
+          piva: normalizedPiva,
           nome_referente:  null,
           email_referente: emailCliente.trim() || null,
           telefono:        cellulare.trim()    || null,
@@ -122,6 +127,9 @@ export default function SegnalazionePublicaPage() {
 
       const json = await r.json();
       if (!r.ok || !json.success) throw new Error(json.error ?? 'Errore invio');
+      if (json.already_in_progress && json.existing_practice) {
+        setPraticaEsistente(json.existing_practice);
+      }
       setInviata(true);
 
     } catch (err) {
@@ -132,8 +140,9 @@ export default function SegnalazionePublicaPage() {
   };
 
   const handleNuova = () => {
-    setRagioneSociale(''); setCellulare(''); setEmailCliente(''); setNote('');
+    setRagioneSociale(''); setPiva(''); setCellulare(''); setEmailCliente(''); setNote('');
     setVisura(null); setAltriDocs([]); setInviata(false); setErrore('');
+    setPraticaEsistente(null);
     setWebsite(''); setFormStartedAt(Date.now());
   };
 
@@ -146,10 +155,22 @@ export default function SegnalazionePublicaPage() {
             <CheckCircle2 className="w-12 h-12 text-emerald-600" />
           </div>
           <div className="space-y-1">
-            <h2 className="text-2xl font-bold">Segnalazione inviata!</h2>
+            <h2 className="text-2xl font-bold">
+              {praticaEsistente ? 'Richiesta collegata' : 'Segnalazione inviata!'}
+            </h2>
             <p className="text-muted-foreground text-sm">
-              La documentazione è stata caricata e il team è stato notificato.<br />
-              Sarai contattato al più presto.
+              {praticaEsistente ? (
+                <>
+                  Abbiamo trovato una pratica già in lavorazione per questa P.IVA:
+                  <br /><strong>{praticaEsistente.numero_pratica}</strong>.
+                  <br />Non è stata aperta una seconda pratica. Usa il link del portale già ricevuto o attendi il contatto del tuo agente.
+                </>
+              ) : (
+                <>
+                  La richiesta è stata registrata e il team è stato notificato.<br />
+                  Sarai contattato al più presto.
+                </>
+              )}
             </p>
           </div>
           <Button onClick={handleNuova} className="gap-2">
@@ -181,6 +202,17 @@ export default function SegnalazionePublicaPage() {
             <CardTitle className="text-sm font-semibold">👤 Dati Cliente</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>P.IVA <span className="text-red-500">*</span></Label>
+              <Input
+                placeholder="Es. 01234567890"
+                value={piva}
+                onChange={e => setPiva(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                inputMode="numeric"
+                maxLength={11}
+              />
+              <p className="text-xs text-muted-foreground">Serve per verificare se esiste già una pratica in lavorazione.</p>
+            </div>
             <div className="space-y-1.5">
               <Label>Ragione Sociale <span className="text-red-500">*</span></Label>
               <Input
@@ -328,7 +360,7 @@ export default function SegnalazionePublicaPage() {
         <Button
           className="w-full gap-2 bg-orange-600 hover:bg-orange-700 h-12 text-base"
           onClick={handleInvia}
-          disabled={sending || !ragioneSociale.trim() || !visura}
+          disabled={sending || !ragioneSociale.trim() || !/^\d{11}$/.test(piva) || !visura}
         >
           {sending
             ? <><Loader2 className="w-4 h-4 animate-spin" /> Invio in corso...</>
