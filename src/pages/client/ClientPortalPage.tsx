@@ -21,6 +21,7 @@ import {
   type PracticeIntegrationRequest,
 } from '@/lib/types';
 import { buildPracticeTimeline, normalizePrimaryStatus } from '@/lib/practiceTimeline';
+import { generateClientSummaryPdf } from '@/lib/generateClientSummaryPdf';
 
 interface ClientSession {
   practiceId: string;
@@ -697,6 +698,26 @@ export default function ClientPortalPage() {
   const showBankSituationSection = bankSituationRequestDocs.length > 0;
   const bankSituationCompleted = showBankSituationSection
     && bankSituationRequestDocs.every(doc => doc.status === 'caricato' || doc.status === 'approvato');
+  const downloadClientSummary = () => {
+    const blob = generateClientSummaryPdf({
+      ragione_sociale: client?.ragione_sociale ?? 'Cliente',
+      numero_pratica: practice.numero_pratica,
+      stato_pratica: STATUS_LABELS[practice.status] ?? practice.status,
+      banca: bank?.nome ?? null,
+      documenti_caricati: completedDocs,
+      documenti_totali: totalDocs,
+      integrazioni_aperte: openIntegrationRequests.length,
+      domande_aperte: clientQuestions.filter(question => question.stato !== 'risposta').length,
+      privacy_accettata: Boolean(privacyConsentAcceptedAt),
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `Riepilogo_Pratica_${practice.numero_pratica}.pdf`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast.success('Riepilogo pratica scaricato');
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -741,6 +762,11 @@ export default function ClientPortalPage() {
                   <p className="text-sm font-medium text-foreground">{bank.nome}</p>
                 </div>
               )}
+            </div>
+            <div className="mb-4 flex justify-end">
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={downloadClientSummary}>
+                <FileDown className="w-3.5 h-3.5" /> Scarica riepilogo
+              </Button>
             </div>
 
             <div className="space-y-2">

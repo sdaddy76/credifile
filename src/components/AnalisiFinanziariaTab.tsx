@@ -598,6 +598,34 @@ function generateBancabilitaReport(
       doc.text(`ANOMALIE DI BILANCIO DA APPROFONDIRE — ${analysis.score}/100 (${analysis.level.toUpperCase()})`, 14, y);
       y += 5;
 
+      if (analysis.data_quality_score !== undefined) {
+        const qualityLevel = analysis.data_quality_level ?? 'media';
+        const qualityColor: [number, number, number] = qualityLevel === 'alta'
+          ? [22, 101, 52]
+          : qualityLevel === 'media'
+            ? [146, 64, 14]
+            : [185, 28, 28];
+        const qualityBg: [number, number, number] = qualityLevel === 'alta'
+          ? [220, 252, 231]
+          : qualityLevel === 'media'
+            ? [254, 243, 199]
+            : [254, 226, 226];
+        doc.setFillColor(...qualityBg);
+        doc.setDrawColor(...qualityColor);
+        doc.roundedRect(14, y, W - 28, 14, 2, 2, 'FD');
+        doc.setTextColor(...qualityColor);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Attendibilità estrazione: ${analysis.data_quality_score}/100 (${qualityLevel.toUpperCase()})`, 18, y + 5.5);
+        doc.setTextColor(...DGRAY);
+        doc.setFontSize(6.8);
+        doc.setFont('helvetica', 'normal');
+        const qualityNote = analysis.data_quality_notes?.[0]
+          ?? 'Qualità sufficiente per i controlli automatici disponibili.';
+        doc.text(doc.splitTextToSize(qualityNote, W - 40) as string[], 18, y + 10);
+        y += 19;
+      }
+
       if (analysis.findings.length === 0 || (reportAlerts.length === 0 && anomalyAlerts.some(alert => alert.bilancio_id === bil.id))) {
         doc.setTextColor(22, 101, 52);
         doc.setFontSize(8);

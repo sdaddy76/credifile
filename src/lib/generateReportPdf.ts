@@ -471,6 +471,69 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     );
     y += 24;
 
+    if (analysis.data_quality_score !== undefined) {
+      checkPage(24);
+      const qualityLevel = analysis.data_quality_level ?? 'media';
+      const qualityColor: [n,n,n] = qualityLevel === 'alta' ? GREEN : qualityLevel === 'media' ? AMBER : RED;
+      const qualityBg: [n,n,n] = qualityLevel === 'alta'
+        ? [220,252,231] as [n,n,n]
+        : qualityLevel === 'media'
+          ? [254,243,199] as [n,n,n]
+          : [254,226,226] as [n,n,n];
+      doc.setFillColor(...qualityBg);
+      doc.setDrawColor(...qualityColor);
+      doc.roundedRect(14, y, W - 28, 16, 2, 2, 'FD');
+      doc.setTextColor(...qualityColor);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.text(`Attendibilità dell’estrazione: ${analysis.data_quality_score}/100 (${qualityLevel.toUpperCase()})`, 19, y + 6);
+      doc.setTextColor(...DARK);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      const qualitySummary = analysis.data_quality_notes?.length
+        ? analysis.data_quality_notes.slice(0, 2).join(' ')
+        : 'Dati estratti con qualità sufficiente per i controlli automatici disponibili.';
+      doc.text(doc.splitTextToSize(qualitySummary, W - 42) as string[], 19, y + 11);
+      y += 21;
+    }
+
+    if (analysis.validation_checks?.length) {
+      checkPage(22);
+      const checkRows = analysis.validation_checks.map(check => [
+        check.status === 'passed' ? 'OK' : check.status === 'attention' ? 'ATT.' : 'N/D',
+        check.label,
+        check.detail,
+      ]);
+      autoTable(doc, {
+        startY: y,
+        head: [['Esito', 'Controllo', 'Dettaglio']],
+        body: checkRows,
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 6.8, cellPadding: 1.8, overflow: 'linebreak' },
+        headStyles: { fillColor: [51, 65, 85], textColor: WHITE, fontStyle: 'bold', fontSize: 7 },
+        columnStyles: {
+          0: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+          1: { cellWidth: 48, fontStyle: 'bold' },
+          2: { cellWidth: 105, textColor: GRAY },
+        },
+        didParseCell(hook) {
+          if (hook.section !== 'body' || hook.column.index !== 0) return;
+          const result = String(hook.cell.raw);
+          if (result === 'OK') {
+            hook.cell.styles.textColor = GREEN;
+            hook.cell.styles.fillColor = [220,252,231];
+          } else if (result === 'ATT.') {
+            hook.cell.styles.textColor = AMBER;
+            hook.cell.styles.fillColor = [254,243,199];
+          } else {
+            hook.cell.styles.textColor = GRAY;
+            hook.cell.styles.fillColor = LIGHT;
+          }
+        },
+      });
+      y = (doc as any).lastAutoTable.finalY + 8;
+    }
+
     if (analysis.findings.length === 0) {
       doc.setFillColor(240, 253, 244);
       doc.roundedRect(14, y, W - 28, 16, 2, 2, 'F');
