@@ -78,7 +78,21 @@ export default function SegnalazioniRicevutePage() {
     if (filtroStato && filtroStato !== 'tutte') q = q.eq('stato', filtroStato);
     const { data, error } = await q.limit(100);
     if (error) { toast.error('Errore caricamento: ' + error.message); }
-    setSegnalazioni((data ?? []) as Segnalazione[]);
+    const rows = (data ?? []) as Segnalazione[];
+    const practiceIds = [...new Set(rows.map(row => row.practice_id).filter(Boolean))] as string[];
+    if (practiceIds.length > 0) {
+      const { data: practices } = await supabase
+        .from('practices')
+        .select('id, numero_pratica')
+        .in('id', practiceIds);
+      const numberById = new Map(
+        (practices ?? []).map(practice => [practice.id, practice.numero_pratica])
+      );
+      rows.forEach(row => {
+        if (row.practice_id) row.numero_pratica = numberById.get(row.practice_id) ?? null;
+      });
+    }
+    setSegnalazioni(rows);
     setLoading(false);
   };
 
