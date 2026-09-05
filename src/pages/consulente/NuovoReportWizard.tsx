@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import * as pdfjs from 'pdfjs-dist';
 import { supabase } from '@/lib/supabase';
@@ -7,7 +7,8 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { generateReportPdf } from '@/lib/generateReportPdf';
 import jsPDF from 'jspdf';
-import { Document, Paragraph, TextRun, HeadingLevel, Packer } from 'docx';
+import autoTable from 'jspdf-autotable';
+import { BorderStyle, Document, Paragraph, TextRun, HeadingLevel, Packer, Table, TableCell, TableRow, WidthType } from 'docx';
 import { parseCentraleRischi } from '@/lib/parseCentraleRischi';
 import type {
   KpiScore,
@@ -32,6 +33,7 @@ import {
   PlusCircle, Trash2, Banknote, Save,
 } from 'lucide-react';
 import { pdfTextItemsToLines } from '@/lib/pdfTextLines';
+import { buildKpiBenchmarkComparisons } from '@/lib/kpiBenchmarkComments';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -130,6 +132,17 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+const relazioneDocxCell = (text: string, bold = false, columnSpan?: number) => new TableCell({
+  ...(columnSpan ? { columnSpan } : {}),
+  borders: {
+    top: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+    bottom: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+    left: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+    right: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+  },
+  children: [new Paragraph({ children: [new TextRun({ text, bold })] })],
+});
+
 export default function NuovoReportWizard() {
   const { clientId } = useParams<{ clientId: string }>();
   const { user, profileNome } = useAuth();
@@ -204,6 +217,10 @@ export default function NuovoReportWizard() {
   const [relazioneAnswers, setRelazioneAnswers] = useState<RelazioneAnswers>({});
   const [relazionePdfBlob, setRelazionePdfBlob] = useState<Blob | null>(null);
   const [relazioneDocxBlob, setRelazioneDocxBlob] = useState<Blob | null>(null);
+  const relazioneKpiComparisons = useMemo(
+    () => buildKpiBenchmarkComparisons(kpiScores, benchmarkData?.kpi_data),
+    [benchmarkData?.kpi_data, kpiScores],
+  );
 
   // Carica info cliente
   const [client, setClient] = useState<{
@@ -616,6 +633,49 @@ export default function NuovoReportWizard() {
       new Paragraph({ text: 'RELAZIONE COMMERCIALE', heading: HeadingLevel.TITLE }),
       new Paragraph({ children: [new TextRun({ text: `${ragSociale || client?.ragione_sociale || 'Cliente'} — ${new Date().toLocaleDateString('it-IT')}`, italics: true })] }),
     ];
+    children.push(new Paragraph({ text: 'Indicatori finanziari e confronto settoriale', heading: HeadingLevel.HEADING_1 }));
+    if (relazioneKpiComparisons.length > 0) {
+      children.push(new Paragraph({
+        children: [new TextRun({
+          text: `${benchmarkData?.settore_label ?? 'Settore N/D'} · benchmark aggiornati al ${
+            benchmarkData?.aggiornato_il
+              ? new Date(benchmarkData.aggiornato_il).toLocaleDateString('it-IT')
+              : 'N/D'
+          }`,
+          italics: true,
+        })],
+      }));
+      children.push(new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [
+          new TableRow({
+            children: [
+              relazioneDocxCell('Indicatore', true),
+              relazioneDocxCell('Azienda', true),
+              relazioneDocxCell('Benchmark', true),
+              relazioneDocxCell('Scostamento', true),
+              relazioneDocxCell('Giudizio', true),
+            ],
+          }),
+          ...relazioneKpiComparisons.flatMap(comparison => [
+            new TableRow({
+              children: [
+                relazioneDocxCell(`${comparison.label} (${comparison.areaLabel})`, true),
+                relazioneDocxCell(comparison.valueFormatted),
+                relazioneDocxCell(comparison.benchmarkFormatted),
+                relazioneDocxCell(`${comparison.deltaFormatted} / ${comparison.deltaPercentFormatted}`),
+                relazioneDocxCell(comparison.judgement, true),
+              ],
+            }),
+            new TableRow({
+              children: [relazioneDocxCell(`Commento: ${comparison.comment}`, false, 5)],
+            }),
+          ]),
+        ],
+      }));
+    } else {
+      children.push(new Paragraph('KPI non disponibili.'));
+    }
     RELAZIONE_SEZIONI.forEach(section => {
       children.push(new Paragraph({ text: section.titolo, heading: HeadingLevel.HEADING_1 }));
       section.domande.forEach(q => {
@@ -640,6 +700,43 @@ export default function NuovoReportWizard() {
     };
     addText('RELAZIONE COMMERCIALE', 17, true);
     addText(`${ragSociale || client?.ragione_sociale || 'Cliente'} — ${new Date().toLocaleDateString('it-IT')}`, 10);
+    addText('Indicatori finanziari e confronto settoriale', 14, true);
+    if (relazioneKpiComparisons.length > 0) {
+      addText(
+        `${benchmarkData?.settore_label ?? 'Settore N/D'} · benchmark aggiornati al ${
+          benchmarkData?.aggiornato_il
+            ? new Date(benchmarkData.aggiornato_il).toLocaleDateString('it-IT')
+            : 'N/D'
+        }`,
+        8,
+      );
+      autoTable(doc, {
+        startY: y,
+        head: [['Indicatore', 'Azienda', 'Benchmark', 'Scostamento', 'Giudizio', 'Commento']],
+        body: relazioneKpiComparisons.map(comparison => [
+          comparison.label,
+          comparison.valueFormatted,
+          comparison.benchmarkFormatted,
+          `${comparison.deltaFormatted}\n${comparison.deltaPercentFormatted}`,
+          comparison.judgement,
+          comparison.comment,
+        ]),
+        margin: { left: 15, right: 15 },
+        styles: { fontSize: 6.5, cellPadding: 1.5, overflow: 'linebreak', valign: 'top' },
+        headStyles: { fillColor: [15, 118, 110], textColor: [255, 255, 255], fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 27, fontStyle: 'bold' },
+          1: { cellWidth: 18, halign: 'right' },
+          2: { cellWidth: 18, halign: 'right' },
+          3: { cellWidth: 22, halign: 'right' },
+          4: { cellWidth: 27, fontStyle: 'bold' },
+          5: { cellWidth: 68 },
+        },
+      });
+      y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+    } else {
+      addText('KPI non disponibili.', 10);
+    }
     RELAZIONE_SEZIONI.forEach(section => {
       addText(section.titolo, 14, true);
       section.domande.forEach(q => {
@@ -1169,6 +1266,27 @@ export default function NuovoReportWizard() {
               <p><strong>Output:</strong> PDF e DOCX scaricabili dal consulente.</p>
               <p><strong>Foto aziendale:</strong> sezione opzionale; usare solo foto fornite dall’azienda, non immagini prese da siti web.</p>
             </div>
+            {relazioneKpiComparisons.length > 0 && (
+              <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-4">
+                <p className="text-sm font-bold text-teal-900">Indicatori inclusi nella relazione</p>
+                <p className="mt-1 text-xs text-teal-800">
+                  {relazioneKpiComparisons.length} KPI commentati con confronto rispetto a {benchmarkData?.settore_label ?? 'benchmark settore'}.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {relazioneKpiComparisons.map(comparison => (
+                    <div key={comparison.key} className="rounded-lg border border-teal-100 bg-white px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-800">{comparison.label}</span>
+                        <span className="font-bold text-teal-700">{comparison.judgement}</span>
+                      </div>
+                      <p className="mt-1 text-slate-500">
+                        Azienda {comparison.valueFormatted} · settore {comparison.benchmarkFormatted}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {Object.keys(relazioneAnswers).length === 0 ? (
               <div className="flex flex-col sm:flex-row gap-2">

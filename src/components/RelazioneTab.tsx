@@ -11,8 +11,24 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Document, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, Packer } from 'docx';
 import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { toast } from 'sonner';
-import { Download, FileText, Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import { BarChart3, Download, FileText, Loader2, Plus, Save, Trash2 } from 'lucide-react';
+import {
+  buildBankabilityAssessment,
+  type KpiResult,
+} from '@/lib/bankabilityScoring';
+import type { KpiScore } from '@/lib/generateReportPdf';
+import {
+  SECTOR_BENCHMARK_UPDATED_AT,
+  getAtecoBenchmark,
+  getAtecoBenchmarkKey,
+} from '@/lib/sectorBenchmarks';
+import {
+  buildKpiBenchmarkComparisons,
+  type KpiBenchmarkComparison,
+  type KpiBenchmarkTone,
+} from '@/lib/kpiBenchmarkComments';
 
 /* @section: relazione-commerciale-types */
 type Domanda = {
@@ -60,6 +76,15 @@ type AutoData = {
   importo: number | null;
 };
 
+type BenchmarkInfo = {
+  settoreLabel: string;
+  kpiData: Record<string, number | null>;
+  aggiornatoIl: string;
+  fonte: string;
+  periodoDati: string | null;
+  annoBilancio: number | null;
+};
+
 type Props = {
   practiceId: string;
   clientId: string;
@@ -91,6 +116,38 @@ const cell = (text: string, bold = false) => new TableCell({
   children: [new Paragraph({ children: [new TextRun({ text, bold })] })],
 });
 
+const commentCell = (text: string) => new TableCell({
+  columnSpan: 5,
+  borders: {
+    top: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+    bottom: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+    left: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+    right: { style: BorderStyle.SINGLE, size: 1, color: 'D9E2EC' },
+  },
+  children: [new Paragraph({
+    children: [
+      new TextRun({ text: 'Commento: ', bold: true }),
+      new TextRun(text),
+    ],
+  })],
+});
+
+const toneClassName: Record<KpiBenchmarkTone, string> = {
+  positive: 'bg-green-100 text-green-800 border-green-200',
+  neutral: 'bg-blue-100 text-blue-800 border-blue-200',
+  warning: 'bg-amber-100 text-amber-800 border-amber-200',
+  critical: 'bg-red-100 text-red-800 border-red-200',
+  unavailable: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+const benchmarkSourceLabel = (benchmark: BenchmarkInfo | null) => {
+  if (!benchmark) return 'Benchmark settoriale non disponibile';
+  const date = new Date(benchmark.aggiornatoIl).toLocaleDateString('it-IT');
+  const period = benchmark.periodoDati ? ` · periodo dati ${benchmark.periodoDati}` : '';
+  const year = benchmark.annoBilancio ? ` · bilancio ${benchmark.annoBilancio}` : '';
+  return `${benchmark.settoreLabel} · ${benchmark.fonte} · aggiornato al ${date}${period}${year}`;
+};
+
 export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Props) {
   const [templates, setTemplates] = useState<RelazioneTemplate[]>([]);
   const [relazioni, setRelazioni] = useState<RelazioneCommerciale[]>([]);
@@ -102,6 +159,8 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [compilingAi, setCompilingAi] = useState(false);
+  const [kpiScores, setKpiScores] = useState<KpiScore[]>([]);
+  const [benchmarkInfo, setBenchmarkInfo] = useState<BenchmarkInfo | null>(null);
 
   const activeRelazione = useMemo(
     () => relazioni.find(r => r.id === activeRelazioneId) ?? relazioni[0] ?? null,
@@ -109,6 +168,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   );
 
   const activeTemplate = activeRelazione?.relazione_templates ?? templates.find(t => t.id === activeRelazione?.template_id) ?? null;
+  const kpiComparisons = useMemo(
+    () => buildKpiBenchmarkComparisons(kpiScores, benchmarkInfo?.kpiData),
+    [benchmarkInfo?.kpiData, kpiScores]
+  );
 
   useEffect(() => {
     loadAll();
@@ -123,11 +186,18 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [{ data: tpl, error: tplErr }, { data: rel, error: relErr }, { data: client }, { data: practice }] = await Promise.all([
+      const [
+        { data: tpl, error: tplErr },
+        { data: rel, error: relErr },
+        { data: client },
+        { data: practice },
+        { data: latestBilancio },
+      ] = await Promise.all([
         supabase.from('relazione_templates').select('*').eq('attivo', true).order('nome'),
         supabase.from('relazioni_commerciali').select('*, relazione_templates(*)').eq('practice_id', practiceId).order('updated_at', { ascending: false }),
         clientId ? supabase.from('clients').select('ragione_sociale,codice_fiscale,piva,indirizzo,codice_ateco').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
         supabase.from('practices').select('importo_richiesto').eq('id', practiceId).maybeSingle(),
+        supabase.from('bilanci_kpi').select('anno_esercizio,kpi').eq('practice_id', practiceId).order('anno_esercizio', { ascending: false }).limit(1).maybeSingle(),
       ]);
       if (tplErr) throw tplErr;
       if (relErr) throw relErr;
@@ -141,6 +211,8 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       setActiveRelazioneId(prev => prev ?? normalizedRel[0]?.id ?? null);
       const c: any = client ?? {};
       const p: any = practice ?? {};
+      const latestKpi = latestBilancio?.kpi as KpiResult | null | undefined;
+      setKpiScores(latestKpi ? buildBankabilityAssessment(latestKpi).scores : []);
       setAutoData({
         ragione_sociale: c.ragione_sociale ?? '',
         cf: c.codice_fiscale ?? '',
@@ -148,6 +220,22 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         ateco: c.codice_ateco ?? '',
         indirizzo: ((c.indirizzo ?? '').split(/[\n\r]/)[0].trim()).substring(0, 150),
         importo: p.importo_richiesto ?? null,
+      });
+
+      const benchmarkKey = getAtecoBenchmarkKey(c.codice_ateco ?? null);
+      const fallback = getAtecoBenchmark(c.codice_ateco ?? null);
+      const { data: benchmarkRow } = await supabase
+        .from('sector_benchmarks')
+        .select('ateco_label,kpi_data,aggiornato_il,fonte,source_dataset,effective_period')
+        .eq('ateco_macro', benchmarkKey)
+        .maybeSingle();
+      setBenchmarkInfo({
+        settoreLabel: benchmarkRow?.ateco_label ?? fallback.label,
+        kpiData: (benchmarkRow?.kpi_data as Record<string, number | null> | null) ?? fallback.kpi as Record<string, number | null>,
+        aggiornatoIl: benchmarkRow?.aggiornato_il ?? SECTOR_BENCHMARK_UPDATED_AT,
+        fonte: benchmarkRow?.source_dataset ?? benchmarkRow?.fonte ?? 'Banca d’Italia / Mediobanca',
+        periodoDati: benchmarkRow?.effective_period ?? null,
+        annoBilancio: latestBilancio?.anno_esercizio ?? null,
       });
     } catch (error: any) {
       console.error(error);
@@ -294,6 +382,43 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: rows.map(([k, v]) => new TableRow({ children: [cell(k, true), cell(v)] })) }),
     ];
 
+    children.push(new Paragraph({ text: 'Indicatori finanziari e confronto settoriale', heading: HeadingLevel.HEADING_1 }));
+    if (kpiComparisons.length > 0) {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: benchmarkSourceLabel(benchmarkInfo), italics: true })],
+      }));
+      children.push(new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [
+          new TableRow({
+            children: [
+              cell('Indicatore', true),
+              cell('Azienda', true),
+              cell('Benchmark', true),
+              cell('Scostamento', true),
+              cell('Giudizio', true),
+            ],
+          }),
+          ...kpiComparisons.flatMap(comparison => [
+            new TableRow({
+              children: [
+                cell(`${comparison.label} (${comparison.areaLabel})`, true),
+                cell(comparison.valueFormatted),
+                cell(comparison.benchmarkFormatted),
+                cell(`${comparison.deltaFormatted} / ${comparison.deltaPercentFormatted}`),
+                cell(comparison.judgement, true),
+              ],
+            }),
+            new TableRow({ children: [commentCell(comparison.comment)] }),
+          ]),
+        ],
+      }));
+    } else {
+      children.push(new Paragraph({
+        children: [new TextRun('KPI non disponibili. Analizzare il bilancio prima di generare la relazione commerciale.')],
+      }));
+    }
+
     template.sezioni.forEach(section => {
       children.push(new Paragraph({ text: section.titolo, heading: HeadingLevel.HEADING_1 }));
       section.domande.forEach(question => {
@@ -338,6 +463,60 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     addText(`Attività ATECO: ${autoData.ateco || 'N/D'}`);
     addText(`Sede Legale: ${autoData.indirizzo || 'N/D'}`);
     addText(`Importo Richiesto: ${formatEuro(autoData.importo)}`);
+
+    addText('Indicatori finanziari e confronto settoriale', 14, true);
+    if (kpiComparisons.length > 0) {
+      addText(benchmarkSourceLabel(benchmarkInfo), 8);
+      autoTable(doc, {
+        startY: y,
+        head: [['Indicatore', 'Area', 'Azienda', 'Benchmark', 'Scostamento', 'Giudizio', 'Commento']],
+        body: kpiComparisons.map(comparison => [
+          comparison.label,
+          comparison.areaLabel,
+          comparison.valueFormatted,
+          comparison.benchmarkFormatted,
+          `${comparison.deltaFormatted}\n${comparison.deltaPercentFormatted}`,
+          comparison.judgement,
+          comparison.comment,
+        ]),
+        margin: { left: 15, right: 15 },
+        styles: { fontSize: 6.4, cellPadding: 1.5, overflow: 'linebreak', valign: 'top' },
+        headStyles: { fillColor: [15, 118, 110], textColor: [255, 255, 255], fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 25, fontStyle: 'bold' },
+          1: { cellWidth: 18 },
+          2: { cellWidth: 18, halign: 'right' },
+          3: { cellWidth: 18, halign: 'right' },
+          4: { cellWidth: 20, halign: 'right' },
+          5: { cellWidth: 23, fontStyle: 'bold' },
+          6: { cellWidth: 58 },
+        },
+        didParseCell(data) {
+          if (data.section !== 'body' || data.column.index !== 5) return;
+          const comparison = kpiComparisons[data.row.index];
+          if (!comparison) return;
+          if (comparison.tone === 'positive') {
+            data.cell.styles.fillColor = [220, 252, 231];
+            data.cell.styles.textColor = [22, 101, 52];
+          } else if (comparison.tone === 'neutral') {
+            data.cell.styles.fillColor = [219, 234, 254];
+            data.cell.styles.textColor = [30, 64, 175];
+          } else if (comparison.tone === 'warning') {
+            data.cell.styles.fillColor = [254, 243, 199];
+            data.cell.styles.textColor = [146, 64, 14];
+          } else if (comparison.tone === 'critical') {
+            data.cell.styles.fillColor = [254, 226, 226];
+            data.cell.styles.textColor = [185, 28, 28];
+          } else {
+            data.cell.styles.fillColor = [241, 245, 249];
+            data.cell.styles.textColor = [71, 85, 105];
+          }
+        },
+      });
+      y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+    } else {
+      addText('KPI non disponibili. Analizzare il bilancio prima di generare la relazione commerciale.', 10);
+    }
 
     template.sezioni.forEach(section => {
       addText(section.titolo, 14, true);
@@ -493,6 +672,66 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                     <div><span className="text-muted-foreground">ATECO:</span> <b>{autoData.ateco || 'N/D'}</b></div>
                     <div><span className="text-muted-foreground">Importo:</span> <b>{formatEuro(autoData.importo)}</b></div>
                     <div className="md:col-span-2"><span className="text-muted-foreground">Sede Legale:</span> <b>{autoData.indirizzo || 'N/D'}</b></div>
+                  </div>
+                </div>
+
+                <div className="mb-4 rounded-lg border bg-white">
+                  <div className="flex flex-col gap-2 border-b bg-teal-50/70 p-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-semibold text-teal-900">
+                        <BarChart3 className="h-4 w-4" />
+                        Indicatori finanziari e confronto settoriale
+                      </div>
+                      <p className="mt-1 text-xs text-teal-800">
+                        Ogni commento considera il valore aziendale, il benchmark e la direzione economica corretta dell’indicatore.
+                      </p>
+                    </div>
+                    {benchmarkInfo && (
+                      <Badge variant="outline" className="w-fit border-teal-200 bg-white text-teal-800">
+                        {benchmarkInfo.settoreLabel}
+                      </Badge>
+                    )}
+                  </div>
+                  {kpiComparisons.length > 0 ? (
+                    <div className="divide-y">
+                      {kpiComparisons.map((comparison: KpiBenchmarkComparison) => (
+                        <div key={comparison.key} className="p-4">
+                          <div className="grid gap-3 lg:grid-cols-[minmax(150px,1.1fr)_repeat(3,minmax(90px,0.6fr))_auto] lg:items-center">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">{comparison.label}</p>
+                              <p className="text-[11px] text-muted-foreground">{comparison.areaLabel}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Azienda</p>
+                              <p className="text-sm font-bold tabular-nums">{comparison.valueFormatted}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Benchmark</p>
+                              <p className="text-sm font-medium tabular-nums">{comparison.benchmarkFormatted}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Scostamento</p>
+                              <p className="text-sm font-medium tabular-nums">
+                                {comparison.deltaFormatted}
+                                <span className="ml-1 text-xs text-muted-foreground">({comparison.deltaPercentFormatted})</span>
+                              </p>
+                            </div>
+                            <Badge className={toneClassName[comparison.tone]}>{comparison.judgement}</Badge>
+                          </div>
+                          <p className="mt-3 text-xs leading-relaxed text-slate-600">{comparison.comment}</p>
+                          {comparison.score !== null && (
+                            <p className="mt-1 text-[10px] text-muted-foreground">Score interno di bancabilità: {comparison.score}/100</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-4 text-sm text-muted-foreground">
+                      KPI non disponibili. Analizza il bilancio nella scheda “Analisi Finanziaria” per attivare il confronto.
+                    </div>
+                  )}
+                  <div className="border-t bg-slate-50 px-4 py-2 text-[10px] text-muted-foreground">
+                    {benchmarkSourceLabel(benchmarkInfo)}
                   </div>
                 </div>
 
