@@ -295,6 +295,20 @@ describe('balance anomaly engine', () => {
     ]));
   });
 
+  it('riduce la forza degli alert quando la qualità dell’estrazione è bassa', () => {
+    const result = analyzeBalanceAnomalies({
+      current: { ...baseBalance, totale_attivo: 1_300_000 },
+      rawText: 'Totale attivo 1.300.000',
+      sectorKey: 'manifattura',
+    });
+    const finding = result.findings.find(item => item.id === 'quadratura-stato-patrimoniale');
+
+    expect(result.data_quality_level).toBe('bassa');
+    expect(finding?.severity).toBe('media');
+    expect(finding?.confidence).toBe('bassa');
+    expect(finding?.explanation).toContain('qualità dell’estrazione è bassa');
+  });
+
   it('classifica i dati insufficienti come problema di qualità senza formulare accuse', () => {
     const result = analyzeBalanceAnomalies({
       current: { anno_esercizio: 2025, totale_attivo: 100_000 },

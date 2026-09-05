@@ -933,7 +933,23 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
 
   const uniqueFindings = [...new Map(findings.map(finding => [finding.id, finding])).values()]
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.title.localeCompare(b.title, 'it'));
-  const score = Math.min(100, uniqueFindings.reduce((sum, finding) => {
+  const qualityLimited = qualityScore < 55;
+  const effectiveFindings = qualityLimited
+    ? uniqueFindings.map(finding => {
+      if (finding.category === 'qualita_dato') return finding;
+      const severity: BalanceAnomalySeverity = finding.severity === 'alta' ? 'media' : 'bassa';
+      return {
+        ...finding,
+        severity,
+        confidence: 'bassa' as BalanceAnomalyConfidence,
+        explanation: `${finding.explanation} La confidenza è stata ridotta perché la qualità dell’estrazione è bassa.`,
+      };
+    })
+    : uniqueFindings;
+  if (qualityLimited) {
+    qualityNotes.push('Le segnalazioni non legate alla qualità del dato sono state declassate: verificare prima il documento originale.');
+  }
+  const score = Math.min(100, effectiveFindings.reduce((sum, finding) => {
     const confidenceFactor = finding.confidence === 'alta' ? 1 : finding.confidence === 'media' ? 0.75 : 0.45;
     return sum + SEVERITY_WEIGHT[finding.severity] * confidenceFactor;
   }, 0));
@@ -948,14 +964,14 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     engine_version: BALANCE_ANOMALY_ENGINE_VERSION,
     score: roundedScore,
     level,
-    findings: uniqueFindings,
+    findings: effectiveFindings,
     analyzed_at: new Date().toISOString(),
     ateco_code: input.atecoCode ?? undefined,
     sector_key: sectorKey,
     sector_label: input.sectorLabel ?? undefined,
     comparison_year: previous?.anno_esercizio ?? null,
     line_items_analyzed: lineItems.length,
-    line_items_flagged: uniqueFindings.filter(finding => finding.category === 'posta_da_chiarire').length,
+    line_items_flagged: effectiveFindings.filter(finding => finding.category === 'posta_da_chiarire').length,
     validation_checks: validationChecks,
     data_quality_score: Math.max(0, Math.min(100, qualityScore)),
     data_quality_level: qualityScore >= 80 ? 'alta' : qualityScore >= 55 ? 'media' : 'bassa',
