@@ -248,6 +248,53 @@ describe('balance anomaly engine', () => {
     expect(result.line_items_flagged).toBe(1);
   });
 
+  it('calcola separatamente l’attendibilità dell’estrazione', () => {
+    const rawText = [
+      'Stato patrimoniale',
+      'Attivo',
+      'Totale attivo 1.000.000 900.000',
+      'Immobilizzazioni materiali 250.000 220.000',
+      'Rimanenze 180.000 160.000',
+      'Crediti 180.000 150.000',
+      'Disponibilità liquide 120.000 110.000',
+      'Passivo',
+      'Totale patrimonio netto 300.000 280.000',
+      'Totale debiti 640.000 580.000',
+      'Totale passivo 1.000.000 900.000',
+      'Conto economico',
+      'Ricavi delle vendite 900.000 850.000',
+      'Totale valore della produzione 1.000.000 950.000',
+      'Totale costi della produzione 900.000 860.000',
+      'Differenza tra valore e costi della produzione 100.000 90.000',
+      'Utile (perdita) dell’esercizio 56.000 50.000',
+    ].join('\n');
+    const result = analyzeBalanceAnomalies({
+      current: baseBalance,
+      rawText,
+      sectorKey: 'manifattura',
+    });
+
+    expect(result.data_quality_score).toBe(100);
+    expect(result.data_quality_level).toBe('alta');
+    expect(result.data_quality_notes).toEqual([]);
+  });
+
+  it('abbassa la qualità quando il testo non contiene sezioni o voci sufficienti', () => {
+    const result = analyzeBalanceAnomalies({
+      current: baseBalance,
+      rawText: 'Totale attivo 1.000.000',
+      sectorKey: 'manifattura',
+    });
+
+    expect(result.data_quality_level).toBe('bassa');
+    expect(result.data_quality_score).toBeLessThan(55);
+    expect(result.data_quality_notes).toEqual(expect.arrayContaining([
+      expect.stringContaining('Stato patrimoniale'),
+      expect.stringContaining('Conto economico'),
+      expect.stringContaining('Sono state riconosciute solo'),
+    ]));
+  });
+
   it('classifica i dati insufficienti come problema di qualità senza formulare accuse', () => {
     const result = analyzeBalanceAnomalies({
       current: { anno_esercizio: 2025, totale_attivo: 100_000 },

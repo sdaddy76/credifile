@@ -43,6 +43,9 @@ interface BilancioRecord {
   anomaly_score: number | null;
   anomaly_level: BalanceAnomalyAnalysis['level'] | null;
   anomaly_engine_version: string | null;
+  data_quality_score?: number;
+  data_quality_level?: 'alta' | 'media' | 'bassa';
+  data_quality_notes?: string[];
   created_at: string;
 }
 
@@ -1436,6 +1439,34 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                       <span>Poste poco chiare: <strong className="text-foreground">{selectedBilancio.anomaly_analysis.line_items_flagged ?? 0}</strong></span>
                       <span>Alert aperti: <strong className="text-foreground">{selectedAlerts.filter(alert => alert.status === 'open').length}</strong></span>
                     </div>
+                    {selectedBilancio.anomaly_analysis.data_quality_score !== undefined && (
+                      <div className={`rounded-lg border p-3 ${
+                        selectedBilancio.anomaly_analysis.data_quality_level === 'alta'
+                          ? 'border-green-200 bg-green-50/70'
+                          : selectedBilancio.anomaly_analysis.data_quality_level === 'media'
+                            ? 'border-amber-200 bg-amber-50/70'
+                            : 'border-red-200 bg-red-50/70'
+                      }`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold text-foreground">Attendibilità dell’estrazione</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Qualità del testo letto dal documento, distinta dal punteggio delle anomalie.
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="font-bold">
+                            {selectedBilancio.anomaly_analysis.data_quality_score}/100 · {selectedBilancio.anomaly_analysis.data_quality_level ?? 'N/D'}
+                          </Badge>
+                        </div>
+                        {selectedBilancio.anomaly_analysis.data_quality_notes && selectedBilancio.anomaly_analysis.data_quality_notes.length > 0 && (
+                          <ul className="mt-2 space-y-1">
+                            {selectedBilancio.anomaly_analysis.data_quality_notes.map((note, index) => (
+                              <li key={index} className="text-[11px] leading-relaxed text-muted-foreground">• {note}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                     {selectedBilancio.anomaly_analysis.validation_checks && selectedBilancio.anomaly_analysis.validation_checks.length > 0 && (
                       <div className="rounded-lg border bg-slate-50/70 p-3">
                         <div className="flex items-start gap-2">

@@ -8,6 +8,7 @@ export type BalanceAnomalyCategory =
 export type BalanceAnomalySeverity = 'alta' | 'media' | 'bassa';
 export type BalanceAnomalyConfidence = 'alta' | 'media' | 'bassa';
 export type BalanceValidationCheckStatus = 'passed' | 'attention' | 'unavailable';
+export type BalanceDataQualityLevel = 'alta' | 'media' | 'bassa';
 
 export interface BalanceAnomalyFinding {
   id: string;
@@ -42,6 +43,9 @@ export interface BalanceAnomalyAnalysis {
   line_items_analyzed: number;
   line_items_flagged: number;
   validation_checks?: BalanceValidationCheck[];
+  data_quality_score?: number;
+  data_quality_level?: BalanceDataQualityLevel;
+  data_quality_notes?: string[];
   disclaimer: string;
 }
 
@@ -103,7 +107,7 @@ export interface AnalyzeBalanceAnomaliesInput {
   benchmark?: Record<string, number | null> | null;
 }
 
-export const BALANCE_ANOMALY_ENGINE_VERSION = '1.2.0';
+export const BALANCE_ANOMALY_ENGINE_VERSION = '1.3.0';
 
 export const BALANCE_ANOMALY_DISCLAIMER =
   'L’analisi evidenzia anomalie di bilancio da approfondire, incoerenze e poste che richiedono maggiori informazioni. ' +
@@ -366,6 +370,8 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
   const sectorKey = input.sectorKey || inferAtecoSectorKey(input.atecoCode);
   const findings: BalanceAnomalyFinding[] = [];
   const lineItems = input.rawText ? extractBalanceLineItems(input.rawText) : [];
+  const qualityNotes: string[] = [];
+  let qualityScore = 100;
 
   const coreFields = [
     current.totale_attivo,
@@ -376,6 +382,47 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     current.utile_netto ?? current.utile_perdita_esercizio,
   ];
   const missingCore = coreFields.filter(value => !finite(value)).length;
+  if (!input.rawText?.trim()) {
+    qualityScore -= 25;
+    qualityNotes.push('Testo sorgente non disponibile: la verifica usa i valori già estratti.');
+  } else {
+    const hasStateSection = /(?:^|\n)\s*stato patrimoniale\b/i.test(input.rawText);
+    const hasIncomeSection = /(?:^|\n)\s*conto economico\b/i.test(input.rawText);
+    const stateIndex = input.rawText.search(/(?:^|\n)\s*stato patrimoniale\b/i);
+    const contoIndex = input.rawText.search(/(?:^|\n)\s*conto economico\b/i);
+    const stateText = stateIndex >= 0
+      ? input.rawText.slice(stateIndex, contoIndex > stateIndex ? contoIndex : input.rawText.length)
+      : '';
+    const activeIndex = stateText.search(/\battivo\b/i);
+    const passiveIndex = stateText.search(/\bpassivo\b/i);
+    const activeLength = activeIndex >= 0
+      ? stateText.slice(activeIndex, passiveIndex > activeIndex ? passiveIndex : stateText.length).length
+      : 0;
+    const passiveLength = passiveIndex >= 0 ? stateText.slice(passiveIndex).length : 0;
+    if (!hasStateSection) {
+      qualityScore -= 15;
+      qualityNotes.push('Sezione Stato patrimoniale non riconosciuta con certezza.');
+    }
+    if (!hasIncomeSection) {
+      qualityScore -= 15;
+      qualityNotes.push('Sezione Conto economico non riconosciuta con certezza.');
+    }
+    if (lineItems.length === 0) {
+      qualityScore -= 30;
+      qualityNotes.push('Nessuna voce analitica riconosciuta nel testo del documento.');
+    } else if (lineItems.length < 8) {
+      qualityScore -= 10;
+      qualityNotes.push(`Sono state riconosciute solo ${lineItems.length} voci analitiche.`);
+    }
+    if (activeLength < 20 || passiveLength < 20) {
+      qualityScore -= 10;
+      qualityNotes.push('Il dettaglio di una sezione dello stato patrimoniale è limitato.');
+    }
+  }
+  if (missingCore > 0) {
+    qualityScore -= Math.min(30, missingCore * 5);
+    qualityNotes.push(`Voci principali non estratte: ${missingCore} su ${coreFields.length}.`);
+  }
   const validationChecks: BalanceValidationCheck[] = [{
     id: 'completezza-dati-principali',
     label: 'Completezza dei dati principali',
@@ -910,6 +957,9 @@ export function analyzeBalanceAnomalies(input: AnalyzeBalanceAnomaliesInput): Ba
     line_items_analyzed: lineItems.length,
     line_items_flagged: uniqueFindings.filter(finding => finding.category === 'posta_da_chiarire').length,
     validation_checks: validationChecks,
+    data_quality_score: Math.max(0, Math.min(100, qualityScore)),
+    data_quality_level: qualityScore >= 80 ? 'alta' : qualityScore >= 55 ? 'media' : 'bassa',
+    data_quality_notes: qualityNotes,
     disclaimer: BALANCE_ANOMALY_DISCLAIMER,
   };
 }
