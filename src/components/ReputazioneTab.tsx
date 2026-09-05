@@ -9,6 +9,7 @@ import {
   BarChart2, Minus, Ban, RotateCcw, Info, FileSearch, MapPin, Briefcase,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { pdfTextItemsToLines } from '@/lib/pdfTextLines';
 
 interface Props { practiceId: string; clientId: string }
 
@@ -710,7 +711,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
-        testo += content.items.map((item) => ('str' in item ? (item as { str: string }).str : '')).join(' ') + '\n';
+        testo += pdfTextItemsToLines(content.items).join('\n') + '\n';
       }
       if (testo.trim().length < 50) throw new Error('Testo estratto troppo breve. Il PDF potrebbe essere scansionato (immagine).');
 

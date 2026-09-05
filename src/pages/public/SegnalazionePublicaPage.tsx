@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Upload, X, FileText, Send, Plus, Loader2, CheckCircle2 } from 'lucide-react';
+import { extractPdfText, parseVisuraCompleta } from '@/lib/parseVisura';
 
 interface FileItem {
   id: string;
@@ -51,7 +52,7 @@ export default function SegnalazionePublicaPage() {
   const [formStartedAt, setFormStartedAt] = useState(() => Date.now());
 
   // ── Gestione visura ────────────────────────────────────────────────────────
-  const handleVisura = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVisura = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
     if (f.type !== 'application/pdf') { setErrore('La visura deve essere un PDF'); return; }
@@ -59,6 +60,23 @@ export default function SegnalazionePublicaPage() {
     setErrore('');
     setVisura(f);
     e.target.value = '';
+    // La visura è la fonte primaria per i dati identificativi. Se il PDF
+    // contiene testo, precompiliamo ragione sociale e P.IVA evitando che il
+    // cliente debba riscriverle e riducendo il rischio di disallineamenti.
+    try {
+      const parsed = parseVisuraCompleta(await extractPdfText(await f.arrayBuffer()));
+      if (parsed.ragione_sociale) setRagioneSociale(parsed.ragione_sociale);
+      if (parsed.piva) setPiva(parsed.piva);
+      if (parsed.ragione_sociale || parsed.piva) {
+        setErrore('');
+      } else {
+        setErrore('Non è stato possibile leggere i dati identificativi: verifica ragione sociale e P.IVA.');
+      }
+    } catch {
+      // Il file resta selezionato: per PDF scansionati l’utente può inserire
+      // manualmente i dati, mentre l’agente potrà usare OCR/import visura.
+      setErrore('Visura caricata. Inserisci ragione sociale e P.IVA se non vengono rilevate automaticamente.');
+    }
   };
 
   // ── Gestione altri documenti ───────────────────────────────────────────────

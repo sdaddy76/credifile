@@ -1,10 +1,9 @@
 import * as pdfjs from 'pdfjs-dist';
 import type { Socio, Amministratore } from './types';
+import { pdfTextItemsToLines } from './pdfTextLines';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
 export type SocioResult = Socio;
 export type AmministratoreResult = Amministratore;
@@ -56,7 +55,9 @@ export async function extractPdfText(arrayBuffer: ArrayBuffer): Promise<string> 
   for (let i = 1; i <= pdf.numPages; i++) {
     const pg = await pdf.getPage(i);
     const ct = await pg.getTextContent();
-    pages.push(ct.items.map((it: unknown) => (it as { str?: string }).str ?? '').join(' '));
+    // Conserva le righe ricostruite dalle coordinate PDF: la compagine
+    // societaria è spesso una tabella e l'ordine dei campi è significativo.
+    pages.push(pdfTextItemsToLines(ct.items).join('\n'));
   }
   return pages.join('\n');
 }
@@ -94,85 +95,150 @@ export function parseDataCostituzione(text: string): string | undefined {
 }
 
 export function parseSoci(raw: string): SocioResult[] {
-  const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|rappresentanza|persone\s+che\s+esercitano)/i;
-  const s4 = isolaSezione(raw, [/composizione\s+societaria/i], END_S5)
-    || isolaSezione(raw, [/(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|quote\s+sociali|TITOLARI\s+DI\s+QUOTE)/i], END_S5)
-    || raw;
+  // Le visure PDF non hanno un formato unico: a seconda del gestore le
+  // colonne possono essere nell'ordine nome/CF/valore/% oppure CF/nome/%.
+  // Manteniamo quindi le righe e analizziamo una finestra di righe vicine,
+  // invece di affidarsi a una sola regex sul testo appiattito.
+  const normalized = raw
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n')
+    .trim();
+  const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*(?:Amministrat|Organ|Organi)|organi\s+sociali|organi\s+amministrativi|rappresentanza|persone\s+che\s+esercitano|cariche\s+sociali)/i;
+  const s4 = isolaSezione(normalized, [
+    /composizione\s+societaria/i,
+    /compagine\s+societaria/i,
+    /assetto\s+proprietario/i,
+    /elenco\s+soci/i,
+    /soci\s+e\s+titolari/i,
+    /titolari\s+(?:di\s+)?(?:quote|diritti)/i,
+  ], END_S5)
+    || isolaSezione(normalized, [
+      /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|quote\s+sociali|partecipazioni\s+sociali)/i,
+    ], END_S5)
+    || normalized;
 
+  const lines = s4.split('\n').map(line => line.trim()).filter(Boolean);
   const results: SocioResult[] = [];
-  const seen = new Set<string>();
-
-  const DIRETTO_RE = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{0,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{0,24}){1,3})\s+(?:C(?:odice)?\s*F(?:iscale)?\s*[:\-]?\s*)?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
-  let dm: RegExpExecArray | null;
-  while ((dm = DIRETTO_RE.exec(s4)) !== null) {
-    const nome = dm[1].replace(/\s{2,}/g, ' ').trim();
-    const cf = dm[2];
-    if (seen.has(cf)) continue;
-    if (/^(?:CODICE\s+FISCALE|CODICE|FISCALE|SEZIONE|TIPO|VALORE|QUOTA|SOCI|NOME|COGNOME)\b/i.test(nome)) continue;
-    seen.add(cf);
-    const after = s4.substring(dm.index + dm[0].length, dm.index + dm[0].length + 200);
-    const valMatch = after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/) ?? after.match(/(?:€|euro)\s*([\d.,]+)/i);
-    const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,4})?)\s*%/);
-    results.push({ nome, codice_fiscale: cf, valore: valMatch?.[1] ?? '', percentuale: percMatch?.[1] ? percMatch[1] + '%' : '' });
-  }
-
-  const TABELLA_RE = /\b((?:[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'\-]+\s+){1,3}[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'\-]+)\s+([\d.]+,\d{2})\s+([\d,]+)\s*%(?:\s+\S+){0,3}\s+([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
-  let tb: RegExpExecArray | null;
-  while ((tb = TABELLA_RE.exec(s4)) !== null) {
-    const cf = tb[4];
-    const nome = tb[1].replace(/\s{2,}/g, ' ').trim();
-    if (seen.has(cf)) continue;
-    if (/^(?:CODICE\s+FISCALE|SOCIO|TIPO|VALORE|QUOTA|SEZIONE)\b/i.test(nome)) continue;
-    seen.add(cf);
-    results.push({ nome, codice_fiscale: cf, valore: tb[2] ?? '', percentuale: tb[3] ? tb[3] + '%' : '' });
-  }
-
-  CF_PF_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = CF_PF_RE.exec(s4)) !== null) {
-    const cf = m[1];
-    if (seen.has(cf)) continue;
-    seen.add(cf);
-    const before = s4.substring(Math.max(0, m.index - 90), m.index)
-      .replace(/\b\d{1,3}(?:\.\d{3})*(?:,\d+)?\b/g, ' ')
-      .replace(/[\d€%\/\(\)]+/g, ' ')
-      .replace(/\s{2,}/g, ' ').trim();
-    const after = s4.substring(m.index + cf.length, m.index + cf.length + 200);
-    const rawName = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50})\s*$/)?.[1]?.trim()
-      ?? after.match(/^\s*,?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{4,50}?)(?=\s+(?:nato|nata|%|\d))/i)?.[1]?.trim()
-      ?? '';
-    const nome = rawName.replace(/\b(?:CODICE|FISCALE|TIPO|VALORE|QUOTA|SOCI|TITOLARI)\b/gi, '').replace(/\s{2,}/g, ' ').trim();
-    if (!nome || nome.length < 3) continue;
-    const valMatch = after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/);
-    const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,4})?)\s*%/) ?? before.match(/([\d]{1,3}(?:[,\.]\d{1,4})?)\s*%/);
-    results.push({ nome, codice_fiscale: cf, valore: valMatch?.[1] ?? '', percentuale: percMatch?.[1] ? percMatch[1] + '%' : '' });
-  }
-
-  const COMP_RE = /([A-Z0-9][A-Z0-9\s\.\'\-]{2,60}?(?:SRL|S\.R\.L\.|SPA|S\.P\.A\.|SNC|SAS|S\.S\.|SCARL|SCRL|COOP)\.?)\s+(\d{11})\s+([\d.,]+)\s+([\d,]+(?:[.,]\d+)?)\s*%/gi;
-  let mc: RegExpExecArray | null;
-  while ((mc = COMP_RE.exec(s4)) !== null) {
-    const piva = mc[2];
-    if (seen.has(piva)) continue;
-    seen.add(piva);
-    const nome = mc[1].replace(/\s{2,}/g, ' ').trim();
-    if (nome.length >= 3) results.push({ nome, codice_fiscale: piva, valore: mc[3], percentuale: mc[4] + '%' });
-  }
-
+  const seen = new Map<string, number>();
+  const STOP_WORDS = new Set([
+    'SOCIO', 'SOCI', 'TITOLARE', 'TITOLARI', 'QUOTA', 'QUOTE', 'SOCIALE',
+    'PARTECIPAZIONE', 'PARTECIPAZIONI', 'CODICE', 'FISCALE', 'NOME',
+    'COGNOME', 'VALORE', 'PERCENTUALE', 'TIPO', 'DIRITTI', 'SEZIONE',
+    'CAPITALE', 'NATO', 'NATA', 'RESIDENTE', 'DOMICILIO', 'AMMINISTRATORE',
+    'PRESIDENTE', 'CONSIGLIERE', 'RAPPRESENTANTE', 'CARICA', 'E',
+    'COMPOSIZIONE', 'SOCIETARIA', 'EUR', 'EURO',
+  ]);
+  const CF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gi;
   const PIVA_RE = /\b(\d{11})\b/g;
-  let pm: RegExpExecArray | null;
-  while ((pm = PIVA_RE.exec(s4)) !== null) {
-    const piva = pm[1];
-    if (seen.has(piva)) continue;
-    const after = s4.substring(pm.index + piva.length, pm.index + piva.length + 150);
-    if (!after.match(/%/)) continue;
-    seen.add(piva);
-    const before = s4.substring(Math.max(0, pm.index - 90), pm.index).replace(/[\d€%\/\(\)]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
-    const rawNome = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50})\s*$/)?.[1]?.trim() ?? '';
-    const nome = rawNome.replace(/\b(?:CODICE|FISCALE|TIPO|VALORE|QUOTA)\b/gi, '').replace(/\s{2,}/g, ' ').trim();
-    if (!nome || nome.length < 3) continue;
-    const valMatch = after.match(/\b([\d]{1,3}(?:\.\d{3})*,\d{2})\b/);
-    const percMatch = after.match(/([\d]{1,3}(?:[,\.]\d{1,4})?)\s*%/);
-    results.push({ nome, codice_fiscale: piva, valore: valMatch?.[1] ?? '', percentuale: percMatch?.[1] ? percMatch[1] + '%' : '' });
+  const VALUE_RE = /(?:€|euro|eur)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))\s*(?:€|euro|eur)?/i;
+  const PCT_RE = /(\d{1,3}(?:[.,]\d{1,4})?)\s*%/i;
+  const normalizeKey = (value: string) => value.toUpperCase().replace(/[^A-Z0-9ÀÈÉÌÒÙ]/g, '');
+  const cleanName = (value: string): string => value
+    .replace(/\b(?:CODICE|FISCALE|CF|P\.?\s*IVA|NOME|COGNOME|SOCIO|SOCI|TITOLARE|TITOLARI|QUOTA|QUOTE|VALORE|PERCENTUALE|DIRITTI)\b/gi, ' ')
+    .replace(/\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/gi, ' ')
+    .replace(/\b\d{11}\b/g, ' ')
+    .replace(/\b\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?\b/g, ' ')
+    .replace(/[%€|:;()[\]{}]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  const nameFrom = (value: string): string => {
+    const cleaned = cleanName(value);
+    const tokens = cleaned.split(/\s+/).filter(Boolean);
+    if (tokens.length < 2) return '';
+    // Prendi l'ultimo gruppo di parole utile prima dell'identificativo:
+    // le intestazioni del PDF ("composizione societaria", "cognome e nome")
+    // vengono così escluse senza imporre che il nominativo sia tutto maiuscolo.
+    let end = tokens.length;
+    while (end > 0 && STOP_WORDS.has(tokens[end - 1].toUpperCase())) end--;
+    let start = Math.max(0, end - 6);
+    for (let i = end - 2; i >= start; i--) {
+      if (STOP_WORDS.has(tokens[i].toUpperCase())) {
+        start = i + 1;
+        break;
+      }
+    }
+    let candidate = tokens.slice(start, end).join(' ');
+    // Evita l'artefatto frequente "E DI ROSSI MARIO" prodotto da colonne
+    // estratte in ordine diverso, senza eliminare un cognome "DI ...".
+    candidate = candidate.replace(/^E\s+DI\s+/i, '').trim();
+    return candidate.split(/\s+/).length >= 2 ? candidate : '';
+  };
+  const add = (nome: string, id: string, valore = '', percentuale = '') => {
+    const clean = nameFrom(nome);
+    if (!clean || clean.length < 3 || STOP_WORDS.has(clean.toUpperCase())) return;
+    const key = normalizeKey(id) || normalizeKey(clean);
+    const existing = seen.get(key);
+    if (existing !== undefined) {
+      // Se la stessa riga è stata ricostruita da due pattern, conserviamo
+      // la versione con più dati invece di creare un doppione.
+      if (!results[existing].valore && valore) results[existing].valore = valore;
+      if (!results[existing].percentuale && percentuale) results[existing].percentuale = percentuale;
+      if (results[existing].nome.length < clean.length) results[existing].nome = clean;
+      return;
+    }
+    seen.set(key, results.length);
+    results.push({ nome: clean, codice_fiscale: id, valore, percentuale });
+  };
+
+  const idMatches = (value: string): string[] => [
+    ...Array.from(value.matchAll(CF_RE), m => m[1]),
+    ...Array.from(value.matchAll(PIVA_RE), m => m[1]),
+  ];
+  const contextFor = (index: number): string => lines
+    .slice(Math.max(0, index - 2), Math.min(lines.length, index + 3))
+    .join(' ');
+
+  // Prima passata: righe tabellari e blocchi "Socio: ... / Codice fiscale: ...".
+  lines.forEach((line, index) => {
+    const context = contextFor(index);
+    const ids = idMatches(context);
+    if (!ids.length) return;
+    const ownershipContext = /soci?|titolari?|quot[ae]|partecipazion|compagine|assetto\s+proprietario|%/i.test(context);
+    if (!ownershipContext) return;
+    const administrationOnly = /amministrator|presidente|consigliere|sindaco|revisore|liquidatore|cariche\s+sociali/i.test(line)
+      && !/soci?|titolari?|quot[ae]|partecipazion/i.test(line);
+    if (administrationOnly) return;
+    // Se la riga contiene già l'identificativo, usiamo quello della riga:
+    // la finestra può includere anche il socio precedente/successivo.
+    const lineIds = idMatches(line);
+    const id = lineIds[0] ?? ids[0];
+    const source = lineIds.length ? line : context;
+    const idPos = source.indexOf(id);
+    const before = idPos >= 0 ? source.slice(0, idPos) : source;
+    const after = idPos >= 0 ? source.slice(idPos + id.length) : '';
+    const labeledName = context.match(/(?:socio|titolare|quotista|partecipante)\s*[:\-]?\s*([^|;]+)/i)?.[1] ?? '';
+    const nome = nameFrom(before) || nameFrom(labeledName) || nameFrom(after);
+    const valueMatch = source.match(/(?:valore|quota|capitale|importo|€|eur)\s*[:\-]?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)
+      ?? source.match(VALUE_RE)
+      ?? context.match(VALUE_RE);
+    const pctMatch = source.match(PCT_RE) ?? context.match(PCT_RE);
+    add(nome, id, valueMatch?.[1] ?? '', pctMatch?.[1] ? `${pctMatch[1]}%` : '');
+  });
+
+  // Seconda passata: record societari con P.IVA e percentuale, incluse
+  // denominazioni con apostrofi/punti e ordine colonne variabile.
+  for (const line of lines) {
+    const piva = line.match(PIVA_RE)?.[1];
+    const pct = line.match(PCT_RE)?.[1];
+    if (!piva || !pct) continue;
+    const before = line.slice(0, line.indexOf(piva));
+    const after = line.slice(line.indexOf(piva) + piva.length);
+    const value = line.match(/(?:€|eur|valore|quota)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)?.[1] ?? '';
+    add(nameFrom(before) || nameFrom(after), piva, value, `${pct}%`);
+  }
+
+  // Fallback per testi ancora appiattiti: copre il formato più comune
+  // "NOME COGNOME CF VALORE PERCENTUALE" senza reintrodurre gli amministratori.
+  const flat = s4.replace(/\n/g, ' ');
+  const direct = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}){1,4})\s+(?:C(?:odice)?\s*F(?:iscale)?\s*[:\-]?\s*)?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gi;
+  for (const match of flat.matchAll(direct)) {
+    const after = flat.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 180);
+    const pct = after.match(PCT_RE)?.[1] ?? '';
+    const value = after.match(VALUE_RE)?.[1] ?? '';
+    if (pct || /soci?|titolari?|quot[ae]|partecipazion/i.test(flat.slice(Math.max(0, (match.index ?? 0) - 80), (match.index ?? 0) + 80))) {
+      add(match[1], match[2], value, pct ? `${pct}%` : '');
+    }
   }
 
   return results;
@@ -316,7 +382,10 @@ export function parseVisuraCompleta(text: string): VisuraResult {
   const data_costituzione = parseDataCostituzione(flat);
   const capitale_versato = get([/[Cc]apitale\s+sociale\s+in\s+[Ee]uro\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i, /[Cc]apitale\s+(?:sociale\s+)?(?:interamente\s+)?versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i, /[Cc]apitale\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i, /versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i]);
   const capitaleSocialeRaw = get([/[Cc]apitale\s+sociale\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i]);
-  const soci = parseSoci(flat);
+  // Il parser soci usa le righe per ricostruire correttamente le colonne del
+  // PDF; non passare il testo appiattito, altrimenti due righe adiacenti
+  // possono essere deduplicate come se fossero lo stesso socio.
+  const soci = parseSoci(clean);
   const sociCFs = new Set(soci.map(s => s.codice_fiscale).filter(Boolean));
   const amministratori = parseAmministratori(flat, sociCFs);
 

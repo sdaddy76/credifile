@@ -6,9 +6,11 @@ module.exports = {
   testMatch: ['**/*.test.ts'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    '^pdfjs-dist$': '<rootDir>/src/__mocks__/pdfjs.ts',
+    '^pdfjs-dist/build/pdf\\.worker\\.min\\.mjs\\?url$': '<rootDir>/src/__mocks__/pdfWorker.ts',
   },
   transform: {
-    '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
+    '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],
   },
   clearMocks: true,
 };
