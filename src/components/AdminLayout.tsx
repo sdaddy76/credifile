@@ -7,7 +7,7 @@ import {
   LayoutDashboard, FolderOpen, Users, Building2,
   FileText, LogOut, Menu, X, UserCog, ShieldAlert,
   UserCircle, UsersRound, BarChart3, Settings, TrendingUp, BookUser, Layout, Columns2,
-  Calendar, CheckSquare, ClipboardList, FileBarChart2, Send, Inbox, Search,
+  Calendar, CheckSquare, ClipboardList, FileBarChart2, Send, Inbox, Search, ShieldCheck,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -34,6 +34,7 @@ const NAV_SUPER = [
   { to: '/admin/miei-agenti',        icon: UsersRound,      label: 'Miei Agenti' },
   { to: '/admin/impostazioni',       icon: Settings,        label: 'Impostazioni' },
   { to: '/admin/profilo',            icon: UserCircle,      label: 'Profilo' },
+  { to: '/sicurezza-account',        icon: ShieldCheck,     label: 'Sicurezza' },
 ];
 
 const NAV_SEGRETERIA = [
@@ -54,6 +55,7 @@ const NAV_SEGRETERIA = [
   { to: '/admin/miei-agenti',        icon: UsersRound,      label: 'Miei Agenti' },
   { to: '/admin/impostazioni',       icon: Settings,        label: 'Impostazioni' },
   { to: '/admin/profilo',            icon: UserCircle,      label: 'Profilo' },
+  { to: '/sicurezza-account',        icon: ShieldCheck,     label: 'Sicurezza' },
 ];
 
 const NAV_AGENTE = [
@@ -66,6 +68,7 @@ const NAV_AGENTE = [
   { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/miei-segnalatori',   icon: UsersRound,      label: 'Miei Segnalatori' },
   { to: '/admin/profilo',            icon: UserCircle,      label: 'Profilo' },
+  { to: '/sicurezza-account',        icon: ShieldCheck,     label: 'Sicurezza' },
 ];
 
 const NAV_SEGNALATORE = [
@@ -74,6 +77,7 @@ const NAV_SEGNALATORE = [
   { to: '/admin/kanban-banche',         icon: Columns2,      label: 'Kanban Banche' },
   { to: '/admin/tasks',                 icon: CheckSquare,   label: 'Task' },
   { to: '/admin/profilo',               icon: UserCircle,    label: 'Profilo' },
+  { to: '/sicurezza-account',           icon: ShieldCheck,   label: 'Sicurezza' },
 ];
 
 const ROLE_LABEL: Record<string, string> = {

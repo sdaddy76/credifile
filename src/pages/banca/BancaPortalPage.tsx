@@ -16,7 +16,7 @@ import {
   MapPin, BarChart2, Euro, TrendingUp, Clock, CheckCircle, XCircle,
   Send, Building, RefreshCw, LogOut, Building2, Inbox, Search,
   FileText, User, Phone, Mail, Calendar, Hash, Landmark, Heart,
-  SlidersHorizontal, GitCompare, X as XIcon, Settings, Save, Loader2,
+  SlidersHorizontal, GitCompare, X as XIcon, Settings, Save, Loader2, ShieldCheck,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 
@@ -39,6 +39,9 @@ function BancaLayout({ children }: { children: React.ReactNode }) {
         </div>
         <div className="flex items-center gap-3">
           {profileNome && <span className="text-sm text-slate-600 font-medium">{profileNome}</span>}
+          <Button variant="outline" size="sm" onClick={() => navigate('/sicurezza-account')} className="gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Sicurezza</span>
+          </Button>
           <Button variant="outline" size="sm" onClick={handleLogout} className="gap-1.5">
             <LogOut className="w-3.5 h-3.5" /> Esci
           </Button>

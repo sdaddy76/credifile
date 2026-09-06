@@ -39,12 +39,14 @@ import BancaPortalPage from "@/pages/banca/BancaPortalPage";
 import SegnalazionePublicaPage from "@/pages/public/SegnalazionePublicaPage";
 import SegnalazioniRicevutePage from "@/pages/admin/SegnalazioniRicevutePage";
 import IntegritaDocumentiPage from "@/pages/admin/IntegritaDocumentiPage";
+import AccountSecurityPage from "@/pages/AccountSecurityPage";
+import MfaChallengePage from "@/pages/MfaChallengePage";
 
 const queryClient = new QueryClient();
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return (
+  const { user, loading, mfaLoading, mfaRequired } = useAuth();
+  if (loading || mfaLoading) return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-3">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -53,6 +55,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     </div>
   );
   if (!user) return <Navigate to="/login" replace />;
+  if (mfaRequired) return <Navigate to="/mfa" replace />;
   return <>{children}</>;
 }
 
@@ -69,6 +72,8 @@ const App = () => (
 
           {/* Auth */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/mfa" element={<MfaChallengePage />} />
+          <Route path="/sicurezza-account" element={<ProtectedRoute><AccountSecurityPage /></ProtectedRoute>} />
           <Route path="/set-password" element={<SetPasswordPage />} />
           <Route path="/reset-password" element={<SetPasswordPage />} />
           <Route path="/invito-segnalatore" element={<RegistrazioneSegnalPage />} />

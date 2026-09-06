@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
@@ -9,40 +9,42 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { FileText, Lock, Mail, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { authenticatedHome } from '@/lib/mfa';
 
 export default function LoginPage() {
-  const { signIn, user, loading: authLoading, role } = useAuth();
+  const {
+    signIn,
+    user,
+    loading: authLoading,
+    role,
+    mfaLoading,
+    mfaRequired,
+  } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [waitingForAuth, setWaitingForAuth] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [sendingRecovery, setSendingRecovery] = useState(false);
+  const redirectHandled = useRef(false);
 
-  const getRedirect = (r: string | null) => r === 'consulente' ? '/consulente' : r === 'banca' ? '/banca' : '/admin/dashboard';
-
-  // Se già loggato (es. refresh con sessione attiva) → redirect diretto + log
+  // L'accesso viene considerato completato solo dopo l'eventuale verifica MFA.
   useEffect(() => {
-    if (!authLoading && user && role !== null) {
+    if (authLoading || mfaLoading || !user || role === null || redirectHandled.current) return;
+    redirectHandled.current = true;
+    if (mfaRequired) {
+      navigate('/mfa', { replace: true });
+    } else {
       supabase.functions.invoke('log-access').catch(() => {/* silent */});
-      navigate(getRedirect(role), { replace: true });
+      navigate(authenticatedHome(role), { replace: true });
     }
-  }, [authLoading, user, role]);
-
-  // Naviga SOLO quando onAuthStateChange ha aggiornato user
-  // Evita la race condition su mobile (navigate() prima che user sia nel state)
-  useEffect(() => {
-    if (waitingForAuth && user && role !== null) {
-      navigate(getRedirect(role), { replace: true });
-      supabase.functions.invoke('log-access').catch(() => {/* silent */});
-    }
-  }, [waitingForAuth, user, role]);
+  }, [authLoading, mfaLoading, mfaRequired, navigate, role, user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    redirectHandled.current = false;
     setLoading(true);
     const { error } = await signIn(email, password);
     setLoading(false);
@@ -52,9 +54,8 @@ export default function LoginPage() {
       toast.success('Accesso effettuato');
       if (remember) localStorage.setItem('credifile_remember', email);
       else localStorage.removeItem('credifile_remember');
-      // Non navigare subito: aspetta che onAuthStateChange aggiorni user
-      // Risolve la race condition su mobile (Safari/Android)
-      setWaitingForAuth(true);
+      // La navigazione avviene nell'effect dopo l'aggiornamento della sessione
+      // e l'eventuale verifica del secondo fattore.
     }
   };
 

@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
+import {
+  needsMfaChallenge,
+  type AssuranceLevel,
+} from '@/lib/mfa';
 
 export type UserRole = 'super_admin' | 'agente' | 'supervisore_segreteria' | 'segnalatore' | 'consulente' | 'banca' | null;
 
@@ -18,6 +22,22 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole>(null);
   const [profileNome, setProfileNome] = useState<string | null>(null);
+  const [currentAal, setCurrentAal] = useState<AssuranceLevel>(null);
+  const [nextAal, setNextAal] = useState<AssuranceLevel>(null);
+  const [mfaLoading, setMfaLoading] = useState(true);
+
+  const refreshMfaStatus = useCallback(async (): Promise<void> => {
+    setMfaLoading(true);
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) {
+      setCurrentAal(null);
+      setNextAal(null);
+    } else {
+      setCurrentAal(data.currentLevel);
+      setNextAal(data.nextLevel);
+    }
+    setMfaLoading(false);
+  }, []);
 
   async function fetchRole(userId: string, userEmail?: string | null): Promise<void> {
     // Protezione frontend: se l'email è nell'elenco protetto, forza super_admin
@@ -51,18 +71,27 @@ export function useAuth() {
   useEffect(() => {
     // Timeout di sicurezza assoluto: dopo 8s forziamo loading=false
     // Evita spinner infinito su mobile con rete lenta
-    const safetyTimer = setTimeout(() => setLoading(false), 8000);
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+      setMfaLoading(false);
+    }, 8000);
 
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
-          fetchRole(session.user.id, session.user.email).finally(() => {
+          Promise.all([
+            fetchRole(session.user.id, session.user.email),
+            refreshMfaStatus(),
+          ]).finally(() => {
             clearTimeout(safetyTimer);
             setLoading(false);
           });
         } else {
+          setCurrentAal(null);
+          setNextAal(null);
+          setMfaLoading(false);
           clearTimeout(safetyTimer);
           setLoading(false);
         }
@@ -78,10 +107,16 @@ export function useAuth() {
       if (session?.user) {
         // Non blocchiamo il loading qui (già gestito da getSession),
         // ma aggiorniamo ruolo se cambia sessione
-        fetchRole(session.user.id, session.user.email).finally(() => setLoading(false));
+        Promise.all([
+          fetchRole(session.user.id, session.user.email),
+          refreshMfaStatus(),
+        ]).finally(() => setLoading(false));
       } else {
         setRole(null);
         setProfileNome(null);
+        setCurrentAal(null);
+        setNextAal(null);
+        setMfaLoading(false);
         setLoading(false);
       }
     });
@@ -90,7 +125,7 @@ export function useAuth() {
       subscription.unsubscribe();
       clearTimeout(safetyTimer);
     };
-  }, []);
+  }, [refreshMfaStatus]);
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -98,9 +133,12 @@ export function useAuth() {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     setRole(null);
     setProfileNome(null);
+    setCurrentAal(null);
+    setNextAal(null);
+    setMfaLoading(false);
   };
 
   const isSuperAdmin   = role === 'super_admin';
@@ -109,9 +147,11 @@ export function useAuth() {
   const isSegnalatore  = role === 'segnalatore';
   const isConsulente   = role === 'consulente';
   const isBanca        = role === 'banca';
+  const mfaRequired = needsMfaChallenge(currentAal, nextAal);
 
   return {
     user, session, loading, role, profileNome,
+    currentAal, nextAal, mfaLoading, mfaRequired, refreshMfaStatus,
     isSuperAdmin, isAgente, isSegreteria, isSegnalatore, isConsulente, isBanca,
     canEdit:        isSuperAdmin || isAgente,
     canApprove:     isSuperAdmin || isSegreteria,

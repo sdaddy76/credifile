@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
   Plus, FileBarChart2, Users, LogOut, Settings, TrendingUp,
-  RefreshCw, Trash2, Upload, FileText, CheckCircle, AlertCircle,
+  RefreshCw, Trash2, Upload, FileText, CheckCircle, AlertCircle, ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -327,7 +327,10 @@ export default function ConsulenteDashboard() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" onClick={() => navigate('/consulente/profilo')}>
-            <Settings className="w-4 h-4 mr-1" /> Profilo
+            <Settings className="w-4 h-4 md:mr-1" /> <span className="hidden md:inline">Profilo</span>
+          </Button>
+          <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" onClick={() => navigate('/sicurezza-account')}>
+            <ShieldCheck className="w-4 h-4 md:mr-1" /> <span className="hidden md:inline">Sicurezza</span>
           </Button>
           <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" onClick={async () => { await signOut(); navigate('/login'); }}>
             <LogOut className="w-4 h-4 mr-1" /> Esci
