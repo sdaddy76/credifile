@@ -210,6 +210,8 @@ export default function PraticaDetailPage() {
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [bankNote, setBankNote] = useState('');
   const [showSendBankDialog, setShowSendBankDialog] = useState<string|null>(null);
+  const [integrationPracticeBankId, setIntegrationPracticeBankId] = useState('none');
+  const [sendingIntegrationId, setSendingIntegrationId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('documenti');
   // Financing — gestito come stringhe per l'editing inline
   interface FinRow {
@@ -382,7 +384,20 @@ export default function PraticaDetailPage() {
   };
 
   // ── STORICO EMAIL BANCHE ─────────────────────────────────────────────────
-  interface EmailLog { id: string; bank_nome?: string; destinatari?: string[]; cc?: string[]; oggetto?: string; stato: string; sent_by_nome?: string; created_at: string; opened_at?: string | null; delivered_at?: string | null; }
+  interface EmailLog {
+    id: string;
+    bank_nome?: string;
+    destinatari?: string[];
+    cc?: string[];
+    oggetto?: string;
+    stato: string;
+    sent_by_nome?: string;
+    delivery_type?: 'pratica' | 'approfondimento';
+    integration_request_id?: string | null;
+    created_at: string;
+    opened_at?: string | null;
+    delivered_at?: string | null;
+  }
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
   const [loadingEmailLog, setLoadingEmailLog] = useState(false);
 
@@ -1263,6 +1278,9 @@ export default function PraticaDetailPage() {
     if (!practice?.client_id || !id) return;
     const docSorgente = documents.find(d => d.id === docId);
     if (!docSorgente) return;
+    // Gli approfondimenti appartengono a uno specifico ciclo (e, se presente,
+    // a una specifica banca): non devono essere copiati su altre pratiche.
+    if (docSorgente.tipo === 'integrazione') return;
 
     const { data: praticheSibling } = await supabase
       .from('practices')
@@ -1620,13 +1638,19 @@ export default function PraticaDetailPage() {
     let integrationRequestId: string | null = null;
     try {
       const originStatus = normalizePrimaryStatus(practice?.status ?? 'raccolta_documenti');
+      const selectedPracticeBank = integrationPracticeBankId === 'none'
+        ? null
+        : practiceBanks.find(candidate => candidate.id === integrationPracticeBankId) ?? null;
       const { data: integrationRequest, error: integrationRequestError } = await supabase
         .from('practice_integration_requests')
         .insert({
           practice_id: id,
+          practice_bank_id: selectedPracticeBank?.id ?? null,
           origin_status: originStatus,
           status: 'open',
-          note: `Richiesti ${requestedDocuments.length} documenti e ${requestedQuestions.length} risposte`,
+          note: selectedPracticeBank
+            ? `Approfondimento richiesto da ${selectedPracticeBank.banks?.nome}: ${requestedDocuments.length} documenti e ${requestedQuestions.length} risposte`
+            : `Richiesti ${requestedDocuments.length} documenti e ${requestedQuestions.length} risposte`,
           created_by: user?.id ?? null,
         })
         .select('id')
@@ -1678,15 +1702,19 @@ export default function PraticaDetailPage() {
           domande: requestedQuestions,
           integration_request_id: integrationRequestId,
           fase_pratica: originStatus,
+          practice_bank_id: selectedPracticeBank?.id ?? null,
+          bank_id: selectedPracticeBank?.bank_id ?? null,
+          banca_richiedente: selectedPracticeBank?.banks?.nome ?? null,
         },
       });
 
       toast.success(
-        `${totalRequests} ${totalRequests === 1 ? 'elemento aggiunto' : 'elementi aggiunti'} senza modificare la fase “${STATUS_LABELS[originStatus]}”. Ora usa “Invia Richiesta Documenti”.`
+        `${totalRequests} ${totalRequests === 1 ? 'elemento aggiunto' : 'elementi aggiunti'}${selectedPracticeBank ? ` per ${selectedPracticeBank.banks?.nome}` : ''} senza modificare la fase “${STATUS_LABELS[originStatus]}”. Ora usa “Invia Richiesta Documenti”.`
       );
       setShowIntegration(false);
       setIntegrationRequests([{ nome: '', descrizione: '' }]);
       setIntegrationQuestions(['']);
+      setIntegrationPracticeBankId('none');
       await load();
     } catch (error) {
       if (integrationRequestId) {
@@ -1731,6 +1759,7 @@ export default function PraticaDetailPage() {
   const docsIntegrazione = documents.filter(d => d.tipo === 'integrazione');
   const integrationCycleById = new Map(integrationCycles.map(cycle => [cycle.id, cycle]));
   const openIntegrationCycles = integrationCycles.filter(cycle => cycle.status === 'open');
+  const bankIntegrationCycles = integrationCycles.filter(cycle => Boolean(cycle.practice_bank_id));
   const completedDocs = documents.filter(d => d.status === 'caricato' || d.status === 'approvato').length;
   const isFinPromoter = (candidate?: { nome?: string; codice?: string } | null) =>
     Boolean(candidate && (/finpromoter/i.test(candidate.nome ?? '') || /finpro/i.test(candidate.codice ?? '')));
@@ -2246,6 +2275,114 @@ export default function PraticaDetailPage() {
               </div>
               )}
 
+              {bankIntegrationCycles.length > 0 && (
+                <Card className="border-indigo-200 bg-indigo-50/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Landmark className="w-4 h-4 text-indigo-600" />
+                      Approfondimenti richiesti dalle banche
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      Ogni invio contiene soltanto i file e le risposte collegati alla richiesta della banca indicata.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {bankIntegrationCycles.map(cycle => {
+                      const practiceBank = practiceBanks.find(candidate => candidate.id === cycle.practice_bank_id);
+                      const cycleDocuments = documents.filter(document => document.integration_request_id === cycle.id);
+                      const cycleQuestions = clientQuestions.filter(question => question.integration_request_id === cycle.id);
+                      const cycleFiles = cycleDocuments.flatMap(document => (
+                        (document as PracticeDocument & { uploaded_files?: { id: string; nome_file: string }[] }).uploaded_files ?? []
+                      ));
+                      const answeredQuestions = cycleQuestions.filter(question => question.stato === 'risposta' && question.risposta?.trim());
+                      const missingDocuments = cycleDocuments.filter(document => document.status === 'richiesto' || document.status === 'rifiutato').length;
+                      const missingAnswers = cycleQuestions.filter(question => question.stato === 'richiesta').length;
+                      const bankEmail = practiceBank?.banks?.email_invio_banca || practiceBank?.banks?.email;
+                      const hasDeliverableContent = cycleFiles.length > 0 || answeredQuestions.length > 0;
+                      const isSending = sendingIntegrationId === cycle.id;
+
+                      return (
+                        <div key={cycle.id} className="rounded-lg border border-indigo-100 bg-white p-3">
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-semibold text-slate-800">
+                                  {practiceBank?.banks?.nome ?? 'Banca non più assegnata'}
+                                </p>
+                                <Badge variant="outline" className="text-xs border-indigo-200 text-indigo-700">
+                                  {STATUS_LABELS[cycle.origin_status as PracticeStatus] ?? cycle.origin_status}
+                                </Badge>
+                                {cycle.bank_sent_at && (
+                                  <Badge className="text-xs bg-green-100 text-green-700 border-green-200">
+                                    Inviato {new Date(cycle.bank_sent_at).toLocaleDateString('it-IT')}
+                                    {(cycle.bank_delivery_count ?? 0) > 1 ? ` · ${cycle.bank_delivery_count} invii` : ''}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {cycleFiles.length} {cycleFiles.length === 1 ? 'file pronto' : 'file pronti'}
+                                {' · '}
+                                {answeredQuestions.length} {answeredQuestions.length === 1 ? 'risposta pronta' : 'risposte pronte'}
+                                {(missingDocuments + missingAnswers) > 0 && (
+                                  <> · <span className="text-amber-700">{missingDocuments + missingAnswers} elementi ancora da integrare</span></>
+                                )}
+                              </p>
+                              {!bankEmail && (
+                                <p className="text-xs text-red-600 mt-1">
+                                  Email banca non configurata.
+                                </p>
+                              )}
+                            </div>
+                            {(canEdit || canApprove) && (
+                              <Button
+                                size="sm"
+                                className="gap-1.5 bg-indigo-600 hover:bg-indigo-700"
+                                disabled={isSending || !practiceBank || !bankEmail || !hasDeliverableContent}
+                                title={!hasDeliverableContent
+                                  ? 'Carica almeno un documento o acquisisci una risposta prima dell’invio'
+                                  : `Invia soltanto gli approfondimenti a ${practiceBank?.banks?.nome ?? 'questa banca'}`}
+                                onClick={async () => {
+                                  if (!practiceBank || !bankEmail || !hasDeliverableContent) return;
+                                  if (!confirm(
+                                    `Inviare a ${practiceBank.banks?.nome} ${cycleFiles.length} file e ${answeredQuestions.length} risposte collegati a questo approfondimento?\n\nLa fase della banca non verrà modificata.`
+                                  )) return;
+
+                                  setSendingIntegrationId(cycle.id);
+                                  try {
+                                    const { data, error } = await invokeSendToBank({
+                                      practice_id: practice!.id,
+                                      bank_id: practiceBank.bank_id,
+                                      integration_request_id: cycle.id,
+                                      note: cycle.note ?? null,
+                                    });
+                                    if (error || !data?.success) {
+                                      throw new Error(error?.message ?? String(data?.error ?? 'Invio non riuscito'));
+                                    }
+                                    toast.success(
+                                      `Approfondimenti inviati a ${data.sent_to}: ${data.docs_sent ?? 0} file e ${data.answers_sent ?? 0} risposte`
+                                    );
+                                    await load();
+                                    loadEmailLog();
+                                  } catch (error) {
+                                    toast.error('Errore invio approfondimenti: ' + (error instanceof Error ? error.message : String(error)));
+                                  } finally {
+                                    setSendingIntegrationId(null);
+                                  }
+                                }}
+                              >
+                                {isSending
+                                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Invio…</>
+                                  : <><Send className="w-3.5 h-3.5" /> Invia approfondimenti</>}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Documenti per tipo */}
               {[
                 { label: 'Documenti Standard', docs: docsStandard, color: 'text-blue-600' },
@@ -2271,6 +2408,11 @@ export default function PraticaDetailPage() {
                                       Richiesta durante {STATUS_LABELS[
                                         integrationCycleById.get(doc.integration_request_id)!.origin_status as PracticeStatus
                                       ] ?? integrationCycleById.get(doc.integration_request_id)!.origin_status}
+                                      {integrationCycleById.get(doc.integration_request_id)!.practice_bank_id
+                                        ? ` · ${practiceBanks.find(candidate => (
+                                            candidate.id === integrationCycleById.get(doc.integration_request_id)!.practice_bank_id
+                                          ))?.banks?.nome ?? 'Banca'}`
+                                        : ''}
                                     </Badge>
                                   )}
                                 </div>
@@ -3533,7 +3675,14 @@ export default function PraticaDetailPage() {
                               {log.destinatari && <div className="text-[11px] text-muted-foreground">A: {log.destinatari.join(', ')}</div>}
                               {log.cc && log.cc.length > 0 && <div className="text-[11px] text-muted-foreground">CC: {log.cc.join(', ')}</div>}
                             </td>
-                            <td className="px-3 py-2 min-w-[220px] text-xs text-muted-foreground">{log.oggetto ?? '—'}</td>
+                            <td className="px-3 py-2 min-w-[220px] text-xs text-muted-foreground">
+                              {log.delivery_type === 'approfondimento' && (
+                                <Badge variant="outline" className="mb-1 text-[10px] border-indigo-200 text-indigo-700">
+                                  Approfondimento
+                                </Badge>
+                              )}
+                              <div>{log.oggetto ?? '—'}</div>
+                            </td>
                             <td className="px-3 py-2 whitespace-nowrap">
                               <Badge className={`text-[10px] ${statusClass}`}>{log.stato}</Badge>
                               {log.delivered_at && <div className="mt-1 text-[11px] text-emerald-700">Consegnata: {new Date(log.delivered_at).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</div>}
@@ -3952,12 +4101,37 @@ export default function PraticaDetailPage() {
       </Dialog>
 
       {/* Dialog integrazione */}
-      <Dialog open={showIntegration} onOpenChange={setShowIntegration}>
+      <Dialog
+        open={showIntegration}
+        onOpenChange={open => {
+          setShowIntegration(open);
+          if (!open) setIntegrationPracticeBankId('none');
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Prepara richiesta documentale</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
             Aggiungi più documenti e domande in una sola volta. Il cliente riceverà l'elenco completo solo quando userai il pulsante verde “Invia Richiesta Documenti”.
           </p>
+          <div className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+            <Label htmlFor="integration-bank">Banca che ha richiesto l’approfondimento</Label>
+            <Select value={integrationPracticeBankId} onValueChange={setIntegrationPracticeBankId}>
+              <SelectTrigger id="integration-bank" className="bg-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Nessuna banca — richiesta interna del consulente</SelectItem>
+                {practiceBanks.map(practiceBank => (
+                  <SelectItem key={practiceBank.id} value={practiceBank.id}>
+                    {practiceBank.banks?.nome} · {PRACTICE_BANK_STATUS_LABELS[practiceBank.status] ?? practiceBank.status}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Se scegli una banca, i documenti caricati per questa richiesta potranno essere inoltrati soltanto a quella banca con il pulsante “Invia approfondimenti”.
+            </p>
+          </div>
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             La richiesta sarà collegata alla fase <strong>{STATUS_LABELS[
               normalizePrimaryStatus(practice?.status ?? 'raccolta_documenti')

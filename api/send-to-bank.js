@@ -53,6 +53,15 @@ function safeSection(content) {
   return str;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 
 // ── calcolaScore (replica IndiceBancabilita.tsx) ───────────────────────────
 function calcolaScoreNode(valore, ottimo, suff, critica, inverso) {
@@ -250,10 +259,31 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method not allowed' });
 
   try {
-    const { practice_id, bank_id, note } = req.body;
+    if (!SUPABASE_KEY || !RESEND_KEY) {
+      return res.status(500).json({ success: false, error: 'Configurazione server incompleta' });
+    }
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Autenticazione richiesta' });
+    }
+
+    const authResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': authHeader,
+      },
+    });
+    if (!authResponse.ok) {
+      return res.status(401).json({ success: false, error: 'Sessione non valida o scaduta' });
+    }
+    const actorUser = await authResponse.json();
+
+    const { practice_id, bank_id, note, integration_request_id } = req.body;
     if (!practice_id || !bank_id) {
       return res.status(400).json({ success: false, error: 'practice_id e bank_id obbligatori' });
     }
+    const integrationMode = Boolean(integration_request_id);
 
     const H = {
       'apikey': SUPABASE_KEY,
@@ -262,9 +292,36 @@ export default async function handler(req, res) {
       'Accept': 'application/json',
       'Prefer': 'return=representation',
     };
+    const HUser = {
+      ...H,
+      'Authorization': authHeader,
+    };
 
-    // 1+2+3a. Pratica, banca e lista file in parallelo
-    const [praticaArr, pbArr, filesRaw] = await Promise.all([
+    const [actorProfileArr, accessiblePracticeArr] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/admin_profiles?id=eq.${encodeURIComponent(actorUser.id)}&select=id,nome,email,ruolo&limit=1`,
+        { headers: H },
+      ).then(r => r.json()),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=id&limit=1`,
+        { headers: HUser },
+      ).then(r => r.json()),
+    ]);
+    const actorProfile = Array.isArray(actorProfileArr) ? actorProfileArr[0] : null;
+    const allowedRoles = new Set(['super_admin', 'agente', 'supervisore_segreteria']);
+    if (!actorProfile || !allowedRoles.has(actorProfile.ruolo)) {
+      return res.status(403).json({ success: false, error: 'Ruolo non autorizzato all’invio banca' });
+    }
+    if (!Array.isArray(accessiblePracticeArr) || accessiblePracticeArr.length === 0) {
+      return res.status(403).json({ success: false, error: 'Non hai accesso a questa pratica' });
+    }
+
+    const filesUrl = integrationMode
+      ? `${SUPABASE_URL}/rest/v1/practice_documents?practice_id=eq.${encodeURIComponent(practice_id)}&integration_request_id=eq.${encodeURIComponent(integration_request_id)}&select=id,nome,status,uploaded_files(id,nome_file,storage_path)&order=created_at.asc`
+      : `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`;
+
+    // 1+2+3a. Pratica, banca, ciclo di approfondimento, file e risposte in parallelo
+    const [praticaArr, pbArr, integrationArr, filesRaw, questionsRaw] = await Promise.all([
       fetch(
         `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
         { headers: H },
@@ -273,10 +330,19 @@ export default async function handler(req, res) {
         `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}&select=*,banks(nome,email,email_invio_banca,email_cc,email_bcc)&limit=1`,
         { headers: H },
       ).then(r => r.json()),
-      fetch(
-        `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`,
-        { headers: H },
-      ).then(r => r.json()).catch(() => []),
+      integrationMode
+        ? fetch(
+            `${SUPABASE_URL}/rest/v1/practice_integration_requests?id=eq.${encodeURIComponent(integration_request_id)}&practice_id=eq.${encodeURIComponent(practice_id)}&select=id,practice_bank_id,note,bank_sent_at,bank_delivery_count&limit=1`,
+            { headers: H },
+          ).then(r => r.json())
+        : Promise.resolve([]),
+      fetch(filesUrl, { headers: H }).then(r => r.json()).catch(() => []),
+      integrationMode
+        ? fetch(
+            `${SUPABASE_URL}/rest/v1/practice_client_questions?practice_id=eq.${encodeURIComponent(practice_id)}&integration_request_id=eq.${encodeURIComponent(integration_request_id)}&select=id,domanda,risposta,stato&order=created_at.asc`,
+            { headers: H },
+          ).then(r => r.json()).catch(() => [])
+        : Promise.resolve([]),
     ]);
 
     const pratica = Array.isArray(praticaArr) ? praticaArr[0] : null;
@@ -289,6 +355,17 @@ export default async function handler(req, res) {
     const pb = Array.isArray(pbArr) ? pbArr[0] : null;
     if (!pb) return res.status(404).json({ success: false, error: 'Assegnazione banca non trovata' });
 
+    const integrationRequest = integrationMode && Array.isArray(integrationArr) ? integrationArr[0] : null;
+    if (integrationMode && !integrationRequest) {
+      return res.status(404).json({ success: false, error: 'Richiesta di approfondimento non trovata' });
+    }
+    if (integrationMode && integrationRequest.practice_bank_id !== pb.id) {
+      return res.status(409).json({
+        success: false,
+        error: 'La richiesta di approfondimento non appartiene alla banca selezionata',
+      });
+    }
+
     const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
     if (!bankEmail) return res.status(422).json({ success: false, error: 'Email banca non configurata' });
 
@@ -297,7 +374,22 @@ export default async function handler(req, res) {
     const bccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
 
     // 3b. URL firmati in parallelo (tutti i file contemporaneamente)
-    const files = Array.isArray(filesRaw) ? filesRaw : [];
+    const files = integrationMode
+      ? (Array.isArray(filesRaw) ? filesRaw : []).flatMap(document =>
+          (document.uploaded_files ?? []).map(file => ({
+            ...file,
+            practice_documents: {
+              nome: document.nome,
+              status: document.status,
+            },
+          })),
+        )
+      : (Array.isArray(filesRaw) ? filesRaw : []);
+    const answeredQuestions = integrationMode
+      ? (Array.isArray(questionsRaw) ? questionsRaw : []).filter(question =>
+          question.stato === 'risposta' && String(question.risposta ?? '').trim().length > 0
+        )
+      : [];
     const signResults = await Promise.all(
       files
         .filter(f => !!f.storage_path)
@@ -306,24 +398,35 @@ export default async function handler(req, res) {
           try {
             const signRes = await fetch(
               `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
-              { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 315360000 }) },
+              { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
             );
             if (!signRes.ok) return null;
             const signData = await signRes.json();
             let url = signData?.signedUrl ?? null;
             if (!url && signData?.signedURL) url = `${SUPABASE_URL}/storage/v1${signData.signedURL}`;
             if (!url) return null;
-            return { nomeDoc: f.practice_documents?.nome ?? f.nome_file, nomeFile: f.nome_file, url };
+            return {
+              uploadedFileId: f.id,
+              nomeDoc: f.practice_documents?.nome ?? f.nome_file,
+              nomeFile: f.nome_file,
+              url,
+            };
           } catch { return null; }
         }),
     );
     const docLinks = signResults.filter(Boolean);
+    if (integrationMode && docLinks.length === 0 && answeredQuestions.length === 0) {
+      return res.status(422).json({
+        success: false,
+        error: 'Non ci sono documenti caricati o risposte disponibili per questo approfondimento',
+      });
+    }
 
     // 4. KPI finanziari (ultimi 2 bilanci per confronto)
     let kpiRows = [];
     let annoBilancio = null;
     let bilanciMulti = [];
-    {
+    if (!integrationMode) {
       const kpiArr = await fetch(
         `${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=anno_esercizio,kpi,ricavi_vendite,utile_netto&order=anno_esercizio.desc&limit=2`,
         { headers: H },
@@ -337,7 +440,7 @@ export default async function handler(req, res) {
 
     // 4b. Dati anagrafici estesi del cliente (storicità, forma giuridica, visura)
     let clienteExt = {};
-    if (clientId) {
+    if (!integrationMode && clientId) {
       const cExt = await fetch(
         `${SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(clientId)}&select=data_costituzione,forma_giuridica,capitale_sociale,codice_ateco,ateco_descrizione,visura_json,indirizzo`,
         { headers: H },
@@ -347,7 +450,7 @@ export default async function handler(req, res) {
 
     // 5. Score reputazione (analisi più recente per pratica)
     let rep = null;
-    {
+    if (!integrationMode) {
       const repArr = await fetch(
         `${SUPABASE_URL}/rest/v1/reputational_analyses?practice_id=eq.${encodeURIComponent(practice_id)}&select=score_globale,score_societa,score_amm,score_soci&order=created_at.desc&limit=1`,
         { headers: H },
@@ -358,53 +461,57 @@ export default async function handler(req, res) {
     // 6. Indice bancabilità — pesi default (banca_id IS NULL) + override banca specifica + KPI pratica
     let bancabScore = null;
     let bancabDetails = [];
-    try {
-      const [pesiDefault, pesiOverride, kpiLatest] = await Promise.all([
-        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=is.null&attivo=eq.true&select=*`, { headers: H }).then(r => r.json()),
-        fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=eq.${encodeURIComponent(bank_id)}&attivo=eq.true&select=*`, { headers: H }).then(r => r.json()),
-        fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=kpi&order=anno_esercizio.desc&limit=1`, { headers: H }).then(r => r.json()),
-      ]);
-      // Merge: override banca ha priorità sui default per lo stesso kpi_key
-      const defaults  = Array.isArray(pesiDefault)  ? pesiDefault  : [];
-      const overrides = Array.isArray(pesiOverride) ? pesiOverride : [];
-      const merged = defaults.map(d => overrides.find(o => o.kpi_key === d.kpi_key) ?? d);
-      for (const o of overrides) { if (!merged.find(m => m.kpi_key === o.kpi_key)) merged.push(o); }
-      const pesi   = merged.filter(p => (p.peso ?? 0) > 0);
-      const kpiObj = (Array.isArray(kpiLatest) && kpiLatest[0]?.kpi) ? kpiLatest[0].kpi : null;
-      if (pesi.length > 0 && kpiObj) {
-        let pesoPonderato = 0, sommaScore = 0;
-        for (const p of pesi) {
-          const entry  = kpiObj[p.kpi_area]?.[p.kpi_key];
-          const valore = entry?.valore ?? entry?.value ?? null;
-          const num = valore == null ? null : (typeof valore === 'number' ? valore : parseFloat(valore));
-          const soglie = p.soglie && typeof p.soglie === 'object' ? p.soglie : {};
-          const sogliaOttimo  = p.soglia_ottimo  ?? soglie.ottimo  ?? soglie.best   ?? null;
-          const sogliaSuff    = p.soglia_suff    ?? soglie.suff    ?? soglie.minima ?? soglie.minimo ?? soglie.pass ?? null;
-          const sogliaCritica = p.soglia_critica ?? soglie.critica ?? soglie.worst  ?? null;
-          const formatted = entry?.formatted ?? (num != null && Number.isFinite(num) ? safeNum(num) : 'N/D');
-          const s = num != null && Number.isFinite(num) && !Number.isNaN(num)
-            ? calcolaScoreNode(num, sogliaOttimo, sogliaSuff, sogliaCritica, !!p.inverso)
-            : null;
-          if (s != null) {
-            sommaScore    += s * (p.peso ?? 1);
-            pesoPonderato += (p.peso ?? 1);
+    if (!integrationMode) {
+      try {
+        const [pesiDefault, pesiOverride, kpiLatest] = await Promise.all([
+          fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=is.null&attivo=eq.true&select=*`, { headers: H }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/bancabilita_pesi?banca_id=eq.${encodeURIComponent(bank_id)}&attivo=eq.true&select=*`, { headers: H }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=kpi&order=anno_esercizio.desc&limit=1`, { headers: H }).then(r => r.json()),
+        ]);
+        // Merge: override banca ha priorità sui default per lo stesso kpi_key
+        const defaults  = Array.isArray(pesiDefault)  ? pesiDefault  : [];
+        const overrides = Array.isArray(pesiOverride) ? pesiOverride : [];
+        const merged = defaults.map(d => overrides.find(o => o.kpi_key === d.kpi_key) ?? d);
+        for (const o of overrides) { if (!merged.find(m => m.kpi_key === o.kpi_key)) merged.push(o); }
+        const pesi   = merged.filter(p => (p.peso ?? 0) > 0);
+        const kpiObj = (Array.isArray(kpiLatest) && kpiLatest[0]?.kpi) ? kpiLatest[0].kpi : null;
+        if (pesi.length > 0 && kpiObj) {
+          let pesoPonderato = 0, sommaScore = 0;
+          for (const p of pesi) {
+            const entry  = kpiObj[p.kpi_area]?.[p.kpi_key];
+            const valore = entry?.valore ?? entry?.value ?? null;
+            const num = valore == null ? null : (typeof valore === 'number' ? valore : parseFloat(valore));
+            const soglie = p.soglie && typeof p.soglie === 'object' ? p.soglie : {};
+            const sogliaOttimo  = p.soglia_ottimo  ?? soglie.ottimo  ?? soglie.best   ?? null;
+            const sogliaSuff    = p.soglia_suff    ?? soglie.suff    ?? soglie.minima ?? soglie.minimo ?? soglie.pass ?? null;
+            const sogliaCritica = p.soglia_critica ?? soglie.critica ?? soglie.worst  ?? null;
+            const formatted = entry?.formatted ?? (num != null && Number.isFinite(num) ? safeNum(num) : 'N/D');
+            const s = num != null && Number.isFinite(num) && !Number.isNaN(num)
+              ? calcolaScoreNode(num, sogliaOttimo, sogliaSuff, sogliaCritica, !!p.inverso)
+              : null;
+            if (s != null) {
+              sommaScore    += s * (p.peso ?? 1);
+              pesoPonderato += (p.peso ?? 1);
+            }
+            bancabDetails.push({
+              label: p.kpi_label || entry?.label || p.kpi_key,
+              value: formatted,
+              soglia: sogliaSuff,
+              peso: p.peso ?? 0,
+              inverso: !!p.inverso,
+              score: s,
+            });
           }
-          bancabDetails.push({
-            label: p.kpi_label || entry?.label || p.kpi_key,
-            value: formatted,
-            soglia: sogliaSuff,
-            peso: p.peso ?? 0,
-            inverso: !!p.inverso,
-            score: s,
-          });
+          if (pesoPonderato > 0) bancabScore = Math.round(sommaScore / pesoPonderato);
         }
-        if (pesoPonderato > 0) bancabScore = Math.round(sommaScore / pesoPonderato);
+      } catch (error) {
+        console.warn('Calcolo bancabilità non disponibile:', error instanceof Error ? error.message : String(error));
       }
-    } catch { /* ignora errori bancabilità */ }
+    }
 
     // 6b. Finanziamenti in corso
     let financing = [];
-    if (clientId || practice_id) {
+    if (!integrationMode && (clientId || practice_id)) {
       financing = await fetch(
         `${SUPABASE_URL}/rest/v1/client_financing?practice_id=eq.${encodeURIComponent(practice_id)}&select=tipologia,banca_finanziaria,importo_iniziale,rata,durata_mesi,debito_residuo,tipo_garanzia,stato_rapporto,fonte,accordato,accordato_operativo,utilizzato,saldo_medio,data_riferimento&order=ordinamento.asc`,
         { headers: H },
@@ -727,7 +834,7 @@ ${[...warnings, ...attenzione, ...positivi].map(s => {
 ${vj.data_analisi ? (() => { const d = new Date(vj.data_analisi); return isNaN(d.getTime()) ? '' : `<p style="font-size:10px;color:#94a3b8;margin-top:8px;text-align:right;">Visura analizzata il ${d.toLocaleDateString('it-IT')}</p>`; })() : ''}`;
     })());
 
-    const htmlBody = `<!DOCTYPE html>
+    const standardHtmlBody = `<!DOCTYPE html>
 <html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
 <div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
   <h2 style="color:#1e3a5f;margin:0;">Credifile — Pratica inviata</h2>
@@ -758,12 +865,61 @@ ${repSection}
 </p>
 </body></html>`;
 
+    const integrationDocumentsHtml = docLinks.length > 0
+      ? docLinks.map(document =>
+          `<li style="margin:10px 0;">` +
+          `<strong style="color:#374151;">${escapeHtml(document.nomeDoc)}</strong>` +
+          ` — <a href="${escapeHtml(document.url)}" style="color:#2563eb;font-weight:600;">${escapeHtml(document.nomeFile)}</a>` +
+          ` <span style="color:#888;font-size:11px;">(link valido 7 giorni)</span>` +
+          `</li>`
+        ).join('')
+      : '<li style="color:#888;">Nessun nuovo file allegato</li>';
+
+    const integrationAnswersHtml = answeredQuestions.length > 0
+      ? `
+<h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  Risposte agli approfondimenti (${answeredQuestions.length})
+</h3>
+${answeredQuestions.map((question, index) => `
+<div style="margin:10px 0;padding:12px;background:#f8fafc;border-left:3px solid #6366f1;border-radius:4px;">
+  <p style="margin:0 0 5px;font-size:13px;font-weight:700;color:#374151;">${index + 1}. ${escapeHtml(question.domanda)}</p>
+  <p style="margin:0;font-size:13px;color:#475569;white-space:pre-wrap;">${escapeHtml(question.risposta)}</p>
+</div>`).join('')}`
+      : '';
+
+    const integrationHtmlBody = `<!DOCTYPE html>
+<html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
+<div style="border-bottom:3px solid #4f46e5;padding-bottom:12px;margin-bottom:20px;">
+  <h2 style="color:#312e81;margin:0;">Credifile — Invio approfondimenti</h2>
+</div>
+<p>Gentile <strong>${escapeHtml(pb.banks?.nome)}</strong>,</p>
+<p>trasmettiamo i nuovi documenti e le eventuali risposte relativi agli approfondimenti richiesti per
+<strong>${escapeHtml(cliente)}</strong> (rif. <code>${escapeHtml(pratica.numero_pratica)}</code>).</p>
+${note ? `<p style="color:#555;margin-top:12px;"><strong>Riferimento richiesta:</strong> ${escapeHtml(note)}</p>` : ''}
+<h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  Documenti integrativi (${docLinks.length})
+</h3>
+<ul style="padding-left:20px;">${integrationDocumentsHtml}</ul>
+${integrationAnswersHtml}
+<div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #4f46e5;">
+  ${agentNome ? `Pratica gestita da: <strong>${escapeHtml(agentNome)}</strong>${agentEmail ? ` — <a href="mailto:${escapeHtml(agentEmail)}" style="color:#2563eb;">${escapeHtml(agentEmail)}</a>` : ''}<br>` : ''}
+  Rispondendo a questa email, il messaggio verrà recapitato direttamente al referente della pratica.
+</div>
+<p style="margin-top:16px;font-size:11px;color:#94a3b8;">
+  Comunicazione automatica inviata da <a href="${escapeHtml(APP)}" style="color:#64748b;">Credifile</a>.
+</p>
+</body></html>`;
+
+    const emailSubject = integrationMode
+      ? `Approfondimenti pratica ${cliente} (${pratica.numero_pratica}) — Credifile`
+      : `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`;
+
     // 8. Invia via Resend
     const emailPayload = {
       from: FROM,
       to: [bankEmail],
-      subject: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
-      html: htmlBody,
+      subject: emailSubject,
+      html: integrationMode ? integrationHtmlBody : standardHtmlBody,
     };
     if (agentEmail) emailPayload.reply_to = agentEmail;
     if (ccList.length  > 0) emailPayload.cc  = ccList;
@@ -779,15 +935,55 @@ ${repSection}
       return res.status(502).json({ success: false, error: emailBody?.message ?? 'Errore Resend' });
     }
 
-    // 9. Aggiorna practice_banks → status 'inviata'
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}`,
-      {
-        method: 'PATCH',
-        headers: H,
-        body: JSON.stringify({ status: 'inviata', data_invio: new Date().toISOString(), note: note ?? null }),
-      },
-    );
+    const sentAt = new Date().toISOString();
+    if (integrationMode) {
+      // Un approfondimento non deve riportare indietro lo stato della banca:
+      // può essere richiesto durante istruttoria o delibera.
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/practice_integration_requests?id=eq.${encodeURIComponent(integration_request_id)}`,
+        {
+          method: 'PATCH',
+          headers: H,
+          body: JSON.stringify({
+            bank_sent_at: sentAt,
+            bank_sent_by: actorProfile.id,
+            bank_delivery_count: Number(integrationRequest.bank_delivery_count ?? 0) + 1,
+          }),
+        },
+      );
+
+      await fetch(`${SUPABASE_URL}/rest/v1/practice_activity_log`, {
+        method: 'POST',
+        headers: { ...H, Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          practice_id,
+          action: 'approfondimenti_banca_inviati',
+          actor_id: actorProfile.id,
+          actor_nome: actorProfile.nome ?? actorProfile.email ?? null,
+          actor_ruolo: actorProfile.ruolo,
+          metadata: {
+            integration_request_id,
+            practice_bank_id: pb.id,
+            bank_id,
+            banca: pb.banks?.nome ?? null,
+            destinatario: bankEmail,
+            uploaded_file_ids: docLinks.map(document => document.uploadedFileId),
+            documenti: docLinks.map(document => document.nomeFile),
+            risposte: answeredQuestions.map(question => question.id),
+          },
+        }),
+      }).catch(() => null);
+    } else {
+      // L'invio iniziale della pratica aggiorna soltanto la banca destinataria.
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/practice_banks?practice_id=eq.${encodeURIComponent(practice_id)}&bank_id=eq.${encodeURIComponent(bank_id)}`,
+        {
+          method: 'PATCH',
+          headers: H,
+          body: JSON.stringify({ status: 'inviata', data_invio: sentAt, note: note ?? null }),
+        },
+      );
+    }
 
     // 10. Log storico email_send_log
     await fetch(`${SUPABASE_URL}/rest/v1/email_send_log`, {
@@ -800,11 +996,14 @@ ${repSection}
         destinatari: [bankEmail],
         cc: ccList.length > 0 ? ccList : null,
         bcc: bccList.length > 0 ? bccList : null,
-        oggetto: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
+        oggetto: emailSubject,
         stato: 'inviata',
-        sent_by: pratica.agent?.id ?? null,
-        sent_by_nome: pratica.agent?.nome ?? null,
+        sent_by: actorProfile.id,
+        sent_by_nome: actorProfile.nome ?? actorProfile.email ?? null,
         resend_id: emailBody?.id ?? null,
+        integration_request_id: integrationMode ? integration_request_id : null,
+        delivery_type: integrationMode ? 'approfondimento' : 'pratica',
+        uploaded_file_ids: docLinks.map(document => document.uploadedFileId),
       }),
     }).catch(() => null); // Non blocca se il log fallisce
 
@@ -815,8 +1014,11 @@ ${repSection}
       bcc: bccList,
       reply_to: agentEmail ?? null,
       docs_sent: docLinks.length,
-      kpi_rows: kpiRows.length,
-      has_rep: !!rep,
+      answers_sent: answeredQuestions.length,
+      delivery_type: integrationMode ? 'approfondimento' : 'pratica',
+      bank_status_changed: !integrationMode,
+      kpi_rows: integrationMode ? 0 : kpiRows.length,
+      has_rep: integrationMode ? false : !!rep,
     });
 
   } catch (e) {

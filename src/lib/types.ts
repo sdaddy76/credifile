@@ -180,12 +180,16 @@ export interface PracticeDocument {
 export interface PracticeIntegrationRequest {
   id: string;
   practice_id: string;
+  practice_bank_id?: string | null;
   origin_status: PracticeStatus | string;
   status: 'open' | 'completed' | 'cancelled';
   note?: string | null;
   created_by?: string | null;
   requested_at: string;
   sent_at?: string | null;
+  bank_sent_at?: string | null;
+  bank_sent_by?: string | null;
+  bank_delivery_count?: number;
   completed_at?: string | null;
   created_at: string;
   updated_at: string;

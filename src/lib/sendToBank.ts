@@ -6,11 +6,21 @@ export async function invokeSendToBank(body: {
   practice_id: string;
   bank_id: string;
   note?: string | null;
+  integration_request_id?: string | null;
 }): Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> {
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
+      return { data: null, error: { message: 'Sessione scaduta. Accedi nuovamente prima di inviare alla banca.' } };
+    }
+
     const res = await fetch('/api/send-to-bank', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      },
       body: JSON.stringify(body),
     });
     const json = await res.json();
