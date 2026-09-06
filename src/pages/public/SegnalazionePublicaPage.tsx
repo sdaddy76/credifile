@@ -300,7 +300,7 @@ export default function SegnalazionePublicaPage() {
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Richiesta iniziale</p>
             <h1 className="mt-2 text-2xl font-bold flex items-center gap-2">
-              <Send className="w-6 h-6 text-orange-600" /> Richiedi una valutazione di bancabilità
+              <Send className="w-6 h-6 text-orange-700" /> Richiedi una valutazione di bancabilità
             </h1>
             <p className="text-sm text-muted-foreground mt-2">
               Carica la visura camerale e i documenti disponibili. Credifile registrerà la richiesta e ti contatterà per i passaggi successivi.
@@ -513,7 +513,7 @@ export default function SegnalazionePublicaPage() {
 
         {/* Bottone invio */}
         <Button
-          className="w-full gap-2 bg-orange-600 hover:bg-orange-700 h-12 text-base"
+          className="w-full gap-2 bg-orange-700 hover:bg-orange-800 h-12 text-base"
           onClick={handleInvia}
           disabled={sending || !ragioneSociale.trim() || !/^\d{11}$/.test(piva) || !visura || !privacyConsentChecked || !paymentDisclaimerChecked}
         >

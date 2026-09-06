@@ -120,7 +120,7 @@ export default function PublicHomePage() {
               <div className="mt-9 flex flex-col gap-3 sm:flex-row">
                 <Link
                   to="/richiedi-valutazione"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-600 px-5 py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-700 px-5 py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-600 focus-visible:ring-offset-2"
                 >
                   Richiedi una valutazione
                   <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -191,7 +191,7 @@ export default function PublicHomePage() {
         <section id="come-funziona" className="scroll-mt-24 bg-white py-20 sm:py-24">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="max-w-2xl">
-              <p className="text-sm font-bold uppercase tracking-[0.16em] text-orange-600">Come funziona</p>
+              <p className="text-sm font-bold uppercase tracking-[0.16em] text-orange-700">Come funziona</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">Un percorso chiaro, dalla visura al report</h2>
               <p className="mt-4 text-base leading-7 text-slate-600">
                 La richiesta iniziale apre un percorso documentale verificabile. In ogni momento sai cosa è stato ricevuto e quali informazioni devono essere integrate.
@@ -208,7 +208,7 @@ export default function PublicHomePage() {
                     <span className="grid h-11 w-11 place-items-center rounded-xl bg-blue-700 text-white">
                       <step.icon className="h-5 w-5" aria-hidden="true" />
                     </span>
-                    <span className="font-mono text-sm font-semibold text-slate-400">{step.number}</span>
+                    <span className="font-mono text-sm font-semibold text-slate-600">{step.number}</span>
                   </div>
                   <h3 className="mt-6 text-lg font-bold text-slate-950">{step.title}</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">{step.text}</p>
@@ -245,7 +245,7 @@ export default function PublicHomePage() {
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="grid gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
               <div>
-                <p className="text-sm font-bold uppercase tracking-[0.16em] text-orange-600">Per chi è</p>
+                <p className="text-sm font-bold uppercase tracking-[0.16em] text-orange-700">Per chi è</p>
                 <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">Un linguaggio comune tra impresa e professionisti</h2>
                 <p className="mt-4 text-base leading-7 text-slate-600">
                   Credifile coordina informazioni, documenti e richieste di approfondimento senza confondere i ruoli e senza sovrapporre le pratiche delle diverse banche.
@@ -323,7 +323,7 @@ export default function PublicHomePage() {
             </p>
             <Link
               to="/richiedi-valutazione"
-              className="mt-8 inline-flex items-center justify-center gap-2 rounded-xl bg-orange-600 px-6 py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700"
+              className="mt-8 inline-flex items-center justify-center gap-2 rounded-xl bg-orange-700 px-6 py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-800"
             >
               Richiedi una valutazione
               <ArrowRight className="h-4 w-4" aria-hidden="true" />

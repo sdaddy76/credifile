@@ -31,7 +31,7 @@ export default function PublicSiteLayout({ children }: { children: ReactNode }) 
             </Link>
             <Link
               to="/richiedi-valutazione"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-orange-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-600 focus-visible:ring-offset-2"
             >
               Richiedi valutazione
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -73,7 +73,7 @@ export default function PublicSiteLayout({ children }: { children: ReactNode }) 
           </div>
         </div>
         <div className="border-t border-slate-800">
-          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-5 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
             <span>© {new Date().getFullYear()} Credifile. Tutti i diritti riservati.</span>
             <span>Le valutazioni non costituiscono promessa o garanzia di concessione del credito.</span>
           </div>
