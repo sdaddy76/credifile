@@ -856,6 +856,8 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [anomalyAlerts, setAnomalyAlerts] = useState<BalanceAnomalyAlert[]>([]);
   const [alertNotes, setAlertNotes] = useState<Record<string, string>>({});
+  const [alertEditModes, setAlertEditModes] = useState<Record<string, 'consultant' | 'ignore' | undefined>>({});
+  const [alertErrors, setAlertErrors] = useState<Record<string, string>>({});
   const [savingAlertId, setSavingAlertId] = useState<string | null>(null);
 
   const loadBancabilita = useCallback(async (latestKpi: KpiResult | null) => {
@@ -1003,37 +1005,51 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   ) => {
     const note = alertNotes[alert.id]?.trim() ?? '';
     if (!note) {
-      toast.error(status === 'ignored'
+      const message = status === 'ignored'
         ? 'Inserisci il motivo per cui l’alert può essere ignorato'
-        : 'Inserisci la spiegazione del consulente');
+        : 'Inserisci la risposta del consulente';
+      setAlertErrors(previous => ({ ...previous, [alert.id]: message }));
+      toast.error(message);
       return;
     }
+    setAlertErrors(previous => ({ ...previous, [alert.id]: '' }));
     setSavingAlertId(alert.id);
     try {
-      const { error } = await supabase
+      const resolvedAt = new Date().toISOString();
+      const { data: updatedAlert, error } = await supabase
         .from('balance_anomaly_alerts')
         .update({
           status,
           consultant_response: status === 'answered_by_consultant' ? note : null,
           ignore_reason: status === 'ignored' ? note : null,
-          resolved_at: new Date().toISOString(),
+          resolved_at: resolvedAt,
         })
-        .eq('id', alert.id);
+        .eq('id', alert.id)
+        .eq('practice_id', practiceId)
+        .select('id,status,consultant_response,ignore_reason,resolved_at')
+        .maybeSingle();
       if (error) throw error;
+      if (!updatedAlert) {
+        throw new Error('La risposta non è stata salvata. Verifica i permessi sulla pratica e riprova.');
+      }
       setAnomalyAlerts(previous => previous.map(item => (
         item.id === alert.id
           ? {
               ...item,
-              status,
-              consultant_response: status === 'answered_by_consultant' ? note : null,
-              ignore_reason: status === 'ignored' ? note : null,
-              resolved_at: new Date().toISOString(),
+              status: updatedAlert.status as BalanceAnomalyAlertStatus,
+              consultant_response: updatedAlert.consultant_response,
+              ignore_reason: updatedAlert.ignore_reason,
+              resolved_at: updatedAlert.resolved_at,
             }
           : item
       )));
-      toast.success(status === 'ignored' ? 'Alert ignorato con motivazione' : 'Spiegazione del consulente salvata');
+      setAlertNotes(previous => ({ ...previous, [alert.id]: '' }));
+      setAlertEditModes(previous => ({ ...previous, [alert.id]: undefined }));
+      toast.success(status === 'ignored' ? 'Alert ignorato con motivazione' : 'Risposta del consulente salvata');
     } catch (error) {
-      toast.error('Errore aggiornamento alert: ' + String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setAlertErrors(previous => ({ ...previous, [alert.id]: message }));
+      toast.error('Errore aggiornamento alert: ' + message);
     } finally {
       setSavingAlertId(null);
     }
@@ -1603,24 +1619,24 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                             </div>
                           ) : alert.status === 'open' ? (
                             <div className="mt-3 space-y-2 border-t pt-3">
-                              <Textarea
-                                rows={3}
-                                value={alertNotes[alert.id] ?? ''}
-                                onChange={event => setAlertNotes(previous => ({ ...previous, [alert.id]: event.target.value }))}
-                                placeholder={finding.suggested_question || 'Inserisci una spiegazione, una domanda per il cliente o il motivo per ignorare l’alert...'}
-                              />
                               <div className="flex flex-wrap gap-2">
                                 <Button
+                                  type="button"
                                   size="sm"
                                   variant="outline"
                                   className="gap-1.5 border-green-200 text-green-700 hover:bg-green-50"
                                   disabled={savingAlertId === alert.id}
-                                  onClick={() => updateAlert(alert, 'answered_by_consultant')}
+                                  onClick={() => {
+                                    setAlertEditModes(previous => ({ ...previous, [alert.id]: 'consultant' }));
+                                    setAlertNotes(previous => ({ ...previous, [alert.id]: '' }));
+                                    setAlertErrors(previous => ({ ...previous, [alert.id]: '' }));
+                                  }}
                                 >
                                   <UserRoundCheck className="h-3.5 w-3.5" />
                                   Rispondo io
                                 </Button>
                                 <Button
+                                  type="button"
                                   size="sm"
                                   className="gap-1.5"
                                   disabled={savingAlertId === alert.id}
@@ -1630,18 +1646,133 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                                   Chiedi al cliente
                                 </Button>
                                 <Button
+                                  type="button"
                                   size="sm"
                                   variant="ghost"
                                   className="gap-1.5 text-muted-foreground"
                                   disabled={savingAlertId === alert.id}
-                                  onClick={() => updateAlert(alert, 'ignored')}
+                                  onClick={() => {
+                                    setAlertEditModes(previous => ({ ...previous, [alert.id]: 'ignore' }));
+                                    setAlertNotes(previous => ({ ...previous, [alert.id]: '' }));
+                                    setAlertErrors(previous => ({ ...previous, [alert.id]: '' }));
+                                  }}
                                 >
                                   <CircleSlash2 className="h-3.5 w-3.5" />
                                   Ignora alert
                                 </Button>
                               </div>
+                              {alertEditModes[alert.id] === 'consultant' && (
+                                <div className="space-y-2 rounded-md border border-green-200 bg-green-50/50 p-3">
+                                  <div>
+                                    <p className="text-xs font-semibold text-green-800">Risposta del consulente</p>
+                                    <p className="mt-0.5 text-[11px] text-green-700">
+                                      Inserisci la spiegazione che risolve questa anomalia di bilancio da approfondire.
+                                    </p>
+                                  </div>
+                                  <Textarea
+                                    autoFocus
+                                    rows={4}
+                                    value={alertNotes[alert.id] ?? ''}
+                                    onChange={event => {
+                                      setAlertNotes(previous => ({ ...previous, [alert.id]: event.target.value }));
+                                      if (alertErrors[alert.id]) {
+                                        setAlertErrors(previous => ({ ...previous, [alert.id]: '' }));
+                                      }
+                                    }}
+                                    placeholder="Scrivi qui la risposta o la spiegazione del consulente…"
+                                    className={alertErrors[alert.id] ? 'border-red-400 focus-visible:ring-red-300' : 'border-green-200 bg-white'}
+                                  />
+                                  {alertErrors[alert.id] && (
+                                    <p className="flex items-center gap-1 text-xs font-medium text-red-600">
+                                      <AlertCircle className="h-3.5 w-3.5" />
+                                      {alertErrors[alert.id]}
+                                    </p>
+                                  )}
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      className="gap-1.5 bg-green-700 hover:bg-green-800"
+                                      disabled={savingAlertId === alert.id}
+                                      onClick={() => updateAlert(alert, 'answered_by_consultant')}
+                                    >
+                                      {savingAlertId === alert.id
+                                        ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                        : <CheckCircle2 className="h-3.5 w-3.5" />}
+                                      Salva risposta
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="ghost"
+                                      disabled={savingAlertId === alert.id}
+                                      onClick={() => {
+                                        setAlertEditModes(previous => ({ ...previous, [alert.id]: undefined }));
+                                        setAlertNotes(previous => ({ ...previous, [alert.id]: '' }));
+                                        setAlertErrors(previous => ({ ...previous, [alert.id]: '' }));
+                                      }}
+                                    >
+                                      Annulla
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                              {alertEditModes[alert.id] === 'ignore' && (
+                                <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                                  <div>
+                                    <p className="text-xs font-semibold text-slate-800">Motivo per ignorare l’alert</p>
+                                    <p className="mt-0.5 text-[11px] text-slate-600">
+                                      La motivazione resterà registrata nella pratica.
+                                    </p>
+                                  </div>
+                                  <Textarea
+                                    autoFocus
+                                    rows={3}
+                                    value={alertNotes[alert.id] ?? ''}
+                                    onChange={event => {
+                                      setAlertNotes(previous => ({ ...previous, [alert.id]: event.target.value }));
+                                      if (alertErrors[alert.id]) {
+                                        setAlertErrors(previous => ({ ...previous, [alert.id]: '' }));
+                                      }
+                                    }}
+                                    placeholder="Indica perché la segnalazione non è pertinente…"
+                                    className={alertErrors[alert.id] ? 'border-red-400 focus-visible:ring-red-300' : 'bg-white'}
+                                  />
+                                  {alertErrors[alert.id] && (
+                                    <p className="flex items-center gap-1 text-xs font-medium text-red-600">
+                                      <AlertCircle className="h-3.5 w-3.5" />
+                                      {alertErrors[alert.id]}
+                                    </p>
+                                  )}
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={savingAlertId === alert.id}
+                                      onClick={() => updateAlert(alert, 'ignored')}
+                                    >
+                                      {savingAlertId === alert.id && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                                      Conferma esclusione
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="ghost"
+                                      disabled={savingAlertId === alert.id}
+                                      onClick={() => {
+                                        setAlertEditModes(previous => ({ ...previous, [alert.id]: undefined }));
+                                        setAlertNotes(previous => ({ ...previous, [alert.id]: '' }));
+                                        setAlertErrors(previous => ({ ...previous, [alert.id]: '' }));
+                                      }}
+                                    >
+                                      Annulla
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
                               <p className="text-[10px] text-muted-foreground">
-                                Se lasci vuoto il testo e scegli “Chiedi al cliente”, sarà usata la domanda proposta automaticamente.
+                                “Rispondo io” apre un campo dedicato. “Chiedi al cliente” usa la domanda proposta automaticamente.
                               </p>
                             </div>
                           ) : null}
