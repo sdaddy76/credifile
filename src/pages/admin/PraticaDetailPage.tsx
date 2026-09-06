@@ -22,6 +22,7 @@ import ReputazioneTab from '@/components/ReputazioneTab';
 import RelazioneTab from '@/components/RelazioneTab';
 import { EstrattoConto } from '@/components/EstrattoConto';
 import AmlReportTab from '@/components/AmlReportTab';
+import DocumentCoherenceTab from '@/components/DocumentCoherenceTab';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
@@ -2228,6 +2229,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="banche">Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
               <TabsTrigger value="finanziamenti">Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
               <TabsTrigger value="analisi">Analisi Finanziaria</TabsTrigger>
+              <TabsTrigger value="coerenza">Coerenza Documentale</TabsTrigger>
               <TabsTrigger value="bancabilita">Bancabilità</TabsTrigger>
               <TabsTrigger value="reputazione">Reputazione</TabsTrigger>
               {(isSuperAdmin || isSegreteria || isAgente) && (
@@ -3051,6 +3053,10 @@ export default function PraticaDetailPage() {
 
             <TabsContent value="analisi" className="mt-3">
               {id && <AnalisiFinanziariaTab practiceId={id} />}
+            </TabsContent>
+
+            <TabsContent value="coerenza" className="mt-3">
+              {id && <DocumentCoherenceTab practiceId={id} />}
             </TabsContent>
 
             <TabsContent value="bancabilita" className="mt-3">

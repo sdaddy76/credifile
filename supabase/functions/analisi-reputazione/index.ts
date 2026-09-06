@@ -173,6 +173,9 @@ interface NewsItem {
   title: string; snippet: string; link: string; date: string; source: string;
   relevance?: number;
   sourceQuality?: number;
+  sourceTier?: 'ufficiale' | 'stampa_primaria' | 'aggregatore' | 'web';
+  identityEvidence?: 'forte' | 'media' | 'debole';
+  discriminatorMatched?: boolean;
 }
 interface Signal {
   text: string; category: string; weight: number;
@@ -180,6 +183,34 @@ interface Signal {
   confidence?: number;
   sourceCount?: number;
   sourceName?: string;
+  eventId?: string;
+  identityEvidence?: 'forte' | 'media' | 'debole';
+}
+interface ReputationEvent {
+  id: string;
+  title: string;
+  category: string;
+  polarity: 'negativo' | 'positivo';
+  weight: number;
+  confidence: number;
+  sourceCount: number;
+  sources: string[];
+  date?: string;
+  articleLink?: string;
+  identityEvidence: 'forte' | 'media' | 'debole';
+  manualReviewRequired: boolean;
+  signals: string[];
+}
+interface QueryAudit {
+  label: string;
+  provider: 'Google News' | 'DuckDuckGo';
+  status: 'risultati' | 'nessun_risultato' | 'non_disponibile';
+  resultCount: number;
+}
+interface SourceCoverage {
+  source: string;
+  tier: 'ufficiale' | 'stampa_primaria' | 'aggregatore' | 'web';
+  resultCount: number;
 }
 interface SubjectResult {
   nome: string; tipo: string; score: number;
@@ -190,6 +221,17 @@ interface SubjectResult {
   confidence: 'alta' | 'media' | 'bassa';
   queriesWithResults: number;
   queriesAttempted: number;
+  queryAudit: QueryAudit[];
+  sourceCoverage: SourceCoverage[];
+  events: ReputationEvent[];
+  scoreExplanation: string[];
+  identityAssessment: {
+    discriminatorType: 'codice_fiscale' | 'partita_iva' | 'citta' | 'nessuno';
+    strongMatches: number;
+    weakMatches: number;
+    manualReviewRequired: boolean;
+    reason: string;
+  };
   cessato?: boolean;
 }
 interface AddressResult {
@@ -224,6 +266,14 @@ function getSourceQuality(source: string, link: string): number {
   return 0.72
 }
 
+function getSourceTier(source: string, link: string): 'ufficiale' | 'stampa_primaria' | 'aggregatore' | 'web' {
+  const quality = getSourceQuality(source, link)
+  if (quality >= 0.98) return 'ufficiale'
+  if (quality >= 0.85) return 'stampa_primaria'
+  if (source === 'Google News' || source === 'DuckDuckGo') return 'aggregatore'
+  return 'web'
+}
+
 function identityRelevance(item: NewsItem, name: string, discriminator?: string, city?: string): number {
   const text = canonicalText(`${item.title} ${item.snippet}`)
   const normalizedName = canonicalText(name)
@@ -240,9 +290,29 @@ function identityRelevance(item: NewsItem, name: string, discriminator?: string,
   return Math.min(1, Math.round(score * 100) / 100)
 }
 
-function analyzeTextWithNews(news: NewsItem[], kwList = RISK_KW): { signals: Signal[]; scoreDelta: number } {
+function assessIdentityEvidence(
+  item: NewsItem,
+  name: string,
+  discriminator?: string,
+  city?: string,
+): { level: 'forte' | 'media' | 'debole'; discriminatorMatched: boolean } {
+  const text = canonicalText(`${item.title} ${item.snippet}`)
+  const cleanName = canonicalText(name)
+  const cleanDiscriminator = canonicalText(discriminator ?? '')
+  const cleanCity = canonicalText(city ?? '')
+  const discriminatorMatched = Boolean(cleanDiscriminator && text.includes(cleanDiscriminator))
+  if (discriminatorMatched) return { level: 'forte', discriminatorMatched: true }
+  if (cleanName && text.includes(cleanName) && cleanCity && text.includes(cleanCity)) {
+    return { level: 'media', discriminatorMatched: false }
+  }
+  return { level: 'debole', discriminatorMatched: false }
+}
+
+function analyzeTextWithNews(
+  news: NewsItem[],
+  kwList = RISK_KW,
+): { signals: Signal[]; scoreDelta: number; events: ReputationEvent[] } {
   const signals: Signal[] = []
-  let scoreDelta = 0
 
   const evaluate = (keyword: { w: string; p: number; cat?: string }, positive: boolean) => {
     const matches = news
@@ -273,15 +343,64 @@ function analyzeTextWithNews(news: NewsItem[], kwList = RISK_KW): { signals: Sig
       confidence: Math.round(confidence * 100),
       sourceCount: independentSources,
       sourceName: best.item.source,
+      identityEvidence: best.item.identityEvidence ?? 'debole',
     })
-    scoreDelta += weighted
   }
 
   for (const keyword of kwList) evaluate(keyword, false)
   if (kwList === RISK_KW) {
     for (const keyword of POS_KW) evaluate(keyword, true)
   }
-  return { signals, scoreDelta }
+
+  // Raggruppa le parole chiave riferite allo stesso evento, evitando che un solo
+  // articolo con più termini produca penalizzazioni multiple non proporzionate.
+  const eventGroups = new Map<string, Signal[]>()
+  for (const signal of signals) {
+    const articleKey = canonicalText(signal.articleTitle ?? signal.text).split(' ').slice(0, 14).join(' ')
+    const key = `${signal.category}:${articleKey}`
+    const group = eventGroups.get(key) ?? []
+    group.push(signal)
+    eventGroups.set(key, group)
+  }
+
+  const events: ReputationEvent[] = Array.from(eventGroups.entries()).map(([key, group]) => {
+    const negative = group.some(signal => signal.weight < 0)
+    const rawWeight = group.reduce((sum, signal) => sum + signal.weight, 0)
+    const weight = negative ? Math.max(-35, rawWeight) : Math.min(12, rawWeight)
+    const identityEvidence = group.some(signal => signal.identityEvidence === 'forte')
+      ? 'forte'
+      : group.some(signal => signal.identityEvidence === 'media') ? 'media' : 'debole'
+    const id = canonicalText(key).replace(/\s+/g, '-').slice(0, 90)
+    if (rawWeight !== 0 && rawWeight !== weight) {
+      const factor = weight / rawWeight
+      group.forEach(signal => { signal.weight = Math.round(signal.weight * factor) })
+      const allocated = group.reduce((sum, signal) => sum + signal.weight, 0)
+      group[0].weight += weight - allocated
+    }
+    group.forEach(signal => { signal.eventId = id })
+    const sources = Array.from(new Set(group.map(signal => signal.sourceName).filter(Boolean) as string[]))
+    return {
+      id,
+      title: group[0].articleTitle ?? group.map(signal => signal.text).join(', '),
+      category: group[0].category,
+      polarity: negative ? 'negativo' : 'positivo',
+      weight,
+      confidence: Math.max(...group.map(signal => signal.confidence ?? 0)),
+      sourceCount: Math.max(...group.map(signal => signal.sourceCount ?? 1)),
+      sources,
+      date: group[0].articleDate,
+      articleLink: group[0].articleLink,
+      identityEvidence,
+      manualReviewRequired: identityEvidence === 'debole' || sources.length < 1,
+      signals: group.map(signal => signal.text),
+    }
+  })
+
+  return {
+    signals,
+    events,
+    scoreDelta: events.reduce((sum, event) => sum + event.weight, 0),
+  }
 }
 
 async function fetchWithTimeout(url: string, ms = 8000): Promise<Response | null> {
@@ -305,7 +424,7 @@ async function fetchWithTimeout(url: string, ms = 8000): Promise<Response | null
 async function fetchGoogleNews(query: string): Promise<NewsItem[]> {
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(`"${query}"`)}&hl=it&gl=IT&ceid=IT:it`
   const res = await fetchWithTimeout(url, 8000)
-  if (!res || !res.ok) return []
+  if (!res || !res.ok) throw new Error(`Google News non disponibile${res ? ` (${res.status})` : ''}`)
   const xml = await res.text()
   const items: NewsItem[] = []
   const matches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g)
@@ -325,6 +444,7 @@ async function fetchGoogleNews(query: string): Promise<NewsItem[]> {
       date: dateM?.[1]?.trim() ?? '',
       source: sourceM?.[1]?.trim() ?? 'Google News',
       sourceQuality: getSourceQuality(sourceM?.[1]?.trim() ?? 'Google News', linkM?.[1]?.trim() ?? ''),
+      sourceTier: getSourceTier(sourceM?.[1]?.trim() ?? 'Google News', linkM?.[1]?.trim() ?? ''),
     })
   }
   return items.slice(0, 10)
@@ -334,7 +454,7 @@ async function fetchGoogleNews(query: string): Promise<NewsItem[]> {
 async function fetchDuckDuckGo(query: string): Promise<NewsItem[]> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=it-it`
   const res = await fetchWithTimeout(url, 8000)
-  if (!res || !res.ok) return []
+  if (!res || !res.ok) throw new Error(`DuckDuckGo non disponibile${res ? ` (${res.status})` : ''}`)
   const html = await res.text()
   const items: NewsItem[] = []
   const resultRegex = /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g
@@ -358,6 +478,7 @@ async function fetchDuckDuckGo(query: string): Promise<NewsItem[]> {
       date: '',
       source: 'DuckDuckGo',
       sourceQuality: getSourceQuality('DuckDuckGo', links[i]),
+      sourceTier: getSourceTier('DuckDuckGo', links[i]),
     })
   }
   return items
@@ -387,50 +508,94 @@ async function analyzeSubject(
 
   const nameQ = `"${name}"`
 
-  const queries = [
-    // Query base
-    fetchGoogleNews(name),
-    // Query legale con discriminatore (CF/PIVA/città)
-    fetchGoogleNews(discriminator
-      ? `${nameQ} ${discriminator} indagato condanna tribunale arresti`
-      : `${name} indagato condanna tribunale arresti`),
-    // Query finanziaria con discriminatore
-    fetchGoogleNews(discriminator
-      ? `${nameQ} ${discriminator} protesto pignoramento insolvenza fallimento`
-      : `${name} protesto pignoramento insolvenza fallimento`),
-    // Query fiscale
-    fetchGoogleNews(discriminator
-      ? `${nameQ} ${discriminator} evasione fiscale cartella esattoriale debiti INPS`
-      : `${nameQ} evasione fiscale cartella esattoriale debiti INPS`),
-    // Query antimafia
-    fetchGoogleNews(discriminator
-      ? `${nameQ} ${discriminator} antimafia riciclaggio sequestro`
-      : `${nameQ} antimafia riciclaggio sequestro`),
-    // DuckDuckGo con discriminatore
-    fetchDuckDuckGo(discriminator
-      ? `${nameQ} ${discriminator} fallimento indagato protesto condanna frode`
-      : `${nameQ} fallimento indagato protesto condanna frode`),
-    fetchDuckDuckGo(discriminator
-      ? `${nameQ} ${discriminator} sanzione multa violazione`
-      : `${nameQ} sanzione multa violazione`),
+  const queryConfigs: Array<{
+    label: string;
+    provider: 'Google News' | 'DuckDuckGo';
+    run: () => Promise<NewsItem[]>;
+  }> = [
+    { label: 'Notizie generali', provider: 'Google News', run: () => fetchGoogleNews(name) },
+    {
+      label: 'Procedimenti e tribunali',
+      provider: 'Google News',
+      run: () => fetchGoogleNews(discriminator
+        ? `${nameQ} ${discriminator} indagato condanna tribunale arresti`
+        : `${name} indagato condanna tribunale arresti`),
+    },
+    {
+      label: 'Insolvenze e procedure',
+      provider: 'Google News',
+      run: () => fetchGoogleNews(discriminator
+        ? `${nameQ} ${discriminator} protesto pignoramento insolvenza fallimento`
+        : `${name} protesto pignoramento insolvenza fallimento`),
+    },
+    {
+      label: 'Rischio fiscale',
+      provider: 'Google News',
+      run: () => fetchGoogleNews(discriminator
+        ? `${nameQ} ${discriminator} evasione fiscale cartella esattoriale debiti INPS`
+        : `${nameQ} evasione fiscale cartella esattoriale debiti INPS`),
+    },
+    {
+      label: 'Antimafia e riciclaggio',
+      provider: 'Google News',
+      run: () => fetchGoogleNews(discriminator
+        ? `${nameQ} ${discriminator} antimafia riciclaggio sequestro`
+        : `${nameQ} antimafia riciclaggio sequestro`),
+    },
+    {
+      label: 'Riscontro web rischi',
+      provider: 'DuckDuckGo',
+      run: () => fetchDuckDuckGo(discriminator
+        ? `${nameQ} ${discriminator} fallimento indagato protesto condanna frode`
+        : `${nameQ} fallimento indagato protesto condanna frode`),
+    },
+    {
+      label: 'Riscontro web sanzioni',
+      provider: 'DuckDuckGo',
+      run: () => fetchDuckDuckGo(discriminator
+        ? `${nameQ} ${discriminator} sanzione multa violazione`
+        : `${nameQ} sanzione multa violazione`),
+    },
   ]
-  const results = await Promise.allSettled(queries)
+  const results = await Promise.allSettled(queryConfigs.map(config => config.run()))
   const allNewsRaw: NewsItem[] = []
   let queriesWithResults = 0
-  for (const r of results) {
+  const queryAudit: QueryAudit[] = []
+  for (let index = 0; index < results.length; index++) {
+    const r = results[index]
+    const config = queryConfigs[index]
     if (r.status === 'fulfilled') {
       if (r.value.length > 0) queriesWithResults++
       allNewsRaw.push(...r.value)
+      queryAudit.push({
+        label: config.label,
+        provider: config.provider,
+        status: r.value.length > 0 ? 'risultati' : 'nessun_risultato',
+        resultCount: r.value.length,
+      })
+    } else {
+      queryAudit.push({
+        label: config.label,
+        provider: config.provider,
+        status: 'non_disponibile',
+        resultCount: 0,
+      })
     }
   }
 
   // Valuta esplicitamente la corrispondenza dell'identità e scarta le omonimie deboli.
   const relevantRaw = allNewsRaw
-    .map(item => ({
-      ...item,
-      relevance: identityRelevance(item, name, discriminatorValue, city),
-      sourceQuality: item.sourceQuality ?? getSourceQuality(item.source, item.link),
-    }))
+    .map(item => {
+      const identity = assessIdentityEvidence(item, name, discriminatorValue, city)
+      return {
+        ...item,
+        relevance: identityRelevance(item, name, discriminatorValue, city),
+        sourceQuality: item.sourceQuality ?? getSourceQuality(item.source, item.link),
+        sourceTier: item.sourceTier ?? getSourceTier(item.source, item.link),
+        identityEvidence: identity.level,
+        discriminatorMatched: identity.discriminatorMatched,
+      }
+    })
     .filter(item => (item.relevance ?? 0) >= 0.45)
 
   // Deduplica per titolo canonico: intercetta anche la stessa notizia sindacata con URL diversi.
@@ -446,17 +611,60 @@ async function analyzeSubject(
     }
   }
 
-  const { signals, scoreDelta } = analyzeTextWithNews(allNews)
+  const { signals, scoreDelta, events } = analyzeTextWithNews(allNews)
 
   // Assenza di notizie non è un segnale positivo: parte da una base neutrale.
   const score = Math.max(0, Math.min(100, 70 + scoreDelta))
-  const coverage = Math.round((queriesWithResults / queries.length) * 100)
+  const availableQueries = queryAudit.filter(query => query.status !== 'non_disponibile').length
+  const coverage = Math.round((availableQueries / queryConfigs.length) * 100)
   const avgRelevance = allNews.length > 0
     ? allNews.reduce((sum, item) => sum + (item.relevance ?? 0), 0) / allNews.length
     : 0
   const confidenceValue = Math.min(100, Math.round(coverage * 0.45 + avgRelevance * 100 * 0.55))
   const confidence: 'alta' | 'media' | 'bassa' =
     confidenceValue >= 70 ? 'alta' : confidenceValue >= 40 ? 'media' : 'bassa'
+  const strongMatches = allNews.filter(item => item.identityEvidence === 'forte').length
+  const weakMatches = allNews.filter(item => item.identityEvidence === 'debole').length
+  const discriminatorType: 'codice_fiscale' | 'partita_iva' | 'citta' | 'nessuno' =
+    isCF ? 'codice_fiscale' : hasPiva ? 'partita_iva' : city ? 'citta' : 'nessuno'
+  const manualReviewRequired = events.some(event => event.manualReviewRequired)
+    || (events.length > 0 && strongMatches === 0)
+  const identityReason = events.length === 0
+    ? 'Nessun evento rilevante da attribuire al soggetto'
+    : strongMatches > 0
+      ? `${strongMatches} risultato/i contengono un discriminatore forte`
+      : 'Gli eventi non contengono partita IVA o codice fiscale: verificare manualmente eventuali omonimie'
+
+  const sourceMap = new Map<string, SourceCoverage>()
+  for (const item of allNews) {
+    const tier = item.sourceTier ?? getSourceTier(item.source, item.link)
+    const current = sourceMap.get(item.source)
+    sourceMap.set(item.source, {
+      source: item.source,
+      tier,
+      resultCount: (current?.resultCount ?? 0) + 1,
+    })
+  }
+  const sourceCoverage = Array.from(sourceMap.values())
+    .sort((a, b) => b.resultCount - a.resultCount)
+  const unavailableQueries = queryAudit.filter(query => query.status === 'non_disponibile').length
+  const negativeEvents = events.filter(event => event.polarity === 'negativo')
+  const positiveEvents = events.filter(event => event.polarity === 'positivo')
+  const scoreExplanation = [
+    'Base neutrale: 70/100. L’assenza di notizie non aumenta lo score.',
+    negativeEvents.length > 0
+      ? `${negativeEvents.length} evento/i negativo/i incidono per ${Math.abs(negativeEvents.reduce((sum, event) => sum + event.weight, 0))} punti.`
+      : 'Nessun evento negativo sufficientemente pertinente è stato rilevato.',
+    positiveEvents.length > 0
+      ? `${positiveEvents.length} evento/i positivo/i incidono per ${positiveEvents.reduce((sum, event) => sum + event.weight, 0)} punti.`
+      : 'Nessun evento positivo è stato utilizzato per modificare lo score.',
+    unavailableQueries > 0
+      ? `${unavailableQueries} ricerca/e non erano disponibili e riducono la copertura.`
+      : 'Tutte le ricerche previste hanno risposto.',
+    manualReviewRequired
+      ? 'È richiesta verifica manuale dell’identità per almeno un evento.'
+      : 'La corrispondenza dell’identità è adeguata per gli eventi utilizzati.',
+  ]
 
   const displayedNews = allNews.slice(0, 8)
   const riskNews   = allNews.filter(n =>
@@ -474,7 +682,18 @@ async function analyzeSubject(
     coverage,
     confidence,
     queriesWithResults,
-    queriesAttempted: queries.length,
+    queriesAttempted: queryConfigs.length,
+    queryAudit,
+    sourceCoverage,
+    events,
+    scoreExplanation,
+    identityAssessment: {
+      discriminatorType,
+      strongMatches,
+      weakMatches,
+      manualReviewRequired,
+      reason: identityReason,
+    },
     cessato,
   }
 }
@@ -667,6 +886,17 @@ Deno.serve(async (req) => {
       activeSubjects.reduce((sum, subject) => sum + subject.coverage, 0) / activeSubjects.length
     )
     const lowConfidenceSubjects = activeSubjects.filter(subject => subject.confidence === 'bassa').length
+    const manualReviewSubjects = activeSubjects.filter(
+      subject => subject.identityAssessment.manualReviewRequired
+    ).length
+    const unavailableQueries = activeSubjects.reduce(
+      (sum, subject) => sum + subject.queryAudit.filter(query => query.status === 'non_disponibile').length,
+      0
+    )
+    const relevantEvents = activeSubjects.reduce(
+      (sum, subject) => sum + subject.events.length,
+      0
+    )
 
     const risultati = {
       societa:        socRes,
@@ -678,8 +908,11 @@ Deno.serve(async (req) => {
       quality_summary: {
         average_coverage: averageCoverage,
         low_confidence_subjects: lowConfidenceSubjects,
+        manual_review_subjects: manualReviewSubjects,
+        unavailable_queries: unavailableQueries,
+        relevant_events: relevantEvents,
         active_subjects: activeSubjects.length,
-        methodology_version: '2.0-deterministic',
+        methodology_version: '3.0-explainable',
       },
       generato_il:    new Date().toISOString(),
     }

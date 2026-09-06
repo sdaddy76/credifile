@@ -16,11 +16,31 @@ interface Props { practiceId: string; clientId: string }
 interface NewsItem {
   title: string; snippet: string; link: string; date: string; source: string;
   relevance?: number; sourceQuality?: number;
+  sourceTier?: 'ufficiale' | 'stampa_primaria' | 'aggregatore' | 'web';
+  identityEvidence?: 'forte' | 'media' | 'debole';
+  discriminatorMatched?: boolean;
 }
 interface Signal {
   text: string; category: string; weight: number;
   articleTitle?: string; articleDate?: string; articleLink?: string;
   confidence?: number; sourceCount?: number; sourceName?: string;
+  eventId?: string;
+  identityEvidence?: 'forte' | 'media' | 'debole';
+}
+interface ReputationEvent {
+  id: string;
+  title: string;
+  category: string;
+  polarity: 'negativo' | 'positivo';
+  weight: number;
+  confidence: number;
+  sourceCount: number;
+  sources: string[];
+  date?: string;
+  articleLink?: string;
+  identityEvidence: 'forte' | 'media' | 'debole';
+  manualReviewRequired: boolean;
+  signals: string[];
 }
 interface SubjectResult {
   nome: string; tipo: string; score: number;
@@ -31,6 +51,26 @@ interface SubjectResult {
   confidence?: 'alta' | 'media' | 'bassa';
   queriesWithResults?: number;
   queriesAttempted?: number;
+  queryAudit?: Array<{
+    label: string;
+    provider: 'Google News' | 'DuckDuckGo';
+    status: 'risultati' | 'nessun_risultato' | 'non_disponibile';
+    resultCount: number;
+  }>;
+  sourceCoverage?: Array<{
+    source: string;
+    tier: 'ufficiale' | 'stampa_primaria' | 'aggregatore' | 'web';
+    resultCount: number;
+  }>;
+  events?: ReputationEvent[];
+  scoreExplanation?: string[];
+  identityAssessment?: {
+    discriminatorType: 'codice_fiscale' | 'partita_iva' | 'citta' | 'nessuno';
+    strongMatches: number;
+    weakMatches: number;
+    manualReviewRequired: boolean;
+    reason: string;
+  };
   cessato?: boolean;
 }
 interface AddressResult {
@@ -49,6 +89,9 @@ interface Risultati {
   quality_summary?: {
     average_coverage: number;
     low_confidence_subjects: number;
+    manual_review_subjects?: number;
+    unavailable_queries?: number;
+    relevant_events?: number;
     active_subjects: number;
     methodology_version: string;
   };
@@ -320,7 +363,19 @@ function SubjectCard({
                   affidabilità {result.confidence} · copertura {result.coverage ?? 0}%
                 </span>
               )}
+              {result.identityAssessment?.manualReviewRequired && (
+                <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                  identità da verificare
+                </span>
+              )}
             </div>
+
+            {result.identityAssessment?.manualReviewRequired && (
+              <p className="mt-1.5 flex items-start gap-1 text-[11px] text-amber-700">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                {result.identityAssessment.reason}
+              </p>
+            )}
 
             {/* Segnali negativi per categoria */}
             {Object.keys(grouped).length > 0 && (
@@ -372,6 +427,16 @@ function SubjectCard({
                 </button>
                 {expanded && (
                   <div className="mt-2 space-y-2">
+                    {(result.scoreExplanation?.length ?? 0) > 0 && (
+                      <div className="rounded border border-blue-100 bg-blue-50/60 p-2">
+                        <p className="text-[10px] font-semibold uppercase text-blue-700">Come è composto lo score</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {result.scoreExplanation?.map((line, index) => (
+                            <li key={index} className="text-[11px] text-blue-900">• {line}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {allNews.map((n, i) => (
                       <div key={i} className="text-xs bg-muted/40 rounded p-2 space-y-0.5">
                         <a href={n.link} target="_blank" rel="noopener noreferrer"
@@ -389,9 +454,32 @@ function SubjectCard({
                           {n.date && <span>{new Date(n.date).toLocaleDateString('it-IT')}</span>}
                           {n.relevance !== undefined && <span>pertinenza {Math.round(n.relevance * 100)}%</span>}
                           {n.sourceQuality !== undefined && <span>qualità fonte {Math.round(n.sourceQuality * 100)}%</span>}
+                          {n.sourceTier && <span>tipo fonte: {n.sourceTier.replace('_', ' ')}</span>}
+                          {n.identityEvidence && <span>identità: {n.identityEvidence}</span>}
                         </div>
                       </div>
                     ))}
+                    {(result.queryAudit?.length ?? 0) > 0 && (
+                      <div className="rounded border bg-white p-2">
+                        <p className="text-[10px] font-semibold uppercase text-muted-foreground">Copertura fonti</p>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {result.queryAudit?.map(query => (
+                            <span
+                              key={`${query.provider}-${query.label}`}
+                              className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                query.status === 'risultati'
+                                  ? 'border-green-200 bg-green-50 text-green-700'
+                                  : query.status === 'non_disponibile'
+                                    ? 'border-red-200 bg-red-50 text-red-700'
+                                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                              }`}
+                            >
+                              {query.label}: {query.status === 'risultati' ? `${query.resultCount} risultati` : query.status.replace(/_/g, ' ')}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1023,6 +1111,15 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
                 {' '}{r.quality_summary.low_confidence_subjects > 0
                   ? `${r.quality_summary.low_confidence_subjects} soggetto/i con affidabilità bassa: verificare manualmente omonimie e fonti.`
                   : 'Nessun soggetto con affidabilità bassa.'}
+                {r.quality_summary.manual_review_subjects
+                  ? ` ${r.quality_summary.manual_review_subjects} soggetto/i richiedono verifica manuale dell’identità.`
+                  : ''}
+                {r.quality_summary.unavailable_queries
+                  ? ` ${r.quality_summary.unavailable_queries} ricerca/e fonte non disponibili.`
+                  : ''}
+                {r.quality_summary.relevant_events !== undefined
+                  ? ` Eventi rilevanti raggruppati: ${r.quality_summary.relevant_events}.`
+                  : ''}
               </span>
             </div>
           )}

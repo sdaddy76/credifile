@@ -11,6 +11,7 @@ import {
   classificaTransazioneConConfidenza,
   type ConfidenzaClassificazione,
 } from '@/lib/classificaTransazione';
+import { analyzeBankStatement } from '@/lib/bankStatementAnalysis';
 
 /* ─────────────────────────────────────────────
    CSV / XLS PARSING
@@ -746,6 +747,10 @@ export function EstrattoConto({ practiceId }: Props) {
       if (data && data.length > 0) {
         setTransazioni(data as Transazione[]);
         setKpi(calcolaKpi(data as Transazione[]));
+        const sourceFiles = Array.from(new Set(
+          (data as Transazione[]).map(transaction => transaction.file_nome).filter(Boolean)
+        ));
+        setFileNome(sourceFiles.length === 1 ? sourceFiles[0] ?? '' : `${sourceFiles.length} documenti`);
       }
     } catch (e) {
       console.error(e);
@@ -810,8 +815,7 @@ export function EstrattoConto({ practiceId }: Props) {
     await supabase
       .from('estratto_conto_transactions')
       .delete()
-      .eq('practice_id', practiceId)
-      .eq('file_nome', fileName);
+      .eq('practice_id', practiceId);
 
     const { error: insertError } = await supabase
       .from('estratto_conto_transactions')
@@ -988,6 +992,7 @@ export function EstrattoConto({ practiceId }: Props) {
   const percentualeDaVerificare = kpi && kpi.num_transazioni > 0
     ? (kpi.transazioni_da_verificare / kpi.num_transazioni) * 100
     : 0;
+  const advancedAnalysis = analyzeBankStatement(transazioni);
 
   /* ── RENDER ── */
   return (
@@ -1155,6 +1160,77 @@ export function EstrattoConto({ practiceId }: Props) {
               </div>
             </div>
           )}
+
+          <Card className="border-indigo-200 bg-indigo-50/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-indigo-900">Analisi avanzata dei movimenti</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="rounded-md border border-indigo-100 bg-white p-2">
+                  <p className="text-[10px] uppercase text-indigo-600">Periodo coperto</p>
+                  <p className="text-sm font-bold text-indigo-900">{advancedAnalysis.monthsAnalyzed} mesi</p>
+                </div>
+                <div className="rounded-md border border-indigo-100 bg-white p-2">
+                  <p className="text-[10px] uppercase text-indigo-600">Lettura affidabile</p>
+                  <p className="text-sm font-bold text-indigo-900">{advancedAnalysis.reliablePercentage.toFixed(1)}%</p>
+                </div>
+                <div className="rounded-md border border-indigo-100 bg-white p-2">
+                  <p className="text-[10px] uppercase text-indigo-600">Rate ricorrenti</p>
+                  <p className="text-sm font-bold text-indigo-900">{advancedAnalysis.recurringFinancingPayments.length}</p>
+                </div>
+                <div className="rounded-md border border-indigo-100 bg-white p-2">
+                  <p className="text-[10px] uppercase text-indigo-600">Concentrazione incassi</p>
+                  <p className="text-sm font-bold text-indigo-900">
+                    {advancedAnalysis.customerReceiptConcentration === null
+                      ? 'N/D'
+                      : `${advancedAnalysis.customerReceiptConcentration.toFixed(1)}%`}
+                  </p>
+                </div>
+              </div>
+
+              {advancedAnalysis.recurringFinancingPayments.length > 0 && (
+                <div>
+                  <p className="mb-1 text-[10px] font-semibold uppercase text-indigo-700">Addebiti finanziari ricorrenti</p>
+                  <div className="space-y-1">
+                    {advancedAnalysis.recurringFinancingPayments.slice(0, 5).map(movement => (
+                      <div key={movement.key} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-indigo-100 bg-white px-2.5 py-2 text-xs">
+                        <span className="min-w-0 flex-1 truncate font-medium text-slate-800" title={movement.label}>{movement.label}</span>
+                        <span className="text-slate-500">{movement.occurrences} addebiti / {movement.months} mesi</span>
+                        <span className="font-semibold text-indigo-800">media {fmt(movement.averageAmount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {advancedAnalysis.insights.length > 0 ? (
+                <div className="space-y-2">
+                  {advancedAnalysis.insights.map(insight => (
+                    <div
+                      key={insight.id}
+                      className={`rounded-md border p-3 ${
+                        insight.severity === 'alta'
+                          ? 'border-red-200 bg-red-50'
+                          : insight.severity === 'media'
+                            ? 'border-amber-200 bg-amber-50'
+                            : 'border-slate-200 bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-xs font-semibold text-slate-900">{insight.title}</p>
+                        <span className="text-[10px] uppercase text-slate-500">confidenza {insight.confidence}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">{insight.explanation}</p>
+                      <p className="mt-1 text-[11px] font-medium text-slate-700">{insight.evidence.join(' · ')}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-indigo-700">Nessun elemento rilevante emerso nelle verifiche avanzate disponibili.</p>
+              )}
+            </CardContent>
+          </Card>
 
           {/* KPI cards row 1: entrate/uscite */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
