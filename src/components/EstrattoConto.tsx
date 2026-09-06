@@ -12,6 +12,10 @@ import {
   type ConfidenzaClassificazione,
 } from '@/lib/classificaTransazione';
 import { analyzeBankStatement } from '@/lib/bankStatementAnalysis';
+import {
+  parseBankStatementPdfRows,
+  type PositionedPdfRow,
+} from '@/lib/parseBankStatementPdf';
 
 /* ─────────────────────────────────────────────
    CSV / XLS PARSING
@@ -318,35 +322,16 @@ interface KpiMensili {
 }
 
 /* ─────────────────────────────────────────────
-   CONSTANTS / CLASSIFICATION RULES
-───────────────────────────────────────────── */
-
-/** Parole chiave che in una riga PDF indicano DARE (uscita) — usate da parseRighe
- *  quando non c'è separazione esplicita DARE/AVERE */
-const KW_RIGA_DARE = [
-  'VOSTRO ASSEGNO BANCARIO',          // assegno emesso
-  'VOSTRA DISPOSIZIONE A FAVORE',     // bonifico uscita MPS
-  'BON.SEPA TELEMATICO',              // bonifico SEPA uscita
-  'PAGAMENTI DIVERSI',                // addebiti vari
-  'ADDEBITO DIRETTO', 'ADDEBITO SDD', // RID/SDD
-  'PRELEVAMENTO', 'PREL. CONT',       // prelievi ATM
-  'COMMISSIONI SBF', 'COMMISSIONI ',  // spese bancarie
-  'PAGAMENTO RATA', 'RIMBORSO FINANZ',// rate mutuo/finanziamento
-  'ADD/PREMI', 'PREMI ASS',           // premi assicurativi addebito
-  'ADDEBITO RATA', 'ADDEBITO LEASING',
-];
-
-/* ─────────────────────────────────────────────
    PDF PARSING
 ───────────────────────────────────────────── */
 
 /** Estrae testo dal PDF ricostruendo righe per coordinata Y */
-async function estraiTestoPdf(arrayBuffer: ArrayBuffer): Promise<string[][]> {
+async function estraiTestoPdf(arrayBuffer: ArrayBuffer): Promise<PositionedPdfRow[]> {
   const pdfjsLib = await import('pdfjs-dist');
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-  const allLines: string[][] = [];
+  const allLines: PositionedPdfRow[] = [];
 
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
@@ -363,175 +348,21 @@ async function estraiTestoPdf(arrayBuffer: ArrayBuffer): Promise<string[][]> {
     }
     // Ordina per Y decrescente (top→bottom), poi per X crescente (sinistra→destra)
     const sorted = [...byY.entries()].sort((a, b) => b[0] - a[0]);
-    for (const [, tokObjs] of sorted) {
+    for (const [y, tokObjs] of sorted) {
       tokObjs.sort((a, b) => a.x - b.x); // sinistra → destra garantisce: data | desc | importo | saldo
       const tokens = tokObjs.map(t => t.str);
       const line = tokens.join(' ').trim();
-      if (line) allLines.push(tokens);
+      if (line) {
+        allLines.push({
+          tokens,
+          positionedTokens: tokObjs.map(token => ({ value: token.str, x: token.x })),
+          page: p,
+          y,
+        });
+      }
     }
   }
   return allLines;
-}
-
-/** Regexp per date italiane */
-const RE_DATA = /\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/;
-
-function parseImporto(str: string): number | null {
-  // Rimuove punti migliaia, sostituisce virgola con punto
-  const clean = str.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(clean);
-  return isNaN(n) ? null : n;
-}
-
-function dataISO(giorno: string, mese: string, anno: string): string {
-  const g = giorno.padStart(2, '0');
-  const m = mese.padStart(2, '0');
-  const a = anno.length === 2 ? `20${anno}` : anno;
-  return `${a}-${m}-${g}`;
-}
-
-/**
- * Analizza le righe di testo e tenta di estrarre transazioni.
- * Gestisce i formati più comuni degli estratti conto italiani.
- */
-function parseRighe(righe: string[][]): Transazione[] {
-  const transazioni: Transazione[] = [];
-
-  for (const tokens of righe) {
-    const riga = tokens.join(' ');
-    if (!riga.trim() || riga.length < 10) continue;
-
-    // Cerca data (contabile o valuta)
-    const mData = RE_DATA.exec(riga);
-    if (!mData) continue;
-
-    // Cerca almeno un importo nella riga
-    // Strategia: raccoglie tutti i token numerici
-    const numeri: number[] = [];
-    for (const tok of tokens) {
-      const cleaned = tok.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-      const n = parseFloat(cleaned);
-      if (!isNaN(n) && Math.abs(n) > 0.01 && cleaned.includes('.') === false && tok.includes(',')) {
-        numeri.push(n);
-      }
-    }
-
-    // Cerca importi con virgola decimale (formato italiano: 1.234,56)
-    const importiMatch = [...riga.matchAll(/([+-]?\s*\d{1,3}(?:\.\d{3})*,\d{2})/g)];
-    if (importiMatch.length === 0) continue;
-
-    // Raccoglie tutti gli importi trovati sulla riga
-    const allAmounts = importiMatch
-      .map(m => ({ raw: m[1].replace(/\s/g, ''), val: parseImporto(m[1].replace(/\s/g, '')) }))
-      .filter((a): a is { raw: string; val: number } => a.val !== null && Math.abs(a.val) > 0.005);
-    if (allAmounts.length === 0) continue;
-
-    // Selezione importo transazione vs saldo progressivo:
-    // Se ci sono ≥2 importi e il massimo è ≥10× il minimo → il massimo è il saldo, prende il minimo
-    // (tipico estratto conto IT: data | desc | importo_transazione | saldo_conto)
-    let importoVal: number;
-    if (allAmounts.length === 1) {
-      importoVal = allAmounts[0].val;
-    } else {
-      const absVals = allAmounts.map(a => Math.abs(a.val));
-      const maxAbs = Math.max(...absVals);
-      const minAbs = Math.min(...absVals);
-      if (maxAbs / (minAbs || 0.01) >= 10) {
-        // Il massimo è quasi certamente il saldo: sceglie il non-massimo più a sinistra
-        const chosen = allAmounts.find(a => Math.abs(a.val) < maxAbs) ?? allAmounts[0];
-        importoVal = chosen.val;
-      } else {
-        // Valori comparabili: prende il primo in ordine visivo (già ordinato per X)
-        importoVal = allAmounts[0].val;
-      }
-    }
-    if (importoVal === 0) continue;
-
-    // Determina tipo (entrata/uscita) da segno o contesto
-    let tipo: 'entrata' | 'uscita' = importoVal >= 0 ? 'entrata' : 'uscita';
-    const rigaUp = riga.toUpperCase();
-
-    // Segnali espliciti di debito/credito nel testo
-    if (rigaUp.includes(' DARE ') || rigaUp.includes('ADDEBIT') || rigaUp.includes('USCITA') || rigaUp.includes(' D ')) {
-      tipo = 'uscita';
-    }
-    if (rigaUp.includes(' AVERE ') || rigaUp.includes('ACCREDIT') || rigaUp.includes('ENTRATA') || rigaUp.includes(' A ')) {
-      tipo = 'entrata';
-    }
-
-    // Override con le keyword MPS specifiche di DARE (uscita)
-    // Nel PDF MPS le colonne DARE/AVERE non portano segno separato nei token,
-    // quindi si usa il contenuto descrittivo per determinare la direzione.
-    if (KW_RIGA_DARE.some(k => rigaUp.includes(k))) {
-      tipo = 'uscita';
-    }
-    // "BONIFICO A VOSTRO FAVORE" è sempre entrata (incasso da cliente)
-    if (rigaUp.includes('BONIFICO A VOSTRO FAVORE')) {
-      tipo = 'entrata';
-    }
-
-    const importoAbs = Math.abs(importoVal);
-
-    // Descrizione: tutto ciò che non è data o importo
-    const desc = tokens
-      .filter(t => {
-        if (RE_DATA.test(t)) return false;
-        if (/^\d{1,3}(?:\.\d{3})*,\d{2}$/.test(t.trim())) return false;
-        if (/^[+-]$/.test(t.trim())) return false;
-        if (t.trim().length < 2) return false;
-        return true;
-      })
-      .join(' ')
-      .trim();
-
-    if (!desc || importoAbs < 0.01) continue;
-
-    const classificazione = classificaTransazioneConConfidenza(desc, tipo);
-    const dataISO_str = dataISO(mData[1], mData[2], mData[3]);
-
-    // Saldo progressivo: conserva il segno del valore con valore assoluto maggiore.
-    let saldo: number | undefined;
-    if (allAmounts.length >= 2) {
-      saldo = allAmounts.reduce((best, current) =>
-        Math.abs(current.val) > Math.abs(best.val) ? current : best
-      ).val;
-    }
-
-    transazioni.push({
-      data_valuta: dataISO_str,
-      importo: importoAbs,
-      tipo,
-      categoria: classificazione.categoria,
-      descrizione: desc.substring(0, 200),
-      saldo_progressivo: saldo,
-      classification_confidence: classificazione.confidenza,
-      classification_rule: classificazione.regola,
-      parse_confidence: allAmounts.length >= 2 ? 'media' : 'bassa',
-      source_format: 'pdf',
-    });
-  }
-
-  // Deduplicazione: rimuove duplicati esatti (stessa data + importo + descrizione)
-  const seen = new Set<string>();
-  const deduped = transazioni.filter(t => {
-    const key = `${t.data_valuta}|${t.importo}|${t.descrizione.substring(0, 40)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  // Outlier filter: se l'importo massimo è > 100× il secondo massimo, è quasi
-  // certamente un saldo progressivo estratto erroneamente come importo transazione.
-  // (es. MPS: riga con solo saldo 17.978.187.186,85 senza importo transazione separato)
-  if (deduped.length >= 2) {
-    const sortedDesc = [...deduped].sort((a, b) => b.importo - a.importo);
-    const maxImporto = sortedDesc[0].importo;
-    const secondoMassimo = sortedDesc[1].importo;
-    if (secondoMassimo > 0 && maxImporto / secondoMassimo > 100) {
-      return deduped.filter(t => t.importo <= secondoMassimo * 100);
-    }
-  }
-  return deduped;
 }
 
 /* ─────────────────────────────────────────────
@@ -844,7 +675,7 @@ export function EstrattoConto({ practiceId }: Props) {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const righe = await estraiTestoPdf(arrayBuffer);
-      const parsed = parseRighe(righe);
+      const parsed = parseBankStatementPdfRows(righe);
 
       if (parsed.length === 0) {
         toast.warning('Nessuna transazione rilevata. Il formato del PDF potrebbe non essere supportato.');

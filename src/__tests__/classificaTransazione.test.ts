@@ -5,6 +5,10 @@ describe('classificaTransazione', () => {
     expect(classificaTransazione('BON.SEPA TELEMATICO pagamento materiale', 'uscita')).toBe('fornitore');
   });
 
+  it('classifica un bonifico disposto a favore come uscita fornitore', () => {
+    expect(classificaTransazione('disposto a favore di Simone Palombo', 'uscita')).toBe('fornitore');
+  });
+
   it('classifica una riga con importo in AVERE come entrata incasso cliente', () => {
     expect(classificaTransazione('BONIFICO A VOSTRO FAVORE da cliente Rossi', 'entrata')).toBe('incasso_cliente');
   });
