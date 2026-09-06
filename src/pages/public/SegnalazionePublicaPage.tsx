@@ -4,13 +4,16 @@
 
 import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Upload, X, FileText, Send, Plus, Loader2, CheckCircle2, ShieldCheck, BadgeEuro } from 'lucide-react';
 import { extractPdfText, parseVisuraCompleta } from '@/lib/parseVisura';
+import { supabase } from '@/lib/supabase';
+import PublicSiteLayout from '@/components/public/PublicSiteLayout';
+import { usePageMeta } from '@/lib/pageMeta';
 
 const PRIVACY_CONSENT_VERSION = '2026-09-05-v1';
 const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell’informativa privacy e, in qualità di interessato e/o legale rappresentante della società, autorizzo Credifile e il consulente o intermediario incaricato a raccogliere e trattare i dati e i documenti trasmessi con questa richiesta. Autorizzo inoltre la successiva trasmissione alle banche e agli intermediari finanziari coinvolti, esclusivamente per la valutazione della bancabilità, l’istruttoria e l’eventuale perfezionamento di una richiesta di finanziamento. Dichiaro di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti.`;
@@ -23,17 +26,17 @@ interface FileItem {
   nome: string;
 }
 
-// Converte un File in base64
-async function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload  = () => resolve((reader.result as string).split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+const MAX_FILE_BYTES = 30 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+const MAX_FILES = 12;
 
 export default function SegnalazionePublicaPage() {
+  usePageMeta({
+    title: 'Richiedi una valutazione di bancabilità — Credifile',
+    description: 'Carica la visura e i documenti disponibili per richiedere un’analisi documentale e finanziaria della tua impresa.',
+    path: '/richiedi-valutazione',
+  });
+
   // Campi cliente
   const [ragioneSociale, setRagioneSociale] = useState('');
   const [piva,            setPiva]            = useState('');
@@ -54,6 +57,7 @@ export default function SegnalazionePublicaPage() {
   const [inviata,  setInviata]  = useState(false);
   const [praticaEsistente, setPraticaEsistente] = useState<{ numero_pratica: string; status: string } | null>(null);
   const [errore,   setErrore]   = useState('');
+  const [uploadStatus, setUploadStatus] = useState('');
   const [website, setWebsite] = useState('');
   const [formStartedAt, setFormStartedAt] = useState(() => Date.now());
   const [privacyConsentChecked, setPrivacyConsentChecked] = useState(false);
@@ -65,6 +69,10 @@ export default function SegnalazionePublicaPage() {
     if (!f) return;
     if (f.type !== 'application/pdf') { setErrore('La visura deve essere un PDF'); return; }
     if (f.size > 30 * 1024 * 1024)   { setErrore('File troppo grande (max 30 MB)'); return; }
+    if (f.size + altriDocs.reduce((sum, item) => sum + item.file.size, 0) > MAX_TOTAL_BYTES) {
+      setErrore('La dimensione complessiva dei documenti supera 100 MB.');
+      return;
+    }
     setErrore('');
     setVisura(f);
     e.target.value = '';
@@ -90,11 +98,29 @@ export default function SegnalazionePublicaPage() {
   // ── Gestione altri documenti ───────────────────────────────────────────────
   const handleAltriDocs = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
+    if (altriDocs.length + files.length + 1 > MAX_FILES) {
+      setErrore(`Puoi caricare al massimo ${MAX_FILES} documenti, inclusa la visura.`);
+      e.target.value = '';
+      return;
+    }
+    const tooLarge = files.find(file => file.size > MAX_FILE_BYTES);
+    if (tooLarge) {
+      setErrore(`${tooLarge.name} supera il limite di 30 MB.`);
+      e.target.value = '';
+      return;
+    }
+    const totalBytes = (visura?.size ?? 0) + altriDocs.reduce((sum, item) => sum + item.file.size, 0) + files.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      setErrore('La dimensione complessiva dei documenti supera 100 MB.');
+      e.target.value = '';
+      return;
+    }
     const nuovi: FileItem[] = files.map(f => ({
       id:   crypto.randomUUID(),
       file: f,
       nome: f.name.replace(/\.[^.]+$/, ''),
     }));
+    setErrore('');
     setAltriDocs(prev => [...prev, ...nuovi]);
     e.target.value = '';
   };
@@ -117,21 +143,68 @@ export default function SegnalazionePublicaPage() {
     }
     setErrore('');
     setSending(true);
+    setUploadStatus('Preparazione del caricamento sicuro...');
 
     try {
-      // Converti visura in base64
-      const visuraB64 = await fileToBase64(visura);
+      const fileDescriptors = [
+        {
+          client_id: 'visura',
+          name: visura.name,
+          type: visura.type || 'application/pdf',
+          size: visura.size,
+          role: 'visura',
+          nome_descrittivo: 'Visura Camerale',
+        },
+        ...altriDocs.map(doc => ({
+          client_id: doc.id,
+          name: doc.file.name,
+          type: doc.file.type || 'application/octet-stream',
+          size: doc.file.size,
+          role: 'allegato',
+          nome_descrittivo: doc.nome || doc.file.name,
+        })),
+      ];
 
-      // Converti altri documenti in base64
-      const altriB64 = await Promise.all(
-        altriDocs.map(async doc => ({
-          name:            doc.file.name,
-          type:            doc.file.type || 'application/octet-stream',
-          nomeDescrittivo: doc.nome || doc.file.name,
-          data:            await fileToBase64(doc.file),
-        }))
-      );
+      const prepareResponse = await fetch('/api/segnalazione-pubblica', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'prepare_uploads',
+          piva: normalizedPiva,
+          files: fileDescriptors,
+          website,
+          form_started_at: formStartedAt,
+          privacy_consent: privacyConsentChecked,
+          privacy_consent_version: PRIVACY_CONSENT_VERSION,
+          payment_disclaimer: paymentDisclaimerChecked,
+          payment_disclaimer_version: PAYMENT_DISCLAIMER_VERSION,
+        }),
+      });
+      const prepareJson = await prepareResponse.json();
+      if (!prepareResponse.ok || !prepareJson.success) {
+        throw new Error(prepareJson.error ?? 'Impossibile preparare il caricamento');
+      }
 
+      const localFiles = new Map<string, File>([
+        ['visura', visura],
+        ...altriDocs.map(doc => [doc.id, doc.file] as [string, File]),
+      ]);
+      const uploads = Array.isArray(prepareJson.uploads) ? prepareJson.uploads : [];
+
+      for (const [index, upload] of uploads.entries()) {
+        const file = localFiles.get(upload.client_id);
+        if (!file) throw new Error('Documento locale non trovato');
+        setUploadStatus(`Caricamento documento ${index + 1} di ${uploads.length}: ${file.name}`);
+        const { error: uploadError } = await supabase.storage
+          .from('practice-files')
+          .uploadToSignedUrl(upload.path, upload.token, file, {
+            contentType: file.type || 'application/octet-stream',
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
+      }
+
+      setUploadStatus('Registrazione della richiesta...');
       const r = await fetch('/api/segnalazione-pubblica', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -142,12 +215,11 @@ export default function SegnalazionePublicaPage() {
           email_referente: emailCliente.trim() || null,
           telefono:        cellulare.trim()    || null,
           note:            note.trim()         || null,
-          visura: {
-            name: visura.name,
-            type: visura.type,
-            data: visuraB64,
-          },
-          altri_docs: altriB64,
+          submission_token: prepareJson.submission_token,
+          uploaded_files: uploads.map(upload => ({
+            client_id: upload.client_id,
+            path: upload.path,
+          })),
           website,
           form_started_at: formStartedAt,
           privacy_consent: privacyConsentChecked,
@@ -165,9 +237,11 @@ export default function SegnalazionePublicaPage() {
       setInviata(true);
 
     } catch (err) {
-      setErrore('Errore durante l\'invio. Riprova tra qualche minuto.');
+      const message = err instanceof Error ? err.message : '';
+      setErrore(message || 'Errore durante l\'invio. Riprova tra qualche minuto.');
     } finally {
       setSending(false);
+      setUploadStatus('');
     }
   };
 
@@ -177,62 +251,66 @@ export default function SegnalazionePublicaPage() {
     setPraticaEsistente(null);
     setWebsite(''); setFormStartedAt(Date.now());
     setPrivacyConsentChecked(false); setPaymentDisclaimerChecked(false);
+    setUploadStatus('');
   };
 
   // ── Schermata successo ─────────────────────────────────────────────────────
   if (inviata) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-6 max-w-md w-full text-center">
-          <div className="rounded-full bg-emerald-50 p-6">
-            <CheckCircle2 className="w-12 h-12 text-emerald-600" />
+      <PublicSiteLayout>
+        <main className="min-h-[70vh] bg-gray-50 flex items-center justify-center p-4">
+          <div className="flex flex-col items-center gap-6 max-w-md w-full text-center">
+            <div className="rounded-full bg-emerald-50 p-6">
+              <CheckCircle2 className="w-12 h-12 text-emerald-600" />
+            </div>
+            <div className="space-y-1">
+              <h1 className="text-2xl font-bold">
+                {praticaEsistente ? 'Richiesta collegata' : 'Richiesta inviata!'}
+              </h1>
+              <p className="text-muted-foreground text-sm">
+                {praticaEsistente ? (
+                  <>
+                    Abbiamo trovato una pratica già in lavorazione per questa P.IVA:
+                    <br /><strong>{praticaEsistente.numero_pratica}</strong>.
+                    <br />Non è stata aperta una seconda pratica. Usa il link del portale già ricevuto o attendi il contatto del tuo agente.
+                  </>
+                ) : (
+                  <>
+                    La richiesta è stata registrata e il team è stato notificato.<br />
+                    Sarai contattato al più presto.
+                  </>
+                )}
+              </p>
+            </div>
+            <Button onClick={handleNuova} className="gap-2">
+              <Plus className="w-4 h-4" /> Nuova segnalazione
+            </Button>
           </div>
-          <div className="space-y-1">
-            <h2 className="text-2xl font-bold">
-              {praticaEsistente ? 'Richiesta collegata' : 'Richiesta inviata!'}
-            </h2>
-            <p className="text-muted-foreground text-sm">
-              {praticaEsistente ? (
-                <>
-                  Abbiamo trovato una pratica già in lavorazione per questa P.IVA:
-                  <br /><strong>{praticaEsistente.numero_pratica}</strong>.
-                  <br />Non è stata aperta una seconda pratica. Usa il link del portale già ricevuto o attendi il contatto del tuo agente.
-                </>
-              ) : (
-                <>
-                  La richiesta è stata registrata e il team è stato notificato.<br />
-                  Sarai contattato al più presto.
-                </>
-              )}
-            </p>
-          </div>
-          <Button onClick={handleNuova} className="gap-2">
-            <Plus className="w-4 h-4" /> Nuova segnalazione
-          </Button>
-        </div>
-      </div>
+        </main>
+      </PublicSiteLayout>
     );
   }
 
-  // ── Form (identico a NuovaSegnalazionePage) ────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
-      <div className="max-w-2xl mx-auto space-y-6 pb-10">
+    <PublicSiteLayout>
+      <main className="min-h-screen bg-gray-50 py-10 px-4">
+        <div className="max-w-2xl mx-auto space-y-6 pb-10">
 
-        {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Send className="w-6 h-6 text-orange-500" /> Richiedi una valutazione di bancabilità
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Carica la visura camerale e i documenti disponibili. Credifile registrerà la richiesta e ti contatterà per i passaggi successivi.
-          </p>
-        </div>
+          {/* Header */}
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Richiesta iniziale</p>
+            <h1 className="mt-2 text-2xl font-bold flex items-center gap-2">
+              <Send className="w-6 h-6 text-orange-600" /> Richiedi una valutazione di bancabilità
+            </h1>
+            <p className="text-sm text-muted-foreground mt-2">
+              Carica la visura camerale e i documenti disponibili. Credifile registrerà la richiesta e ti contatterà per i passaggi successivi.
+            </p>
+          </div>
 
         {/* Dati cliente */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">👤 Dati Cliente</CardTitle>
+            <h2 className="text-sm font-semibold">👤 Dati Cliente</h2>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
@@ -280,9 +358,9 @@ export default function SegnalazionePublicaPage() {
         {/* Visura camerale */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">
+            <h2 className="text-sm font-semibold">
               📄 Visura Camerale <span className="text-red-500">*</span>
-            </CardTitle>
+            </h2>
           </CardHeader>
           <CardContent>
             {visura ? (
@@ -313,9 +391,9 @@ export default function SegnalazionePublicaPage() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-semibold">
+              <h2 className="text-sm font-semibold">
                 📎 Altri Documenti <span className="text-muted-foreground font-normal">(opzionali)</span>
-              </CardTitle>
+              </h2>
               <label className="cursor-pointer">
                 <Button size="sm" variant="outline" className="gap-1.5 pointer-events-none" asChild>
                   <span><Plus className="w-3.5 h-3.5" /> Aggiungi</span>
@@ -354,7 +432,7 @@ export default function SegnalazionePublicaPage() {
         {/* Note */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">📝 Note aggiuntive</CardTitle>
+            <h2 className="text-sm font-semibold">📝 Note aggiuntive</h2>
           </CardHeader>
           <CardContent>
             <Textarea
@@ -375,10 +453,10 @@ export default function SegnalazionePublicaPage() {
 
         <Card className="border-teal-200 bg-teal-50/40">
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-teal-950">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-teal-950">
               <ShieldCheck className="h-4 w-4 text-teal-700" />
               Autorizzazione privacy e trasmissione documenti
-            </CardTitle>
+            </h2>
           </CardHeader>
           <CardContent>
             <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed text-teal-950">
@@ -397,10 +475,10 @@ export default function SegnalazionePublicaPage() {
 
         <Card className="border-amber-200 bg-amber-50/50">
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-amber-950">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-amber-950">
               <BadgeEuro className="h-4 w-4 text-amber-700" />
               Servizio a pagamento e mediazione
-            </CardTitle>
+            </h2>
           </CardHeader>
           <CardContent>
             <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed text-amber-950">
@@ -440,7 +518,7 @@ export default function SegnalazionePublicaPage() {
           disabled={sending || !ragioneSociale.trim() || !/^\d{11}$/.test(piva) || !visura || !privacyConsentChecked || !paymentDisclaimerChecked}
         >
           {sending
-            ? <><Loader2 className="w-4 h-4 animate-spin" /> Invio in corso...</>
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> {uploadStatus || 'Invio in corso...'}</>
             : <><Send className="w-4 h-4" /> Invia richiesta di valutazione</>}
         </Button>
 
@@ -448,7 +526,8 @@ export default function SegnalazionePublicaPage() {
           I dati vengono trattati per gestire la richiesta e, solo nei limiti dell’autorizzazione accettata, potranno essere trasmessi agli intermediari coinvolti nella valutazione.
         </p>
 
-      </div>
-    </div>
+        </div>
+      </main>
+    </PublicSiteLayout>
   );
 }

@@ -38,7 +38,7 @@ export default function RegistrazioneConsulentePage() {
         setStep('done');
       } else {
         // login ok: redirect al portale consulente
-        window.location.hash = '/consulente';
+        window.location.assign('/consulente');
       }
     } finally {
       setLoading(false);
@@ -55,7 +55,7 @@ export default function RegistrazioneConsulentePage() {
         <p className="text-slate-500 text-sm">
           Controlla la tua casella email per confermare l'indirizzo, poi accedi dal link sottostante.
         </p>
-        <a href="#/login" className="mt-6 inline-block bg-teal-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-teal-700 transition-colors">
+        <a href="/login" className="mt-6 inline-block bg-teal-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-teal-700 transition-colors">
           Vai al login
         </a>
       </div>
@@ -107,7 +107,7 @@ export default function RegistrazioneConsulentePage() {
           </Button>
         </form>
         <p className="text-xs text-slate-400 text-center mt-4">
-          Hai già un account? <a href="#/login" className="text-teal-600 hover:underline">Accedi</a>
+          Hai già un account? <a href="/login" className="text-teal-600 hover:underline">Accedi</a>
         </p>
       </div>
     </div>

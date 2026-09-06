@@ -123,7 +123,7 @@ serve(async (req) => {
     const safeCompanyName = escapeHtml(companyName || 'Cliente');
     const safePracticeNumber = escapeHtml(practice.numero_pratica);
     const safeAgentName = escapeHtml(agent.nome || agentEmail);
-    const practiceLink = `${appUrl}/#/admin/pratiche/${practice_id}`;
+    const practiceLink = `${appUrl}/admin/pratiche/${practice_id}`;
     const errors: string[] = [];
     const sent: string[] = [];
 

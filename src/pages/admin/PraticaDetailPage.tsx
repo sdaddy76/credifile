@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { uploadPracticeFile } from '@/lib/uploadFile';
 import { invokeSendToBank } from '@/lib/sendToBank';
 import { invokeAiMatching } from '@/lib/aiMatching';
+import { buildAppUrl } from '@/lib/appUrl';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -867,7 +868,7 @@ export default function PraticaDetailPage() {
       }
 
       const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
-      const link = `https://credifile-eosin.vercel.app/#/accesso?p=${practice.id}`;
+      const link = buildAppUrl(`/accesso?p=${practice.id}`);
       const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
         body: {
           to: client.email,
@@ -1239,7 +1240,7 @@ export default function PraticaDetailPage() {
     const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
 
     // Costruisci link
-    const link = `https://credifile-eosin.vercel.app/#/accesso?p=${practice.id}`;
+    const link = buildAppUrl(`/accesso?p=${practice.id}`);
 
     // Lista documenti richiesti
     const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
@@ -1452,7 +1453,7 @@ export default function PraticaDetailPage() {
   };
 
   const copyLink = () => {
-    const url = `https://credifile-eosin.vercel.app/#/accesso?p=${id}`;
+    const url = buildAppUrl(`/accesso?p=${id}`);
     navigator.clipboard.writeText(url);
     toast.success('Link copiato negli appunti');
   };
@@ -3425,7 +3426,7 @@ export default function PraticaDetailPage() {
                     {docTemplates.length === 0 && (
                       <p className="mt-2 text-xs">
                         Nessun template disponibile.{' '}
-                        <a href="#/admin/template-documenti" className="text-primary underline">
+                        <a href="/admin/template-documenti" className="text-primary underline">
                           Crea il primo template →
                         </a>
                       </p>

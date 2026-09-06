@@ -25,7 +25,7 @@ interface Segnalazione {
   agente_id?: string | null;
   note_interne?: string | null;
   created_at: string;
-  file_urls?: { nome: string; url: string }[] | null;
+  file_urls?: { nome: string; url?: string; path?: string }[] | null;
   practice_id?: string | null;
   numero_pratica?: string | null;
   piva?: string | null;
@@ -60,6 +60,24 @@ export default function SegnalazioniRicevutePage() {
   const [assigning, setAssigning]       = useState<string | null>(null);
   const [noteInterne, setNoteInterne]   = useState<Record<string, string>>({});
   const [selectedAgente, setSelectedAgente] = useState<Record<string, string>>({});
+
+  const apriDocumento = async (file: { nome: string; url?: string; path?: string }) => {
+    if (file.path) {
+      const popup = window.open('', '_blank', 'noopener,noreferrer');
+      const { data, error } = await supabase.storage
+        .from('practice-files')
+        .createSignedUrl(file.path, 300);
+      if (error || !data?.signedUrl) {
+        popup?.close();
+        toast.error('Impossibile aprire il documento: ' + (error?.message ?? 'link non disponibile'));
+        return;
+      }
+      if (popup) popup.location.href = data.signedUrl;
+      else window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (file.url) window.open(file.url, '_blank', 'noopener,noreferrer');
+  };
 
   // Carica lista agenti per assegnazione
   const loadAgenti = async () => {
@@ -250,7 +268,7 @@ export default function SegnalazioniRicevutePage() {
             Nessuna segnalazione {filtroStato !== 'tutte' ? `con stato "${filtroStato}"` : ''}
           </p>
           <p className="text-xs text-muted-foreground/60 mt-1">
-            Il link pubblico è: <code className="bg-muted px-1 rounded">/#/segnala</code>
+            Il link pubblico è: <code className="bg-muted px-1 rounded">/richiedi-valutazione</code>
           </p>
         </div>
       ) : (
@@ -337,16 +355,15 @@ export default function SegnalazioniRicevutePage() {
                       {seg.file_urls && seg.file_urls.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {seg.file_urls.map((f, i) => (
-                            <a
+                            <button
                               key={i}
-                              href={f.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              type="button"
+                              onClick={() => apriDocumento(f)}
                               className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors max-w-[220px]"
                             >
                               <FileText className="w-3 h-3 shrink-0" />
                               <span className="truncate">{f.nome}</span>
-                            </a>
+                            </button>
                           ))}
                         </div>
                       )}

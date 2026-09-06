@@ -3,10 +3,18 @@
 // Accetta campi testo + file codificati base64, li carica su Supabase Storage,
 // salva in segnalazioni_pubbliche e notifica il super_admin via email.
 
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
+
 const SUPABASE_URL  = process.env.VITE_SUPABASE_URL || 'https://fhieppjqlefdlanvrpik.supabase.co';
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_KEY    = process.env.RESEND_API_KEY;
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || 'stefano@daddino.com';
+const STORAGE_BUCKET = 'practice-files';
+const MAX_PUBLIC_FILES = 12;
+const MAX_PUBLIC_FILE_BYTES = 30 * 1024 * 1024;
+const MAX_PUBLIC_TOTAL_BYTES = 100 * 1024 * 1024;
+const PUBLIC_UPLOAD_TOKEN_TTL_MS = 60 * 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX = 6;
 const requestBuckets = new Map();
@@ -24,6 +32,16 @@ const ACTIVE_PRACTICE_STATUSES = [
   'deliberata',
   'completata',
 ];
+
+const storageAdmin = SUPABASE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : null;
+
+const ALLOWED_PUBLIC_EXTENSIONS = new Set([
+  'pdf', 'csv', 'xls', 'xlsx', 'ods', 'doc', 'docx', 'jpg', 'jpeg', 'png',
+]);
 
 function getClientIp(req) {
   const forwarded = req.headers?.['x-forwarded-for'] || req.headers?.['x-real-ip'] || 'unknown';
@@ -46,6 +64,163 @@ function consumeRateLimit(req) {
     }
   }
   return true;
+}
+
+function safeFileName(value) {
+  const cleaned = String(value ?? 'documento')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_\\.]+|[_\\.]+$/g, '')
+    .slice(0, 140);
+  return cleaned || 'documento';
+}
+
+function getExtension(name) {
+  const match = String(name ?? '').toLowerCase().match(/\.([a-z0-9]{1,8})$/);
+  return match?.[1] ?? '';
+}
+
+function validateUploadDescriptors(files) {
+  if (!Array.isArray(files) || files.length < 1 || files.length > MAX_PUBLIC_FILES) {
+    return { error: `Sono consentiti da 1 a ${MAX_PUBLIC_FILES} documenti per richiesta.` };
+  }
+
+  let totalBytes = 0;
+  let visure = 0;
+  const normalized = [];
+
+  for (const [index, rawFile] of files.entries()) {
+    const name = String(rawFile?.name ?? '').trim();
+    const size = Number(rawFile?.size);
+    const role = rawFile?.role === 'visura' ? 'visura' : 'allegato';
+    const extension = getExtension(name);
+
+    if (!name || !Number.isFinite(size) || size <= 0 || size > MAX_PUBLIC_FILE_BYTES) {
+      return { error: `Il documento ${index + 1} non è valido o supera 30 MB.` };
+    }
+    if (!ALLOWED_PUBLIC_EXTENSIONS.has(extension)) {
+      return { error: `Formato .${extension || '?'} non consentito per ${name}.` };
+    }
+    if (role === 'visura') {
+      visure += 1;
+      if (extension !== 'pdf') return { error: 'La visura camerale deve essere in formato PDF.' };
+    }
+
+    totalBytes += size;
+    normalized.push({
+      client_id: String(rawFile?.client_id ?? `${index}`),
+      name,
+      safe_name: safeFileName(name),
+      type: String(rawFile?.type || 'application/octet-stream').slice(0, 150),
+      size,
+      role,
+      nome_descrittivo: String(rawFile?.nome_descrittivo || name).trim().slice(0, 180),
+    });
+  }
+
+  if (visure !== 1) return { error: 'È richiesta una sola visura camerale in formato PDF.' };
+  if (totalBytes > MAX_PUBLIC_TOTAL_BYTES) {
+    return { error: 'La dimensione complessiva dei documenti supera 100 MB.' };
+  }
+  return { files: normalized };
+}
+
+function tokenSecret() {
+  return process.env.PUBLIC_UPLOAD_SIGNING_SECRET || SUPABASE_KEY || '';
+}
+
+function createSubmissionToken(payload) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = createHmac('sha256', tokenSecret()).update(encoded).digest('base64url');
+  return `${encoded}.${signature}`;
+}
+
+function verifySubmissionToken(token) {
+  try {
+    const [encoded, signature] = String(token ?? '').split('.');
+    if (!encoded || !signature || !tokenSecret()) return null;
+    const expected = createHmac('sha256', tokenSecret()).update(encoded).digest();
+    const received = Buffer.from(signature, 'base64url');
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) return null;
+    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+    if (!payload?.expires_at || Date.now() > Number(payload.expires_at)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+async function prepareDirectUploads(req, res) {
+  const {
+    piva,
+    files,
+    website,
+    form_started_at,
+    privacy_consent,
+    privacy_consent_version,
+    payment_disclaimer,
+    payment_disclaimer_version,
+  } = req.body ?? {};
+
+  const elapsed = Date.now() - Number(form_started_at);
+  if (website || !Number.isFinite(elapsed) || elapsed < 2500 || elapsed > 24 * 60 * 60 * 1000) {
+    return res.status(400).json({ error: 'Richiesta non valida' });
+  }
+  if (!consumeRateLimit(req)) {
+    return res.status(429).json({ error: 'Troppe richieste. Riprova più tardi.' });
+  }
+
+  const normalizedPiva = normalizePiva(piva);
+  if (!isValidPiva(normalizedPiva)) {
+    return res.status(400).json({ error: 'P.IVA non valida' });
+  }
+  if (privacy_consent !== true || privacy_consent_version !== PRIVACY_CONSENT_VERSION) {
+    return res.status(400).json({ error: 'Autorizzazione privacy obbligatoria' });
+  }
+  if (payment_disclaimer !== true || payment_disclaimer_version !== PAYMENT_DISCLAIMER_VERSION) {
+    return res.status(400).json({ error: 'Presa visione del servizio a pagamento obbligatoria' });
+  }
+  if (!storageAdmin || !tokenSecret()) {
+    return res.status(500).json({ error: 'Servizio di caricamento non configurato' });
+  }
+
+  const validated = validateUploadDescriptors(files);
+  if (validated.error) return res.status(400).json({ error: validated.error });
+
+  const submissionId = randomUUID();
+  const preparedFiles = [];
+
+  for (const [index, file] of validated.files.entries()) {
+    const path = `segnalazioni-pubbliche/${submissionId}/${String(index + 1).padStart(2, '0')}_${file.safe_name}`;
+    const { data, error } = await storageAdmin.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUploadUrl(path);
+    if (error || !data?.token) {
+      console.error('Errore creazione upload firmato:', error);
+      return res.status(500).json({ error: 'Impossibile preparare il caricamento dei documenti' });
+    }
+    preparedFiles.push({ ...file, path, upload_token: data.token });
+  }
+
+  const tokenFiles = preparedFiles.map(({ upload_token, safe_name, ...file }) => file);
+  const submissionToken = createSubmissionToken({
+    submission_id: submissionId,
+    piva: normalizedPiva,
+    files: tokenFiles,
+    expires_at: Date.now() + PUBLIC_UPLOAD_TOKEN_TTL_MS,
+  });
+
+  return res.status(200).json({
+    success: true,
+    submission_token: submissionToken,
+    uploads: preparedFiles.map(file => ({
+      client_id: file.client_id,
+      path: file.path,
+      token: file.upload_token,
+    })),
+  });
 }
 
 function normalizePiva(value) {
@@ -94,7 +269,7 @@ async function uploadToStorage(base64Data, mimeType, storagePath) {
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ expiresIn: 315360000 }),
+      body: JSON.stringify({ expiresIn: 3600 }),
     }
   );
   if (!signR.ok) return null;
@@ -181,6 +356,9 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.body?.action === 'prepare_uploads') {
+    return prepareDirectUploads(req, res);
+  }
 
   const {
     ragione_sociale,
@@ -197,6 +375,8 @@ export default async function handler(req, res) {
     privacy_consent_version,
     payment_disclaimer,
     payment_disclaimer_version,
+    uploaded_files,
+    submission_token,
   } = req.body ?? {};
 
   // Protezioni anti-bot: honeypot, tempo minimo di compilazione e limite per IP.
@@ -215,7 +395,7 @@ export default async function handler(req, res) {
   if (!isValidPiva(normalizedPiva)) {
     return res.status(400).json({ error: 'P.IVA non valida' });
   }
-  if (!visura?.data) {
+  if (!visura?.data && !submission_token) {
     return res.status(400).json({ error: 'visura camerale obbligatoria' });
   }
   if (privacy_consent !== true || privacy_consent_version !== PRIVACY_CONSENT_VERSION) {
@@ -227,6 +407,46 @@ export default async function handler(req, res) {
 
   const consentAcceptedAt = new Date().toISOString();
   const consentUserAgent = String(req.headers?.['user-agent'] ?? '').slice(0, 500) || null;
+  let directFileUrls = [];
+
+  if (submission_token) {
+    const tokenPayload = verifySubmissionToken(submission_token);
+    if (!tokenPayload || tokenPayload.piva !== normalizedPiva || !Array.isArray(tokenPayload.files)) {
+      return res.status(400).json({ error: 'Autorizzazione di caricamento non valida o scaduta' });
+    }
+
+    const submittedPaths = new Set(
+      (Array.isArray(uploaded_files) ? uploaded_files : [])
+        .map(file => String(file?.path ?? ''))
+        .filter(Boolean)
+    );
+    if (
+      submittedPaths.size !== tokenPayload.files.length ||
+      tokenPayload.files.some(file => !submittedPaths.has(file.path))
+    ) {
+      return res.status(400).json({ error: 'Elenco dei documenti caricati non coerente' });
+    }
+
+    const directory = `segnalazioni-pubbliche/${tokenPayload.submission_id}`;
+    const { data: storedObjects, error: listError } = await storageAdmin.storage
+      .from(STORAGE_BUCKET)
+      .list(directory, { limit: MAX_PUBLIC_FILES + 5 });
+    if (listError) {
+      console.error('Errore verifica documenti caricati:', listError);
+      return res.status(500).json({ error: 'Impossibile verificare i documenti caricati' });
+    }
+    const storedNames = new Set((storedObjects ?? []).map(object => object.name));
+    if (tokenPayload.files.some(file => !storedNames.has(file.path.split('/').pop()))) {
+      return res.status(400).json({ error: 'Uno o più documenti non risultano caricati correttamente' });
+    }
+
+    directFileUrls = tokenPayload.files.map(file => ({
+      nome: file.role === 'visura'
+        ? `Visura Camerale — ${file.name}`
+        : file.nome_descrittivo || file.name,
+      path: file.path,
+    }));
+  }
 
   // Se l'impresa ha già una pratica operativa, non aprire una seconda pratica.
   // La segnalazione viene comunque tracciata e collegata per la presa in carico.
@@ -244,7 +464,7 @@ export default async function handler(req, res) {
       stato: 'nuova',
       tipo_richiesta: 'richiesta_su_pratica_esistente',
       practice_id: existingPractice.id,
-      file_urls: [],
+      file_urls: directFileUrls,
       privacy_consent_accepted_at: consentAcceptedAt,
       privacy_consent_version: PRIVACY_CONSENT_VERSION,
       privacy_consent_text: PRIVACY_CONSENT_TEXT,
@@ -302,23 +522,28 @@ export default async function handler(req, res) {
 
   const ts   = Date.now();
   const base = `segnalazioni-pubbliche/${ts}`;
-  const fileUrls = [];
+  const fileUrls = [...directFileUrls];
 
-  // 1. Upload visura
-  const visuraPath = `${base}/visura_${visura.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-  const visuraUrl  = await uploadToStorage(visura.data, visura.type || 'application/pdf', visuraPath);
-  if (visuraUrl) {
-    fileUrls.push({ nome: `Visura Camerale — ${visura.name}`, url: visuraUrl });
-  }
+  // Compatibilità temporanea con schede del vecchio modulo già aperte nel
+  // browser: i nuovi invii usano upload diretto e non attraversano Vercel.
+  if (!submission_token) {
+    // 1. Upload visura
+    const visuraPath = `${base}/visura_${safeFileName(visura.name)}`;
+    const visuraUrl  = await uploadToStorage(visura.data, visura.type || 'application/pdf', visuraPath);
+    if (visuraUrl) {
+      fileUrls.push({ nome: `Visura Camerale — ${visura.name}`, url: visuraUrl, path: visuraPath });
+    }
 
-  // 2. Upload altri documenti
-  if (Array.isArray(altri_docs)) {
-    for (const doc of altri_docs) {
-      if (!doc?.data) continue;
-      const safeName = doc.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const docUrl   = await uploadToStorage(doc.data, doc.type || 'application/octet-stream', `${base}/${safeName}`);
-      if (docUrl) {
-        fileUrls.push({ nome: doc.nomeDescrittivo || doc.name, url: docUrl });
+    // 2. Upload altri documenti
+    if (Array.isArray(altri_docs)) {
+      for (const doc of altri_docs) {
+        if (!doc?.data) continue;
+        const safeName = safeFileName(doc.name);
+        const docPath = `${base}/${safeName}`;
+        const docUrl = await uploadToStorage(doc.data, doc.type || 'application/octet-stream', docPath);
+        if (docUrl) {
+          fileUrls.push({ nome: doc.nomeDescrittivo || doc.name, url: docUrl, path: docPath });
+        }
       }
     }
   }
@@ -353,7 +578,10 @@ export default async function handler(req, res) {
   // 4. Email notifica al super admin
   const fileLinksHtml = fileUrls.length > 0
     ? `<tr><td style="padding:8px 0;color:#6b7280;font-size:14px;vertical-align:top"><strong>Documenti:</strong></td>
-       <td style="padding:8px 0;font-size:14px">${fileUrls.map(f => `<a href="${escapeHtml(f.url)}" style="color:#f97316">${escapeHtml(f.nome)}</a>`).join('<br>')}</td></tr>`
+       <td style="padding:8px 0;font-size:14px">${fileUrls.map(f => f.url
+         ? `<a href="${escapeHtml(f.url)}" style="color:#f97316">${escapeHtml(f.nome)}</a>`
+         : escapeHtml(f.nome)
+       ).join('<br>')}</td></tr>`
     : '';
 
   const emailHtml = `

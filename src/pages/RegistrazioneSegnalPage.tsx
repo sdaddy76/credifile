@@ -11,8 +11,10 @@ import { toast } from 'sonner';
 export default function RegistrazioneSegnalPage() {
   const navigate = useNavigate();
 
-  // Legge il token dall'URL hash: /#/invito-segnalatore?token=xxx
-  const token = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('token') ?? '';
+  // Supporta sia il nuovo URL pulito sia i vecchi inviti con route hash.
+  const token = new URLSearchParams(window.location.search).get('token')
+    ?? new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('token')
+    ?? '';
 
   const [validating, setValidating] = useState(true);
   const [tokenValid, setTokenValid] = useState<'ok' | 'used' | 'expired' | 'invalid' | null>(null);

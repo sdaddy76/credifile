@@ -921,7 +921,7 @@ export default function BanchePage() {
               <Input type="password" placeholder="Password sicura..." value={accountPassword} onChange={e => setAccountPassword(e.target.value)} />
             </div>
             <p className="text-xs text-muted-foreground">
-              Comunica manualmente le credenziali alla banca. Il link di accesso è: <code className="bg-muted px-1 rounded">/#/login</code>
+              Comunica manualmente le credenziali alla banca. Il link di accesso è: <code className="bg-muted px-1 rounded">/login</code>
             </p>
           </div>
           <DialogFooter>

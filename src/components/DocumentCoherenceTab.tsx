@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { analyzeDocumentCoherence, type CoherenceFinding, type DocumentCoherenceResult } from '@/lib/documentCoherence';
 import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
 import { supabase } from '@/lib/supabase';
+import { buildAppUrl } from '@/lib/appUrl';
 
 interface Props {
   practiceId: string;
@@ -348,7 +349,7 @@ export default function DocumentCoherenceTab({ practiceId }: Props) {
           consultant_name: consultantName,
           documents: [],
           questions: [question],
-          link: `https://credifile-eosin.vercel.app/#/accesso?p=${practiceId}`,
+          link: buildAppUrl(`/accesso?p=${practiceId}`),
           code: accessCode.codice,
           practice_number: practice.numero_pratica,
           company_name: client.ragione_sociale,

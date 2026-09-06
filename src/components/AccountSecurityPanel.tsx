@@ -185,8 +185,7 @@ export default function AccountSecurityPanel() {
       toast.error(`Impossibile terminare le sessioni: ${error.message}`);
       return;
     }
-    window.location.hash = '#/login';
-    window.location.reload();
+    window.location.assign('/login');
   };
 
   if (loading) {

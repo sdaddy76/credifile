@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
               <table style="border-collapse:collapse">${docsHtml}</table>
             </td>
             <td style="padding:10px 8px;vertical-align:top">
-              <a href="${appUrl}/#/admin/pratiche/${p.id}" style="color:#1e40af;font-size:12px;font-weight:600">Apri →</a>
+              <a href="${appUrl}/admin/pratiche/${p.id}" style="color:#1e40af;font-size:12px;font-weight:600">Apri →</a>
             </td>
           </tr>`
       }).join('')

@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         type: 'recovery',
         email: email.trim().toLowerCase(),
-        redirect_to: appUrl,   // main.tsx intercetta #access_token e riscrive → #/reset-password
+        redirect_to: appUrl,   // main.tsx intercetta #access_token e apre /reset-password
       }),
     });
 

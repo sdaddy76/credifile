@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
           <td style="padding:8px;font-size:13px;color:#111827"><strong>${p.numero_pratica}</strong></td>
           <td style="padding:8px;font-size:12px;color:#6b7280">${clientName}</td>
           <td style="padding:8px"><span style="background:${color}20;color:${color};border:1px solid ${color}40;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700">${label}</span></td>
-          <td style="padding:8px"><a href="${appUrl}/#/admin/pratiche/${p.id}" style="color:#1e40af;font-size:12px;font-weight:600">Apri →</a></td>
+          <td style="padding:8px"><a href="${appUrl}/admin/pratiche/${p.id}" style="color:#1e40af;font-size:12px;font-weight:600">Apri →</a></td>
         </tr>`
       }).join('')
 

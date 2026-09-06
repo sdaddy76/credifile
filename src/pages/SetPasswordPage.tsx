@@ -213,7 +213,7 @@ export default function SetPasswordPage() {
         {isInvite && (
           <p className="text-center text-xs text-muted-foreground mt-6">
             Dopo la registrazione potrai accedere sempre da{' '}
-            <a href="https://credifile-eosin.vercel.app" className="text-primary hover:underline">credifile-eosin.vercel.app</a>
+            <a href="/" className="text-primary hover:underline">Torna a Credifile</a>
           </p>
         )}
       </div>

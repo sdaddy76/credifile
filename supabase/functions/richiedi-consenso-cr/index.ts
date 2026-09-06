@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
 
     if (insErr || !consent) return fail('Errore creazione richiesta consenso: ' + insErr?.message)
 
-    const consentLink = `${appUrl}/#/consenso-cr/${consent.token}`
+    const consentLink = `${appUrl}/consenso-cr/${consent.token}`
 
     // Invia email al cliente
     if (resendKey) {

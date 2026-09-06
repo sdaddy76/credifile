@@ -14,6 +14,7 @@ import autoTable from 'jspdf-autotable';
 import { fmtBenchmark, getAtecoBenchmark, type SectorBenchmark } from '@/lib/sectorBenchmarks';
 import type { BalanceAnomalyAnalysis } from '../../supabase/functions/_shared/balance-anomaly-engine';
 import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
+import { buildAppUrl } from '@/lib/appUrl';
 
 interface Props { practiceId: string }
 
@@ -1150,7 +1151,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
           consultant_name: consultantName,
           documents: [],
           questions: [question],
-          link: `https://credifile-eosin.vercel.app/#/accesso?p=${practiceId}`,
+          link: buildAppUrl(`/accesso?p=${practiceId}`),
           code: accessCode.codice,
           practice_number: practiceWithRelations.numero_pratica,
           company_name: client.ragione_sociale,

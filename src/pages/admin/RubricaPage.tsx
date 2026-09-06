@@ -301,7 +301,7 @@ export default function RubricaPage() {
 
       toast.success(`✅ "${lead.azienda}" convertita in cliente!`);
       // 3. Naviga alla lista clienti (HashRouter)
-      window.location.hash = '#/admin/clienti';
+      window.location.assign('/admin/clienti');
     } catch (e) {
       toast.error('Errore inatteso: ' + String(e));
     } finally {

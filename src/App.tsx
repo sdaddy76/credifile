@@ -1,51 +1,75 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { lazy, Suspense, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import AdminLayout from "@/components/AdminLayout";
-import LoginPage from "@/pages/LoginPage";
-import DashboardPage from "@/pages/admin/DashboardPage";
-import PratichePage from "@/pages/admin/PratichePage";
-import PraticaDetailPage from "@/pages/admin/PraticaDetailPage";
-import ClientiPage from "@/pages/admin/ClientiPage";
-import BanchePage from "@/pages/admin/BanchePage";
-import DocumentiTemplatePage from "@/pages/admin/DocumentiTemplatePage";
-import UtentiPage from "@/pages/admin/UtentiPage";
-import ProfiloPage from "@/pages/admin/ProfiloPage";
-import MieiAgentiPage from "@/pages/admin/MieiAgentiPage";
-import MieiSegnalPage from "@/pages/admin/MieiSegnalPage";
-import StatistichePage from "@/pages/admin/StatistichePage";
-import ImpostazioniPage from "@/pages/admin/ImpostazioniPage";
-import SegnalatoreDashboardPage from "@/pages/admin/SegnalatoreDashboardPage";
-import NuovaSegnalazionePage from "@/pages/admin/NuovaSegnalazionePage";
-import RubricaPage from "@/pages/admin/RubricaPage";
-import TemplateDocumentiPage from "@/pages/admin/TemplateDocumentiPage";
-import KanbanBanchePage from "@/pages/admin/KanbanBanchePage";
-import CalendarioPage from "@/pages/admin/CalendarioPage";
-import TasksPage from "@/pages/admin/TasksPage";
-import ChecklistTemplatePage from "@/pages/admin/ChecklistTemplatePage";
-import ReportPage from "@/pages/admin/ReportPage";
-import ClientAccessPage from "@/pages/client/ClientAccessPage";
-import ClientPortalPage from "@/pages/client/ClientPortalPage";
-import SetPasswordPage from "@/pages/SetPasswordPage";
-import RegistrazioneSegnalPage from "@/pages/RegistrazioneSegnalPage";
-import RegistrazioneConsulentePage from "@/pages/RegistrazioneConsulentePage";
-import ConsensoCrePage from "@/pages/ConsensoCrePage";
-import ConsulenteDashboard from "@/pages/consulente/ConsulenteDashboard";
-import NuovoReportWizard from "@/pages/consulente/NuovoReportWizard";
-import ProfiloConsulentePage from "@/pages/consulente/ProfiloConsulentePage";
-import BancaPortalPage from "@/pages/banca/BancaPortalPage";
-import SegnalazionePublicaPage from "@/pages/public/SegnalazionePublicaPage";
-import SegnalazioniRicevutePage from "@/pages/admin/SegnalazioniRicevutePage";
-import IntegritaDocumentiPage from "@/pages/admin/IntegritaDocumentiPage";
-import AccountSecurityPage from "@/pages/AccountSecurityPage";
-import MfaChallengePage from "@/pages/MfaChallengePage";
+
+const PublicHomePage = lazy(() => import("@/pages/public/PublicHomePage"));
+const PublicPrivacyPage = lazy(() => import("@/pages/public/PublicPrivacyPage"));
+const PublicTermsPage = lazy(() => import("@/pages/public/PublicTermsPage"));
+const SegnalazionePublicaPage = lazy(() => import("@/pages/public/SegnalazionePublicaPage"));
+const ClientAccessPage = lazy(() => import("@/pages/client/ClientAccessPage"));
+const ClientPortalPage = lazy(() => import("@/pages/client/ClientPortalPage"));
+const LoginPage = lazy(() => import("@/pages/LoginPage"));
+const MfaChallengePage = lazy(() => import("@/pages/MfaChallengePage"));
+const AccountSecurityPage = lazy(() => import("@/pages/AccountSecurityPage"));
+const SetPasswordPage = lazy(() => import("@/pages/SetPasswordPage"));
+const RegistrazioneSegnalPage = lazy(() => import("@/pages/RegistrazioneSegnalPage"));
+const RegistrazioneConsulentePage = lazy(() => import("@/pages/RegistrazioneConsulentePage"));
+const ConsensoCrePage = lazy(() => import("@/pages/ConsensoCrePage"));
+const ConsulenteDashboard = lazy(() => import("@/pages/consulente/ConsulenteDashboard"));
+const NuovoReportWizard = lazy(() => import("@/pages/consulente/NuovoReportWizard"));
+const ProfiloConsulentePage = lazy(() => import("@/pages/consulente/ProfiloConsulentePage"));
+const BancaPortalPage = lazy(() => import("@/pages/banca/BancaPortalPage"));
+const AdminLayout = lazy(() => import("@/components/AdminLayout"));
+const DashboardPage = lazy(() => import("@/pages/admin/DashboardPage"));
+const PratichePage = lazy(() => import("@/pages/admin/PratichePage"));
+const PraticaDetailPage = lazy(() => import("@/pages/admin/PraticaDetailPage"));
+const ClientiPage = lazy(() => import("@/pages/admin/ClientiPage"));
+const BanchePage = lazy(() => import("@/pages/admin/BanchePage"));
+const DocumentiTemplatePage = lazy(() => import("@/pages/admin/DocumentiTemplatePage"));
+const UtentiPage = lazy(() => import("@/pages/admin/UtentiPage"));
+const ProfiloPage = lazy(() => import("@/pages/admin/ProfiloPage"));
+const MieiAgentiPage = lazy(() => import("@/pages/admin/MieiAgentiPage"));
+const MieiSegnalPage = lazy(() => import("@/pages/admin/MieiSegnalPage"));
+const StatistichePage = lazy(() => import("@/pages/admin/StatistichePage"));
+const ImpostazioniPage = lazy(() => import("@/pages/admin/ImpostazioniPage"));
+const SegnalatoreDashboardPage = lazy(() => import("@/pages/admin/SegnalatoreDashboardPage"));
+const NuovaSegnalazionePage = lazy(() => import("@/pages/admin/NuovaSegnalazionePage"));
+const RubricaPage = lazy(() => import("@/pages/admin/RubricaPage"));
+const TemplateDocumentiPage = lazy(() => import("@/pages/admin/TemplateDocumentiPage"));
+const KanbanBanchePage = lazy(() => import("@/pages/admin/KanbanBanchePage"));
+const CalendarioPage = lazy(() => import("@/pages/admin/CalendarioPage"));
+const TasksPage = lazy(() => import("@/pages/admin/TasksPage"));
+const ChecklistTemplatePage = lazy(() => import("@/pages/admin/ChecklistTemplatePage"));
+const ReportPage = lazy(() => import("@/pages/admin/ReportPage"));
+const SegnalazioniRicevutePage = lazy(() => import("@/pages/admin/SegnalazioniRicevutePage"));
+const IntegritaDocumentiPage = lazy(() => import("@/pages/admin/IntegritaDocumentiPage"));
 
 const queryClient = new QueryClient();
 
+function useNoIndex() {
+  useEffect(() => {
+    let robots = document.head.querySelector<HTMLMetaElement>('meta[name="robots"]');
+    if (!robots) {
+      robots = document.createElement('meta');
+      robots.name = 'robots';
+      document.head.appendChild(robots);
+    }
+    robots.content = 'noindex,nofollow';
+  }, []);
+}
+
+function NoIndexRoute({ children }: { children: React.ReactNode }) {
+  useNoIndex();
+  return <>{children}</>;
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, mfaLoading, mfaRequired } = useAuth();
+  useNoIndex();
+
   if (loading || mfaLoading) return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-3">
@@ -59,67 +83,83 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RouteFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-live="polite">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-muted-foreground">Caricamento...</p>
+      </div>
+    </div>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster richColors position="top-right" />
-      <HashRouter>
-        <Routes>
-          {/* Portale cliente — pubblico */}
-          <Route path="/accesso" element={<ClientAccessPage />} />
-          <Route path="/portale/:practiceId" element={<ClientPortalPage />} />
-          <Route path="/segnala" element={<SegnalazionePublicaPage />} />
+      <BrowserRouter>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            {/* Sito e portali pubblici */}
+            <Route path="/" element={<PublicHomePage />} />
+            <Route path="/richiedi-valutazione" element={<SegnalazionePublicaPage />} />
+            <Route path="/segnala" element={<Navigate to="/richiedi-valutazione" replace />} />
+            <Route path="/privacy" element={<PublicPrivacyPage />} />
+            <Route path="/termini" element={<PublicTermsPage />} />
+            <Route path="/accesso" element={<NoIndexRoute><ClientAccessPage /></NoIndexRoute>} />
+            <Route path="/portale/:practiceId" element={<NoIndexRoute><ClientPortalPage /></NoIndexRoute>} />
 
-          {/* Auth */}
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/mfa" element={<MfaChallengePage />} />
-          <Route path="/sicurezza-account" element={<ProtectedRoute><AccountSecurityPage /></ProtectedRoute>} />
-          <Route path="/set-password" element={<SetPasswordPage />} />
-          <Route path="/reset-password" element={<SetPasswordPage />} />
-          <Route path="/invito-segnalatore" element={<RegistrazioneSegnalPage />} />
-          <Route path="/registrazione-consulente" element={<RegistrazioneConsulentePage />} />
-          <Route path="/consenso-cr/:token" element={<ConsensoCrePage />} />
+            {/* Auth */}
+            <Route path="/login" element={<NoIndexRoute><LoginPage /></NoIndexRoute>} />
+            <Route path="/mfa" element={<NoIndexRoute><MfaChallengePage /></NoIndexRoute>} />
+            <Route path="/sicurezza-account" element={<ProtectedRoute><AccountSecurityPage /></ProtectedRoute>} />
+            <Route path="/set-password" element={<NoIndexRoute><SetPasswordPage /></NoIndexRoute>} />
+            <Route path="/reset-password" element={<NoIndexRoute><SetPasswordPage /></NoIndexRoute>} />
+            <Route path="/invito-segnalatore" element={<NoIndexRoute><RegistrazioneSegnalPage /></NoIndexRoute>} />
+            <Route path="/registrazione-consulente" element={<NoIndexRoute><RegistrazioneConsulentePage /></NoIndexRoute>} />
+            <Route path="/consenso-cr/:token" element={<NoIndexRoute><ConsensoCrePage /></NoIndexRoute>} />
 
-          {/* Portale Consulente — protetto */}
-          <Route path="/consulente" element={<ProtectedRoute><ConsulenteDashboard /></ProtectedRoute>} />
-          <Route path="/consulente/profilo" element={<ProtectedRoute><ProfiloConsulentePage /></ProtectedRoute>} />
-          <Route path="/consulente/cliente/:clientId/nuovo-report" element={<ProtectedRoute><NuovoReportWizard /></ProtectedRoute>} />
+            {/* Portale Consulente — protetto */}
+            <Route path="/consulente" element={<ProtectedRoute><ConsulenteDashboard /></ProtectedRoute>} />
+            <Route path="/consulente/profilo" element={<ProtectedRoute><ProfiloConsulentePage /></ProtectedRoute>} />
+            <Route path="/consulente/cliente/:clientId/nuovo-report" element={<ProtectedRoute><NuovoReportWizard /></ProtectedRoute>} />
 
-          {/* Portale Banche — protetto */}
-          <Route path="/banca" element={<ProtectedRoute><BancaPortalPage /></ProtectedRoute>} />
+            {/* Portale Banche — protetto */}
+            <Route path="/banca" element={<ProtectedRoute><BancaPortalPage /></ProtectedRoute>} />
 
-          {/* Admin protetto */}
-          <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
-            <Route index element={<Navigate to="dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="pratiche" element={<PratichePage />} />
-            <Route path="pratiche/:id" element={<PraticaDetailPage />} />
-            <Route path="clienti" element={<ClientiPage />} />
-            <Route path="banche" element={<BanchePage />} />
-            <Route path="documenti" element={<DocumentiTemplatePage />} />
-            <Route path="utenti" element={<UtentiPage />} />
-            <Route path="profilo" element={<ProfiloPage />} />
-            <Route path="statistiche" element={<StatistichePage />} />
-            <Route path="impostazioni" element={<ImpostazioniPage />} />
-            <Route path="miei-agenti"              element={<MieiAgentiPage />} />
-            <Route path="miei-segnalatori"          element={<MieiSegnalPage />} />
-            <Route path="segnalatore-dashboard"     element={<SegnalatoreDashboardPage />} />
-            <Route path="nuova-segnalazione"         element={<NuovaSegnalazionePage />} />
-            <Route path="rubrica-lead"               element={<RubricaPage />} />
-            <Route path="template-documenti"         element={<TemplateDocumentiPage />} />
-            <Route path="kanban-banche"              element={<KanbanBanchePage />} />
-            <Route path="calendario"                 element={<CalendarioPage />} />
-            <Route path="tasks"                      element={<TasksPage />} />
-            <Route path="checklist-template"         element={<ChecklistTemplatePage />} />
-            <Route path="report"                      element={<ReportPage />} />
-            <Route path="segnalazioni-ricevute"       element={<SegnalazioniRicevutePage />} />
-            <Route path="integrita-documenti"          element={<IntegritaDocumentiPage />} />
-          </Route>
+            {/* Admin protetto */}
+            <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="pratiche" element={<PratichePage />} />
+              <Route path="pratiche/:id" element={<PraticaDetailPage />} />
+              <Route path="clienti" element={<ClientiPage />} />
+              <Route path="banche" element={<BanchePage />} />
+              <Route path="documenti" element={<DocumentiTemplatePage />} />
+              <Route path="utenti" element={<UtentiPage />} />
+              <Route path="profilo" element={<ProfiloPage />} />
+              <Route path="statistiche" element={<StatistichePage />} />
+              <Route path="impostazioni" element={<ImpostazioniPage />} />
+              <Route path="miei-agenti" element={<MieiAgentiPage />} />
+              <Route path="miei-segnalatori" element={<MieiSegnalPage />} />
+              <Route path="segnalatore-dashboard" element={<SegnalatoreDashboardPage />} />
+              <Route path="nuova-segnalazione" element={<NuovaSegnalazionePage />} />
+              <Route path="rubrica-lead" element={<RubricaPage />} />
+              <Route path="template-documenti" element={<TemplateDocumentiPage />} />
+              <Route path="kanban-banche" element={<KanbanBanchePage />} />
+              <Route path="calendario" element={<CalendarioPage />} />
+              <Route path="tasks" element={<TasksPage />} />
+              <Route path="checklist-template" element={<ChecklistTemplatePage />} />
+              <Route path="report" element={<ReportPage />} />
+              <Route path="segnalazioni-ricevute" element={<SegnalazioniRicevutePage />} />
+              <Route path="integrita-documenti" element={<IntegritaDocumentiPage />} />
+            </Route>
 
-          <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
-          <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
-        </Routes>
-      </HashRouter>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );

@@ -41,7 +41,7 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: false, error: 'Token non generato' }), { headers: cors });
     }
 
-    const link = `${APP_URL}/#/invito-segnalatore?token=${token}`;
+    const link = `${APP_URL}/invito-segnalatore?token=${token}`;
     const agentLabel = agent_name ?? 'Un agente';
 
     const html = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"></head>

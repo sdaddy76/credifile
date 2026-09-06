@@ -57,7 +57,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({ success: false, error: 'Nessun documento mancante o rifiutato da sollecitare.' }), { headers: CORS });
     }
 
-    const portalLink = `${APP_URL}/#/accesso?p=${practice_id}`;
+    const portalLink = `${APP_URL}/accesso?p=${practice_id}`;
     const nomeCliente = client.nome_referente || client.ragione_sociale || 'Gentile Cliente';
     const now = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
 
