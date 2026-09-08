@@ -106,9 +106,9 @@ serve(async (req) => {
 
     const { data: documents, error: documentsError } = await supabase
       .from('practice_documents')
-      .select('id, nome, status, tipo, uploaded_at')
+      .select('id, nome, status, tipo, input_type, uploaded_at, response_updated_at')
       .eq('practice_id', practice_id)
-      .in('tipo', ['standard', 'integrazione'])
+      .in('tipo', ['standard', 'banca', 'integrazione'])
       .order('created_at');
 
     if (documentsError) throw documentsError;
@@ -138,7 +138,7 @@ serve(async (req) => {
       activityAction,
       activityMetadata,
     }: {
-      type: 'file_uploaded' | 'all_documents_completed';
+      type: 'file_uploaded' | 'form_completed' | 'all_documents_completed';
       key: string;
       subject: string;
       html: string;
@@ -280,6 +280,51 @@ serve(async (req) => {
           uploaded_file_id,
           documento: document.nome,
           file: uploadedFile.nome_file,
+          documenti_mancanti: missingDocuments.length,
+        },
+      });
+    }
+
+    if (practice_document_id && !uploaded_file_id) {
+      const document = requestedDocuments.find(item => item.id === practice_document_id);
+      if (
+        !document
+        || !['text', 'contacts'].includes(document.input_type ?? 'upload')
+        || !['caricato', 'approvato'].includes(document.status)
+      ) {
+        return response({ success: false, error: 'Campo richiesto non valido o non compilato' });
+      }
+
+      const completedAt = document.response_updated_at ?? document.uploaded_at ?? new Date().toISOString();
+      const safeDocumentName = escapeHtml(document.nome);
+      const remainingText = missingDocuments.length === 0
+        ? 'Tutte le richieste risultano ora completate.'
+        : `Restano ${missingDocuments.length} richieste da completare.`;
+
+      await sendNotification({
+        type: 'form_completed',
+        key: `${document.id}:${completedAt}`,
+        documentId: document.id,
+        subject: `Nuovi dati compilati — ${companyName || practice.numero_pratica}`,
+        html: `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#1f2937;max-width:620px;margin:auto;padding:24px;">
+          <div style="background:#4338ca;color:white;padding:18px 22px;border-radius:8px 8px 0 0;">
+            <h1 style="font-size:20px;margin:0;">Nuovi dati compilati</h1>
+          </div>
+          <div style="border:1px solid #c7d2fe;border-top:0;padding:22px;border-radius:0 0 8px 8px;">
+            <p>Buongiorno <strong>${safeAgentName}</strong>,</p>
+            <p>il cliente <strong>${safeCompanyName}</strong> ha compilato una richiesta FinPromoter.</p>
+            <p><strong>Pratica:</strong> ${safePracticeNumber}<br>
+               <strong>Voce:</strong> ${safeDocumentName}</p>
+            <p>${escapeHtml(remainingText)}</p>
+            <p style="margin-top:24px;"><a href="${escapeHtml(practiceLink)}" style="background:#4338ca;color:white;padding:11px 20px;border-radius:6px;text-decoration:none;font-weight:700;">Apri la pratica</a></p>
+          </div>
+        </body></html>`,
+        text: `Nuovi dati compilati\n\nCliente: ${companyName || 'Cliente'}\nPratica: ${practice.numero_pratica}\nVoce: ${document.nome}\n\n${remainingText}\n\nApri la pratica: ${practiceLink}`,
+        activityAction: 'dati_cliente_compilati_notifica_agente',
+        activityMetadata: {
+          practice_document_id: document.id,
+          documento: document.nome,
+          input_type: document.input_type,
           documenti_mancanti: missingDocuments.length,
         },
       });

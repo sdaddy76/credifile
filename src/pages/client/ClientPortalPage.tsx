@@ -12,7 +12,7 @@ import { Progress } from '@/components/ui/progress';
 import {
   FileText, Upload, CheckCircle2, Clock, AlertCircle,
   LogOut, PlusCircle, Trash2, Save, FileDown, Loader2,
-  Check, MessageSquare, Building2, ShieldCheck, LockKeyhole,
+  Check, MessageSquare, Building2, ShieldCheck, LockKeyhole, Phone,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -54,6 +54,48 @@ interface BankSearchRequest {
     email?: string | null;
   } | null;
 }
+
+type ContactField = 'nome' | 'cognome' | 'email' | 'cellulare';
+interface FinPromoterContact {
+  nome: string;
+  cognome: string;
+  email: string;
+  cellulare: string;
+}
+interface FinPromoterContactsResponse {
+  legal_representative: FinPromoterContact;
+  administrator: FinPromoterContact;
+  beneficial_owners: FinPromoterContact[];
+}
+
+const emptyContact = (): FinPromoterContact => ({
+  nome: '',
+  cognome: '',
+  email: '',
+  cellulare: '',
+});
+
+const getContactsResponse = (
+  response?: Record<string, unknown> | null
+): FinPromoterContactsResponse => {
+  const parseContact = (value: unknown): FinPromoterContact => {
+    const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    return {
+      nome: String(raw.nome ?? ''),
+      cognome: String(raw.cognome ?? ''),
+      email: String(raw.email ?? ''),
+      cellulare: String(raw.cellulare ?? ''),
+    };
+  };
+  const owners = Array.isArray(response?.beneficial_owners)
+    ? response.beneficial_owners.map(parseContact)
+    : [];
+  return {
+    legal_representative: parseContact(response?.legal_representative),
+    administrator: parseContact(response?.administrator),
+    beneficial_owners: owners.length > 0 ? owners : [emptyContact()],
+  };
+};
 
 const notifyAgentDocumentUpload = async ({
   practiceId,
@@ -259,6 +301,141 @@ export default function ClientPortalPage() {
       toast.error('Errore salvataggio risposta: ' + String(error));
     } finally {
       setSavingQuestionId(null);
+    }
+  };
+
+  const updateTextRequirement = (documentId: string, value: string) => {
+    setDocuments(prev => prev.map(document => (
+      document.id === documentId
+        ? { ...document, client_response: { ...(document.client_response ?? {}), text: value } }
+        : document
+    )));
+  };
+
+  const updateContactRequirement = (
+    documentId: string,
+    role: 'legal_representative' | 'administrator' | 'beneficial_owners',
+    field: ContactField,
+    value: string,
+    ownerIndex?: number,
+  ) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const contacts = getContactsResponse(document.client_response);
+      if (role === 'beneficial_owners') {
+        const index = ownerIndex ?? 0;
+        contacts.beneficial_owners = contacts.beneficial_owners.map((owner, currentIndex) => (
+          currentIndex === index ? { ...owner, [field]: value } : owner
+        ));
+      } else {
+        contacts[role] = { ...contacts[role], [field]: value };
+      }
+      return { ...document, client_response: contacts as unknown as Record<string, unknown> };
+    }));
+  };
+
+  const addBeneficialOwner = (documentId: string) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const contacts = getContactsResponse(document.client_response);
+      return {
+        ...document,
+        client_response: {
+          ...contacts,
+          beneficial_owners: [...contacts.beneficial_owners, emptyContact()],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const removeBeneficialOwner = (documentId: string, ownerIndex: number) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const contacts = getContactsResponse(document.client_response);
+      const remaining = contacts.beneficial_owners.filter((_, index) => index !== ownerIndex);
+      return {
+        ...document,
+        client_response: {
+          ...contacts,
+          beneficial_owners: remaining.length > 0 ? remaining : [emptyContact()],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const saveStructuredRequirement = async (document: PracticeDocument) => {
+    if (!practiceId || !session) return;
+    if (!privacyConsentAcceptedAt) {
+      toast.error('Accetta prima l’autorizzazione privacy');
+      return;
+    }
+
+    let response: Record<string, unknown>;
+    if (document.input_type === 'text') {
+      const text = String(document.client_response?.text ?? '').trim();
+      if (!text) {
+        toast.error('Inserisci la relazione sullo scopo e sulla natura dell’operazione');
+        return;
+      }
+      response = { text };
+    } else {
+      const contacts = getContactsResponse(document.client_response);
+      const allContacts = [
+        contacts.legal_representative,
+        contacts.administrator,
+        ...contacts.beneficial_owners,
+      ];
+      const hasIncompleteContact = allContacts.some(contact =>
+        !contact.nome.trim()
+        || !contact.cognome.trim()
+        || !contact.email.trim()
+        || !contact.cellulare.trim()
+      );
+      if (hasIncompleteContact) {
+        toast.error('Completa nome, cognome, e-mail e cellulare per tutti i soggetti');
+        return;
+      }
+      response = contacts as unknown as Record<string, unknown>;
+    }
+
+    setUploadingDoc(document.id);
+    const savedAt = new Date().toISOString();
+    try {
+      const { error } = await supabase
+        .from('practice_documents')
+        .update({
+          client_response: response,
+          response_updated_at: savedAt,
+          status: 'caricato',
+          uploaded_at: savedAt,
+          note_rifiuto: null,
+        })
+        .eq('id', document.id)
+        .eq('practice_id', practiceId);
+      if (error) throw error;
+
+      setDocuments(prev => prev.map(item => (
+        item.id === document.id
+          ? {
+              ...item,
+              client_response: response,
+              response_updated_at: savedAt,
+              status: 'caricato',
+              uploaded_at: savedAt,
+              note_rifiuto: undefined,
+            }
+          : item
+      )));
+      await notifyAgentDocumentUpload({
+        practiceId,
+        session,
+        practiceDocumentId: document.id,
+      });
+      toast.success(document.input_type === 'text' ? 'Relazione salvata' : 'Contatti salvati');
+    } catch (error) {
+      toast.error('Errore salvataggio: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setUploadingDoc(null);
     }
   };
 
@@ -532,7 +709,7 @@ export default function ClientPortalPage() {
   const load = async () => {
     if (!practiceId || !session) return;
     const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes, accessRes, integrationsRes] = await Promise.all([
-      supabase.from('practices').select('*, clients(ragione_sociale,email), banks(nome)').eq('id', practiceId).single(),
+      supabase.from('practices').select('*, clients(*), banks(nome)').eq('id', practiceId).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', practiceId).order('tipo').order('created_at'),
       supabase.from('practice_banks').select('bank_id').eq('practice_id', practiceId),
       supabase.from('practice_status_log').select('*').eq('practice_id', practiceId).order('created_at', { ascending: true }),
@@ -788,8 +965,13 @@ export default function ClientPortalPage() {
   const financingRequestDocs = documents.filter(isFinancingRequestDocument);
   const bankSituationRequestDocs = documents.filter(isBankSituationRequestDocument);
   const uploadDocuments = documents.filter(doc => (
-    !isFinancingRequestDocument(doc) && !isBankSituationRequestDocument(doc)
+    !isFinancingRequestDocument(doc)
+    && !isBankSituationRequestDocument(doc)
+    && (doc.input_type ?? 'upload') === 'upload'
   ));
+  const structuredRequirements = documents.filter(doc =>
+    doc.input_type === 'text' || doc.input_type === 'contacts'
+  );
   const showFinancingSection = financingRequestDocs.length > 0;
   const financingRequestCompleted = showFinancingSection
     && financingRequestDocs.every(doc => doc.status === 'caricato' || doc.status === 'approvato');
@@ -1689,6 +1871,172 @@ export default function ClientPortalPage() {
         )}
 
         {/* ── Carica i tuoi Documenti ─────────────────────────────────────── */}
+        {structuredRequirements.map(document => {
+          const isSaved = document.status === 'caricato' || document.status === 'approvato';
+          const isSaving = uploadingDoc === document.id;
+          if (document.input_type === 'text') {
+            return (
+              <Card key={document.id} className="border-violet-200 bg-violet-50/20">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-violet-600" />
+                        {document.nome}
+                      </CardTitle>
+                      {document.descrizione && (
+                        <p className="text-xs text-muted-foreground mt-1">{document.descrizione}</p>
+                      )}
+                    </div>
+                    <Badge className={isSaved
+                      ? 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+                      : 'bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0'
+                    }>
+                      {isSaved ? 'Compilata' : 'Da compilare'}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="pb-4 space-y-3">
+                  <Textarea
+                    rows={6}
+                    placeholder="Descrivi la finalità del finanziamento, lo scopo e la natura dell’operazione..."
+                    value={String(document.client_response?.text ?? '')}
+                    onChange={event => updateTextRequirement(document.id, event.target.value)}
+                  />
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={isSaving || !String(document.client_response?.text ?? '').trim()}
+                    onClick={() => saveStructuredRequirement(document)}
+                  >
+                    {isSaving
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                      : <><Save className="w-3.5 h-3.5" /> {isSaved ? 'Aggiorna relazione' : 'Salva relazione'}</>
+                    }
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          }
+
+          const contacts = getContactsResponse(document.client_response);
+          const renderContactFields = (
+            title: string,
+            role: 'legal_representative' | 'administrator' | 'beneficial_owners',
+            contact: FinPromoterContact,
+            ownerIndex?: number,
+          ) => (
+            <div className="rounded-lg border border-border bg-white p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold">{title}</p>
+                {role === 'beneficial_owners' && contacts.beneficial_owners.length > 1 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-red-600"
+                    onClick={() => removeBeneficialOwner(document.id, ownerIndex ?? 0)}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
+                  </Button>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {([
+                  ['nome', 'Nome', 'text'],
+                  ['cognome', 'Cognome', 'text'],
+                  ['email', 'E-mail', 'email'],
+                  ['cellulare', 'Cellulare', 'tel'],
+                ] as const).map(([field, label, type]) => (
+                  <div key={field} className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">{label}</label>
+                    <Input
+                      type={type}
+                      value={contact[field]}
+                      placeholder={label}
+                      onChange={event => updateContactRequirement(
+                        document.id,
+                        role,
+                        field,
+                        event.target.value,
+                        ownerIndex,
+                      )}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+
+          return (
+            <Card key={document.id} className="border-indigo-200 bg-indigo-50/20">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Phone className="w-4 h-4 text-indigo-600" />
+                      Recapiti dei soggetti della società
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Inserisci nome, cognome, e-mail e cellulare. Non è richiesto alcun file.
+                    </p>
+                  </div>
+                  <Badge className={isSaved
+                    ? 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+                    : 'bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0'
+                  }>
+                    {isSaved ? 'Compilati' : 'Da compilare'}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pb-4 space-y-3">
+                {renderContactFields(
+                  'Legale rappresentante',
+                  'legal_representative',
+                  contacts.legal_representative,
+                )}
+                {renderContactFields(
+                  'Amministratore',
+                  'administrator',
+                  contacts.administrator,
+                )}
+                {contacts.beneficial_owners.map((owner, index) => (
+                  <div key={index}>
+                    {renderContactFields(
+                      `Titolare effettivo ${index + 1}`,
+                      'beneficial_owners',
+                      owner,
+                      index,
+                    )}
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => addBeneficialOwner(document.id)}
+                >
+                  <PlusCircle className="w-3.5 h-3.5" /> Aggiungi titolare effettivo
+                </Button>
+                <div>
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={isSaving}
+                    onClick={() => saveStructuredRequirement(document)}
+                  >
+                    {isSaving
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                      : <><Save className="w-3.5 h-3.5" /> {isSaved ? 'Aggiorna contatti' : 'Salva contatti'}</>
+                    }
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+
         <Card id="documenti-richiesti" className="scroll-mt-24 border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">

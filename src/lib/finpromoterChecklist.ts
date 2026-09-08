@@ -18,6 +18,7 @@ export type FinPromoterCompanyType =
   | 'cooperativa';
 
 export type RegimeContabile = 'ordinaria' | 'semplificata' | null;
+export type RequirementInputType = 'upload' | 'text' | 'contacts';
 
 export interface FinPromoterProfile {
   tipo: FinPromoterCompanyType;
@@ -33,9 +34,10 @@ export interface FinPromoterProfile {
 
 export interface BankRequirementConditioned {
   condizione?: FinPromoterCondition | string | null;
+  input_type?: RequirementInputType | string | null;
 }
 
-const normalize = (value?: string | null) => (value ?? '')
+export const normalizeChecklistName = (value?: string | null) => (value ?? '')
   .toUpperCase()
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '')
@@ -48,7 +50,7 @@ export function classifyFinPromoterCompany(
   regime?: RegimeContabile,
   override?: FinPromoterCompanyType | null,
 ): FinPromoterProfile {
-  const normalized = normalize(formaGiuridica);
+  const normalized = normalizeChecklistName(formaGiuridica);
   let tipo: FinPromoterCompanyType = override && override !== 'sconosciuta' ? override : 'sconosciuta';
 
   if (tipo === 'sconosciuta') {
@@ -69,6 +71,54 @@ export function classifyFinPromoterCompany(
       ammissione_socio: false,
     },
   };
+}
+
+const FINPROMOTER_STANDARD_REPLACEMENTS: Array<{
+  requirementNames: string[];
+  standardNames: string[];
+}> = [
+  {
+    requirementNames: ['Visura camerale'],
+    standardNames: ['Visura Camerale Aggiornata'],
+  },
+  {
+    requirementNames: [
+      'Ultimi due bilanci approvati completi + dati provvisori di bilancio',
+      'Ultime due dichiarazioni dei redditi + situazioni contabili complete + dati provvisori',
+      'Ultime due dichiarazioni dei redditi + situazioni contabili + dati provvisori di Conto Economico',
+    ],
+    standardNames: ['Bilancio Depositato', 'Bilancio Provvisorio'],
+  },
+  {
+    requirementNames: ['Relazione sullo scopo e sulla natura dell’operazione'],
+    standardNames: ['Motivazione della Richiesta'],
+  },
+];
+
+/**
+ * Restituisce i documenti standard sostituiti da una specifica voce FinPromoter.
+ * La mappatura è volutamente esplicita per evitare eliminazioni basate su somiglianze
+ * testuali troppo permissive.
+ */
+export function standardDocumentsReplacedBy(requirementName: string): string[] {
+  const normalizedRequirement = normalizeChecklistName(requirementName);
+  const match = FINPROMOTER_STANDARD_REPLACEMENTS.find(group =>
+    group.requirementNames.some(name => normalizeChecklistName(name) === normalizedRequirement)
+  );
+  return match?.standardNames ?? [];
+}
+
+export function requirementInputType(requirementName: string): RequirementInputType {
+  const normalized = normalizeChecklistName(requirementName);
+  if (normalized === normalizeChecklistName(
+    'Cellulari ed e-mail — legale rappresentante, amministratore e titolari effettivi'
+  )) {
+    return 'contacts';
+  }
+  if (normalized === normalizeChecklistName('Relazione sullo scopo e sulla natura dell’operazione')) {
+    return 'text';
+  }
+  return 'upload';
 }
 
 export function requirementApplies(

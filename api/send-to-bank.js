@@ -329,7 +329,15 @@ export default async function handler(req, res) {
       : `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`;
 
     // 1+2+3a. Pratica, banca, ciclo di approfondimento, file e risposte in parallelo
-    const [praticaArr, pbArr, integrationArr, filesRaw, questionsRaw, relazioniRaw] = await Promise.all([
+    const [
+      praticaArr,
+      pbArr,
+      integrationArr,
+      filesRaw,
+      questionsRaw,
+      relazioniRaw,
+      structuredRequirementsRaw,
+    ] = await Promise.all([
       fetch(
         `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
         { headers: H },
@@ -354,6 +362,12 @@ export default async function handler(req, res) {
       !integrationMode
         ? fetch(
             `${SUPABASE_URL}/rest/v1/relazioni_commerciali?practice_id=eq.${encodeURIComponent(practice_id)}&status=eq.generata&select=id,bank_id,pdf_url,docx_url,risposte,updated_at&order=updated_at.desc&limit=20`,
+            { headers: H },
+          ).then(r => r.ok ? r.json() : []).catch(() => [])
+        : Promise.resolve([]),
+      !integrationMode
+        ? fetch(
+            `${SUPABASE_URL}/rest/v1/practice_documents?practice_id=eq.${encodeURIComponent(practice_id)}&input_type=in.(text,contacts)&status=in.(caricato,approvato)&select=id,nome,input_type,client_response,response_updated_at&order=created_at.asc`,
             { headers: H },
           ).then(r => r.ok ? r.json() : []).catch(() => [])
         : Promise.resolve([]),
@@ -431,6 +445,11 @@ export default async function handler(req, res) {
     const answeredQuestions = integrationMode
       ? (Array.isArray(questionsRaw) ? questionsRaw : []).filter(question =>
           question.stato === 'risposta' && String(question.risposta ?? '').trim().length > 0
+        )
+      : [];
+    const structuredRequirements = !integrationMode && Array.isArray(structuredRequirementsRaw)
+      ? structuredRequirementsRaw.filter(requirement =>
+          requirement.client_response && typeof requirement.client_response === 'object'
         )
       : [];
     const signResults = await Promise.all(
@@ -920,6 +939,54 @@ ${[...warnings, ...attenzione, ...positivi].map(s => {
 ${vj.data_analisi ? (() => { const d = new Date(vj.data_analisi); return isNaN(d.getTime()) ? '' : `<p style="font-size:10px;color:#94a3b8;margin-top:8px;text-align:right;">Visura analizzata il ${d.toLocaleDateString('it-IT')}</p>`; })() : ''}`;
     })());
 
+    const structuredRequirementsSection = structuredRequirements.length > 0
+      ? `
+<h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  Informazioni compilate dal cliente
+</h3>
+${structuredRequirements.map(requirement => {
+  if (requirement.input_type === 'text') {
+    const textResponse = String(requirement.client_response?.text ?? '').trim();
+    if (!textResponse) return '';
+    return `<div style="margin:10px 0;padding:12px;background:#faf5ff;border-left:3px solid #7c3aed;border-radius:4px;">
+      <p style="margin:0 0 5px;font-size:13px;font-weight:700;color:#4c1d95;">${escapeHtml(requirement.nome)}</p>
+      <p style="margin:0;font-size:13px;color:#475569;white-space:pre-wrap;">${escapeHtml(textResponse)}</p>
+    </div>`;
+  }
+
+  const contacts = requirement.client_response ?? {};
+  const rows = [
+    ['Legale rappresentante', contacts.legal_representative],
+    ['Amministratore', contacts.administrator],
+    ...(Array.isArray(contacts.beneficial_owners)
+      ? contacts.beneficial_owners.map((owner, index) => [`Titolare effettivo ${index + 1}`, owner])
+      : []),
+  ];
+  const rowsHtml = rows.map(([label, rawContact]) => {
+    const contact = rawContact && typeof rawContact === 'object' ? rawContact : {};
+    const fullName = [contact.nome, contact.cognome].filter(Boolean).join(' ') || 'Nome non indicato';
+    return `<tr>
+      <td style="padding:7px;border:1px solid #cbd5e1;font-weight:700;">${escapeHtml(label)}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(fullName)}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(contact.email || '—')}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(contact.cellulare || '—')}</td>
+    </tr>`;
+  }).join('');
+  return `<div style="margin:10px 0;">
+    <p style="margin:0 0 7px;font-size:13px;font-weight:700;color:#312e81;">${escapeHtml(requirement.nome)}</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="background:#eef2ff;">
+        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Ruolo</th>
+        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Nome e cognome</th>
+        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">E-mail</th>
+        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Cellulare</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>`;
+}).join('')}`
+      : '';
+
     const standardHtmlBody = `<!DOCTYPE html>
 <html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
 <div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
@@ -933,6 +1000,7 @@ ${notaHtml}
   📎 Documenti allegati (${docLinks.length})
 </h3>
 <ul style="padding-left:20px;">${docsHtml}</ul>
+${structuredRequirementsSection}
 ${profiloSection}
 ${visuraSection}
 ${kpiSection}

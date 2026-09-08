@@ -58,7 +58,15 @@ import {
   type PracticeIntegrationRequest, type PracticeStatus
 } from '@/lib/types';
 import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
-import { classifyFinPromoterCompany, requirementApplies, type FinPromoterCompanyType, type RegimeContabile } from '@/lib/finpromoterChecklist';
+import {
+  classifyFinPromoterCompany,
+  normalizeChecklistName,
+  requirementApplies,
+  requirementInputType,
+  standardDocumentsReplacedBy,
+  type FinPromoterCompanyType,
+  type RegimeContabile,
+} from '@/lib/finpromoterChecklist';
 
 type AssignedAgent = { id: string; nome?: string; email: string };
 type IntegrationRequestDraft = { nome: string; descrizione: string };
@@ -847,7 +855,7 @@ export default function PraticaDetailPage() {
           .from('practice_documents')
           .select('nome, integration_request_id')
           .eq('practice_id', practice.id)
-          .in('tipo', ['standard', 'integrazione'])
+          .in('tipo', ['standard', 'banca', 'integrazione'])
           .in('status', ['richiesto', 'rifiutato'])
           .order('created_at'),
         supabase
@@ -1824,15 +1832,20 @@ export default function PraticaDetailPage() {
       ? applicableAddingBankRequirements
       : addingBankRequirements;
     if (applicable.length > 0) {
-      const existingNames = new Set(documents.map(document => document.nome.trim().toLowerCase()));
+      const existingRequirementIds = new Set(
+        documents
+          .map(document => document.bank_requirement_id)
+          .filter((requirementId): requirementId is string => Boolean(requirementId))
+      );
       const rows = applicable
-        .filter(requirement => !existingNames.has(requirement.nome.trim().toLowerCase()))
+        .filter(requirement => !existingRequirementIds.has(requirement.id))
         .map(requirement => ({
           practice_id: id,
           bank_requirement_id: requirement.id,
           nome: requirement.nome,
           descrizione: requirement.descrizione,
           tipo: 'banca' as const,
+          input_type: requirement.input_type ?? requirementInputType(requirement.nome),
           obbligatorio: requirement.obbligatorio,
           status: 'richiesto' as const,
         }));
@@ -1840,6 +1853,73 @@ export default function PraticaDetailPage() {
         const { error: docsError } = await supabase.from('practice_documents').insert(rows);
         if (docsError) {
           toast.error('Banca assegnata, ma checklist non caricata: ' + docsError.message);
+        }
+      }
+    }
+
+    if (selectedIsFinPromoter && applicable.length > 0) {
+      const { data: currentDocuments, error: currentDocumentsError } = await supabase
+        .from('practice_documents')
+        .select('id,nome,tipo,status,uploaded_at,bank_requirement_id,input_type')
+        .eq('practice_id', id);
+      if (currentDocumentsError) {
+        toast.error('Checklist FinPromoter caricata, ma non è stato possibile verificare i duplicati.');
+      } else {
+        for (const requirement of applicable) {
+          const replacedStandardNames = standardDocumentsReplacedBy(requirement.nome)
+            .map(normalizeChecklistName);
+          if (replacedStandardNames.length === 0) continue;
+
+          const target = (currentDocuments ?? []).find(document =>
+            document.bank_requirement_id === requirement.id
+          );
+          if (!target) continue;
+
+          const duplicatedStandardDocuments = (currentDocuments ?? []).filter(document =>
+            document.tipo === 'standard'
+            && replacedStandardNames.includes(normalizeChecklistName(document.nome))
+          );
+          if (duplicatedStandardDocuments.length === 0) continue;
+
+          const sourceIds = duplicatedStandardDocuments.map(document => document.id);
+          const { error: moveFilesError } = await supabase
+            .from('uploaded_files')
+            .update({ practice_document_id: target.id })
+            .in('practice_document_id', sourceIds);
+          if (moveFilesError) {
+            toast.error(`Non ho rimosso i duplicati di "${requirement.nome}" per proteggere i file già caricati.`);
+            continue;
+          }
+
+          const completedSources = duplicatedStandardDocuments.filter(document =>
+            document.status === 'caricato' || document.status === 'approvato'
+          );
+          if (
+            (target.input_type ?? 'upload') === 'upload'
+            && completedSources.length > 0
+            && !['caricato', 'approvato'].includes(target.status)
+          ) {
+            const latestUpload = completedSources
+              .map(document => document.uploaded_at)
+              .filter((value): value is string => Boolean(value))
+              .sort()
+              .at(-1);
+            await supabase
+              .from('practice_documents')
+              .update({
+                status: 'caricato',
+                uploaded_at: latestUpload ?? new Date().toISOString(),
+              })
+              .eq('id', target.id);
+          }
+
+          const { error: deleteDuplicatesError } = await supabase
+            .from('practice_documents')
+            .delete()
+            .in('id', sourceIds);
+          if (deleteDuplicatesError) {
+            toast.error(`Checklist caricata, ma non è stato possibile eliminare i duplicati di "${requirement.nome}".`);
+          }
         }
       }
     }
@@ -2397,6 +2477,33 @@ export default function PraticaDetailPage() {
                   <div className="space-y-2">
                     {group.docs.map(doc => {
                       const files = (doc as PracticeDocument & { uploaded_files?: { id: string; nome_file: string; storage_path: string }[] }).uploaded_files ?? [];
+                      const inputType = doc.input_type ?? 'upload';
+                      const textResponse = inputType === 'text'
+                        ? String(doc.client_response?.text ?? '').trim()
+                        : '';
+                      const contactsResponse = inputType === 'contacts'
+                        && doc.client_response
+                        && typeof doc.client_response === 'object'
+                        ? doc.client_response
+                        : null;
+                      const contactRows = contactsResponse
+                        ? [
+                            {
+                              label: 'Legale rappresentante',
+                              value: contactsResponse.legal_representative,
+                            },
+                            {
+                              label: 'Amministratore',
+                              value: contactsResponse.administrator,
+                            },
+                            ...(Array.isArray(contactsResponse.beneficial_owners)
+                              ? contactsResponse.beneficial_owners.map((value, index) => ({
+                                  label: `Titolare effettivo ${index + 1}`,
+                                  value,
+                                }))
+                              : []),
+                          ]
+                        : [];
                       return (
                         <Card key={doc.id} className="border-border">
                           <CardContent className="py-3 px-4">
@@ -2420,6 +2527,40 @@ export default function PraticaDetailPage() {
                                   )}
                                 </div>
                                 {doc.descrizione && <p className="text-xs text-muted-foreground mt-0.5">{doc.descrizione}</p>}
+                                {inputType === 'text' && (
+                                  <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">
+                                      Risposta testuale
+                                    </p>
+                                    <p className="mt-1 text-sm whitespace-pre-wrap">
+                                      {textResponse || 'Non ancora compilata'}
+                                    </p>
+                                  </div>
+                                )}
+                                {inputType === 'contacts' && (
+                                  <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 space-y-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
+                                      Contatti inseriti
+                                    </p>
+                                    {contactRows.length === 0 ? (
+                                      <p className="text-sm">Non ancora compilati</p>
+                                    ) : contactRows.map(row => {
+                                      const raw = row.value && typeof row.value === 'object'
+                                        ? row.value as Record<string, unknown>
+                                        : {};
+                                      return (
+                                        <div key={row.label} className="text-xs">
+                                          <p className="font-semibold text-foreground">{row.label}</p>
+                                          <p className="text-muted-foreground">
+                                            {[raw.nome, raw.cognome].filter(Boolean).join(' ') || 'Nome non indicato'}
+                                            {' · '}{String(raw.email ?? 'e-mail non indicata')}
+                                            {' · '}{String(raw.cellulare ?? 'cellulare non indicato')}
+                                          </p>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                                 {doc.note_rifiuto && <p className="text-xs text-red-600 mt-1 bg-red-50 px-2 py-1 rounded">Motivo rifiuto: {doc.note_rifiuto}</p>}
                                 {files.length > 0 && (
                                   <div className="mt-2 space-y-1">
@@ -2458,27 +2599,31 @@ export default function PraticaDetailPage() {
                               )}
                               {canEdit && (
                                 <div className="shrink-0 flex gap-1">
-                                  <input type="file" multiple className="hidden"
-                                    ref={el => { adminFileRefs.current[doc.id] = el; }}
-                                    accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-                                    onChange={e => { const fs = e.target.files; if (fs && fs.length > 0) handleAdminUpload(doc.id, fs); e.target.value = ''; }}
-                                  />
-                                  <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
-                                    disabled={uploadingAdminDoc === doc.id}
-                                    onClick={() => adminFileRefs.current[doc.id]?.click()}
-                                    title="Carica per il cliente"
-                                  >
-                                    {uploadingAdminDoc === doc.id
-                                      ? <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
-                                      : <><Upload className="w-3 h-3" /> Upload</>}
-                                  </Button>
-                                  <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
-                                    disabled={uploadingAdminDoc === doc.id}
-                                    onClick={() => handleDropboxChoose(doc.id)}
-                                    title="Importa da Dropbox"
-                                  >
-                                    📦 Dropbox
-                                  </Button>
+                                  {inputType === 'upload' && (
+                                    <>
+                                      <input type="file" multiple className="hidden"
+                                        ref={el => { adminFileRefs.current[doc.id] = el; }}
+                                        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                                        onChange={e => { const fs = e.target.files; if (fs && fs.length > 0) handleAdminUpload(doc.id, fs); e.target.value = ''; }}
+                                      />
+                                      <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
+                                        disabled={uploadingAdminDoc === doc.id}
+                                        onClick={() => adminFileRefs.current[doc.id]?.click()}
+                                        title="Carica per il cliente"
+                                      >
+                                        {uploadingAdminDoc === doc.id
+                                          ? <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
+                                          : <><Upload className="w-3 h-3" /> Upload</>}
+                                      </Button>
+                                      <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
+                                        disabled={uploadingAdminDoc === doc.id}
+                                        onClick={() => handleDropboxChoose(doc.id)}
+                                        title="Importa da Dropbox"
+                                      >
+                                        📦 Dropbox
+                                      </Button>
+                                    </>
+                                  )}
                                   <Button size="sm" variant="ghost"
                                     className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
                                     title="Elimina documento e file"

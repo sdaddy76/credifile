@@ -14,6 +14,7 @@ export type PracticeStatus =
 
 export type DocumentStatus = 'richiesto' | 'caricato' | 'approvato' | 'rifiutato';
 export type DocumentType = 'standard' | 'banca' | 'integrazione';
+export type RequirementInputType = 'upload' | 'text' | 'contacts';
 
 export interface Socio {
   nome:           string;
@@ -97,6 +98,7 @@ export interface BankDocumentRequirement {
   obbligatorio: boolean;
   ordine: number;
   condizione?: string | null;
+  input_type?: RequirementInputType;
   created_at: string;
 }
 
@@ -166,6 +168,9 @@ export interface PracticeDocument {
   integration_request_id?: string | null;
   template_id?: string;
   bank_requirement_id?: string;
+  input_type?: RequirementInputType;
+  client_response?: Record<string, unknown> | null;
+  response_updated_at?: string | null;
   nome: string;
   descrizione?: string;
   tipo: DocumentType;

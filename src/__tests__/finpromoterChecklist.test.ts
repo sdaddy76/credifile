@@ -1,6 +1,9 @@
 import {
   classifyFinPromoterCompany,
+  normalizeChecklistName,
+  requirementInputType,
   requirementApplies,
+  standardDocumentsReplacedBy,
   type FinPromoterProfile,
 } from '@/lib/finpromoterChecklist';
 
@@ -50,5 +53,28 @@ describe('checklist FinPromoter', () => {
 
     expect(requirementApplies({ condizione: 'persone_ordinaria' }, profile)).toBe(false);
     expect(requirementApplies({ condizione: 'persone_semplificata' }, profile)).toBe(false);
+  });
+
+  it('classifica contatti e relazione come campi compilabili e gli altri requisiti come upload', () => {
+    expect(requirementInputType(
+      'Cellulari ed e-mail — legale rappresentante, amministratore e titolari effettivi'
+    )).toBe('contacts');
+    expect(requirementInputType('Relazione sullo scopo e sulla natura dell’operazione')).toBe('text');
+    expect(requirementInputType('Visura camerale')).toBe('upload');
+  });
+
+  it('mappa soltanto i documenti standard sostituiti dalla checklist FinPromoter', () => {
+    expect(standardDocumentsReplacedBy('Visura camerale')).toEqual(['Visura Camerale Aggiornata']);
+    expect(standardDocumentsReplacedBy(
+      'Ultimi due bilanci approvati completi + dati provvisori di bilancio'
+    )).toEqual(['Bilancio Depositato', 'Bilancio Provvisorio']);
+    expect(standardDocumentsReplacedBy('Relazione sullo scopo e sulla natura dell’operazione'))
+      .toEqual(['Motivazione della Richiesta']);
+    expect(standardDocumentsReplacedBy('Documenti dei garanti')).toEqual([]);
+  });
+
+  it('normalizza apostrofi, accenti e punteggiatura per i confronti controllati', () => {
+    expect(normalizeChecklistName('Relazione sull’operazione'))
+      .toBe(normalizeChecklistName("Relazione sull'operazione"));
   });
 });
