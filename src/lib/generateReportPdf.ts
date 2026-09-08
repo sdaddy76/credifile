@@ -12,6 +12,8 @@ export interface KpiScore {
   valore: number | null; formatted: string; score: number | null;
   benchmark: number | null; benchmark_formatted: string;
   benchmark_key?: string;
+  source?: string;
+  source_note?: string;
   peso?: number;
   inverso: boolean;
 }
@@ -49,7 +51,7 @@ export interface ReportData {
   motivi_rating?: string[];
   kpi_disponibili?: number;
   kpi_totali?: number;
-  dscr_metodo?: 'finanziamenti' | 'approssimato';
+  dscr_metodo?: 'finanziamenti' | 'estratto_conto' | 'non_disponibile';
   servizio_debito_annuo?: number;
   anomaly_analysis?: BalanceAnomalyAnalysis | null;
 }
@@ -670,8 +672,10 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     y += 20;
     doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
     const dscrNote = data.dscr_metodo === 'finanziamenti'
-      ? `DSCR operativo = EBITDA / servizio del debito annuo${data.servizio_debito_annuo ? ` (${fmtEur(data.servizio_debito_annuo)})` : ''}.`
-      : 'DSCR approssimato tramite EBITDA / interessi passivi in assenza delle rate complete.';
+      ? `DSCR = EBITDA / servizio del debito annuo da finanziamenti${data.servizio_debito_annuo ? ` (${fmtEur(data.servizio_debito_annuo)})` : ''}.`
+      : data.dscr_metodo === 'estratto_conto'
+        ? `DSCR stimato sulle rate ricorrenti riconosciute nell’estratto conto${data.servizio_debito_annuo ? ` (${fmtEur(data.servizio_debito_annuo)} annui)` : ''}.`
+        : 'DSCR non disponibile: mancano rate complete o un servizio annuo del debito attendibile.';
     doc.text(dscrNote, 14, y);
     y += 8;
   }

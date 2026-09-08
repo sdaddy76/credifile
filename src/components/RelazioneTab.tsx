@@ -29,6 +29,7 @@ import {
   type KpiBenchmarkComparison,
   type KpiBenchmarkTone,
 } from '@/lib/kpiBenchmarkComments';
+import { enrichCommercialKpis } from '@/lib/commercialKpiEnrichment';
 
 /* @section: relazione-commerciale-types */
 type Domanda = {
@@ -192,12 +193,28 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         { data: client },
         { data: practice },
         { data: latestBilancio },
+        { data: financing },
+        { data: transactions },
       ] = await Promise.all([
         supabase.from('relazione_templates').select('*').eq('attivo', true).order('nome'),
         supabase.from('relazioni_commerciali').select('*, relazione_templates(*)').eq('practice_id', practiceId).order('updated_at', { ascending: false }),
         clientId ? supabase.from('clients').select('ragione_sociale,codice_fiscale,piva,indirizzo,codice_ateco').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
         supabase.from('practices').select('importo_richiesto').eq('id', practiceId).maybeSingle(),
-        supabase.from('bilanci_kpi').select('anno_esercizio,kpi').eq('practice_id', practiceId).order('anno_esercizio', { ascending: false }).limit(1).maybeSingle(),
+        supabase
+          .from('bilanci_kpi')
+          .select('anno_esercizio,kpi,totale_attivo,totale_patrimonio_netto,totale_valore_produzione,totale_costi_produzione,ricavi_vendite,differenza_ab,risultato_ante_imposte,interessi_passivi,proventi_partecipazioni,ammortamenti,disponibilita_liquide,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori,voci_mancanti')
+          .eq('practice_id', practiceId)
+          .order('anno_esercizio', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('client_financing')
+          .select('debito_residuo,rata,fonte')
+          .eq('practice_id', practiceId),
+        supabase
+          .from('estratto_conto_transactions')
+          .select('data_valuta,data_contabile,importo,tipo,categoria,descrizione,beneficiario_ordinante,saldo_progressivo,classification_confidence,parse_confidence')
+          .eq('practice_id', practiceId),
       ]);
       if (tplErr) throw tplErr;
       if (relErr) throw relErr;
@@ -211,8 +228,13 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       setActiveRelazioneId(prev => prev ?? normalizedRel[0]?.id ?? null);
       const c: any = client ?? {};
       const p: any = practice ?? {};
-      const latestKpi = latestBilancio?.kpi as KpiResult | null | undefined;
-      setKpiScores(latestKpi ? buildBankabilityAssessment(latestKpi).scores : []);
+      const enriched = enrichCommercialKpis(
+        latestBilancio as Parameters<typeof enrichCommercialKpis>[0],
+        financing ?? [],
+        (transactions ?? []) as Parameters<typeof enrichCommercialKpis>[2],
+      );
+      const latestKpi = enriched.kpi as KpiResult;
+      setKpiScores(Object.keys(latestKpi).length > 0 ? buildBankabilityAssessment(latestKpi).scores : []);
       setAutoData({
         ragione_sociale: c.ragione_sociale ?? '',
         cf: c.codice_fiscale ?? '',
@@ -403,7 +425,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
             new TableRow({
               children: [
                 cell(`${comparison.label} (${comparison.areaLabel})`, true),
-                cell(comparison.valueFormatted),
+                cell(`${comparison.valueFormatted}\nFonte: ${comparison.source}`),
                 cell(comparison.benchmarkFormatted),
                 cell(`${comparison.deltaFormatted} / ${comparison.deltaPercentFormatted}`),
                 cell(comparison.judgement, true),
@@ -473,7 +495,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         body: kpiComparisons.map(comparison => [
           comparison.label,
           comparison.areaLabel,
-          comparison.valueFormatted,
+          `${comparison.valueFormatted}\nFonte: ${comparison.source}`,
           comparison.benchmarkFormatted,
           `${comparison.deltaFormatted}\n${comparison.deltaPercentFormatted}`,
           comparison.judgement,
@@ -704,6 +726,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                             <div>
                               <p className="text-[10px] font-semibold uppercase text-muted-foreground">Azienda</p>
                               <p className="text-sm font-bold tabular-nums">{comparison.valueFormatted}</p>
+                              <p className="mt-0.5 text-[10px] text-muted-foreground">Fonte: {comparison.source}</p>
                             </div>
                             <div>
                               <p className="text-[10px] font-semibold uppercase text-muted-foreground">Benchmark</p>

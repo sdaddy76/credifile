@@ -6,6 +6,7 @@ import {
 } from '../../supabase/functions/_shared/balance-anomaly-engine';
 import {
   BALANCE_VALUE_PATTERNS,
+  extractBalanceCompanyName,
   extractBalanceValue,
   splitBalanceDocument,
 } from '../../supabase/functions/_shared/balance-parser';
@@ -130,6 +131,53 @@ describe('balance anomaly engine', () => {
       sections.contoEconomico,
       [...BALANCE_VALUE_PATTERNS.costiMaterie],
     )).toBe(3_915_657);
+  });
+
+  it('legge i risultati economici quando l’etichetta contiene la formula tra parentesi', () => {
+    const text = [
+      'Conto economico',
+      '| Differenza tra valore e costi della produzione (A - B) | 862.641 | 683.445 |',
+      '| Risultato prima delle imposte (A - B + - C + - D) | 833.903 | 683.445 |',
+      '| Totale delle imposte sul reddito dell’esercizio, correnti, differite e anticipate | 282.219 | 190.378 |',
+    ].join('\n');
+    const sections = splitBalanceDocument(text);
+
+    expect(extractBalanceValue(
+      sections.contoEconomico,
+      ['Differenza tra valore e costi della produzione'],
+    )).toBe(862_641);
+    expect(extractBalanceValue(
+      sections.contoEconomico,
+      ['Risultato prima delle imposte'],
+    )).toBe(833_903);
+    expect(extractBalanceValue(
+      sections.contoEconomico,
+      ['Totale delle imposte sul reddito dell’esercizio, correnti, differite e anticipate'],
+    )).toBe(282_219);
+  });
+
+  it('legge correttamente la ragione sociale da intestazioni Markdown separate', () => {
+    const text = [
+      '<!-- Page: 1 -->',
+      '',
+      '<!-- v.2.14.5 -->',
+      '',
+      '<!-- SPORT CAR RADIO S.R.L. -->',
+      '',
+      '## SPORT CAR RADIO S.R.L.',
+      '',
+      '## Bilancio di esercizio al 31-12-2025',
+      '',
+      'Conto economico',
+      '| Differenza tra valore e costi della produzione (A - B) | 862.641 | 683.445 |',
+    ].join('\n');
+    const sections = splitBalanceDocument(text);
+
+    expect(extractBalanceCompanyName(text)).toBe('SPORT CAR RADIO S.R.L.');
+    expect(extractBalanceValue(
+      sections.contoEconomico,
+      ['Differenza tra valore e costi della produzione'],
+    )).toBe(862_641);
   });
 
   it('non segnala come costo materie zero un valore non estratto', () => {

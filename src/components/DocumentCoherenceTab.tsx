@@ -89,7 +89,7 @@ export default function DocumentCoherenceTab({ practiceId }: Props) {
           .single(),
         supabase
           .from('bilanci_kpi')
-          .select('id,anno_esercizio,ragione_sociale,capitale_sociale,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori')
+          .select('id,anno_esercizio,ragione_sociale,capitale_sociale,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori,totale_debiti,voci_mancanti')
           .eq('practice_id', practiceId)
           .order('anno_esercizio', { ascending: false }),
         supabase

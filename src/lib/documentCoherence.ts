@@ -60,6 +60,8 @@ export interface CoherenceBalance {
   debiti_banche_breve?: number | string | null;
   debiti_banche_lungo?: number | string | null;
   debiti_altri_finanziatori?: number | string | null;
+  totale_debiti?: number | string | null;
+  voci_mancanti?: string[] | null;
 }
 
 export interface CoherenceFinancing {
@@ -339,12 +341,24 @@ export function analyzeDocumentCoherence(input: DocumentCoherenceInput): Documen
     });
   }
 
-  const balanceDebt = latestBalance
-    ? aggregate([
-        numberValue(latestBalance.debiti_banche_breve),
-        numberValue(latestBalance.debiti_banche_lungo),
-        numberValue(latestBalance.debiti_altri_finanziatori),
-      ])
+  const financialDebtFields = latestBalance
+    ? [
+        ['debiti_banche_breve', numberValue(latestBalance.debiti_banche_breve)],
+        ['debiti_banche_lungo', numberValue(latestBalance.debiti_banche_lungo)],
+        ['debiti_altri_finanziatori', numberValue(latestBalance.debiti_altri_finanziatori)],
+      ] as const
+    : [];
+  const missingFinancialFields = new Set(latestBalance?.voci_mancanti ?? []);
+  const hasExtractionMetadata = Array.isArray(latestBalance?.voci_mancanti);
+  const usableFinancialDebt = financialDebtFields
+    .filter(([field, value]) => value !== null && (
+      hasExtractionMetadata
+        ? !missingFinancialFields.has(field)
+        : value !== 0
+    ))
+    .map(([, value]) => value);
+  const balanceDebt = usableFinancialDebt.length > 0
+    ? aggregate(usableFinancialDebt)
     : null;
   const declaredDebt = aggregate(manualFinancing.map(financing => numberValue(financing.debito_residuo)));
   if (balanceDebt !== null && declaredDebt !== null && Math.max(balanceDebt, declaredDebt) >= 1000) {
@@ -395,7 +409,9 @@ export function analyzeDocumentCoherence(input: DocumentCoherenceInput): Documen
       id: 'financing_balance_vs_declared',
       label: 'Debiti finanziari tra bilancio e dichiarato',
       status: 'non_verificabile',
-      note: 'Bilancio o situazione finanziamenti non disponibili',
+      note: balanceDebt === null && latestBalance
+        ? 'Debiti finanziari da bilancio: Non disponibili'
+        : 'Bilancio o situazione finanziamenti non disponibili',
       sources: ['Bilancio', 'Finanziamenti dichiarati'],
     });
   }

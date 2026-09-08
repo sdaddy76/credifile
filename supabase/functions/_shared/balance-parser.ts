@@ -49,8 +49,11 @@ function patternPosition(line: string, pattern: string): number {
     if (index < 0) return -1;
     const before = index === 0 ? '' : normalizedLine[index - 1];
     const after = normalizedLine.slice(index + normalizedPattern.length).trimStart();
+    const afterQualifier = after.replace(/^\([^)]{1,160}\)\s*/, '');
     const validBefore = !before || /[\s|:;()[\]/-]/.test(before);
-    const validAfter = !after || /^[|:]/.test(after) || valueTokens(after).some(token => after.startsWith(token));
+    const validAfter = !afterQualifier
+      || /^[|:]/.test(afterQualifier)
+      || valueTokens(afterQualifier).some(token => afterQualifier.startsWith(token));
     if (validBefore && validAfter) return index;
     fromIndex = index + normalizedPattern.length;
   }
@@ -81,11 +84,52 @@ export function extractBalanceValue(text: string, patterns: string[]): number | 
       if (position < 0) continue;
       const normalizedLine = normalizeLabel(line);
       const normalizedPattern = normalizeLabel(pattern);
-      const afterLabel = normalizedLine.slice(position + normalizedPattern.length).trimStart().replace(/^[|:]\s*/, '');
+      const afterLabel = normalizedLine
+        .slice(position + normalizedPattern.length)
+        .trimStart()
+        .replace(/^\([^)]{1,160}\)\s*/, '')
+        .replace(/^[|:]\s*/, '');
       const token = valueTokens(afterLabel)[0];
       if (token !== undefined) {
         const value = parseItalianBalanceNumber(token);
         if (value !== null) return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function extractBalanceCompanyName(text: string): string | null {
+  const lines = text.split(/\r?\n/);
+  const balanceHeading = /bilancio di esercizio al/i;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index].trim();
+    if (!balanceHeading.test(rawLine)) continue;
+    if (/^<!--.*-->$/.test(rawLine)) continue;
+
+    const cleanLine = rawLine.replace(/^#+\s*/, '');
+    const headingPosition = cleanLine.search(balanceHeading);
+    const inlineCandidate = headingPosition > 0
+      ? cleanLine.slice(0, headingPosition).trim().replace(/[-–—:|]+$/, '').trim()
+      : '';
+    if (inlineCandidate.length >= 2 && /[a-zà-ÿ]/i.test(inlineCandidate)) {
+      return inlineCandidate;
+    }
+
+    for (let previous = index - 1; previous >= Math.max(0, index - 8); previous -= 1) {
+      const candidateLine = lines[previous].trim();
+      if (!candidateLine || /^<!--.*-->$/.test(candidateLine)) continue;
+      const candidate = candidateLine.replace(/^#+\s*/, '').trim();
+      if (
+        candidate.length >= 2
+        && candidate.length <= 160
+        && /[a-zà-ÿ]/i.test(candidate)
+        && !balanceHeading.test(candidate)
+        && !/^v\.\d/i.test(candidate)
+      ) {
+        return candidate;
       }
     }
   }

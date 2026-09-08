@@ -20,6 +20,8 @@ export interface KpiBenchmarkComparison {
   judgement: string;
   tone: KpiBenchmarkTone;
   comment: string;
+  source: string;
+  sourceNote: string | null;
 }
 
 const AREA_LABELS: Record<string, string> = {
@@ -205,15 +207,18 @@ export function buildKpiBenchmarkComparison(
       ? -deltaPercent
       : deltaPercent;
   const position = getPosition(favourableDeltaPercent);
+  const source = kpi.source?.trim() || 'Fonte non disponibile';
+  const sourceNote = kpi.source_note?.trim() || null;
+  const sourceText = `Fonte del dato: ${source}${sourceNote ? ` (${sourceNote})` : ''}.`;
 
   let comment: string;
   if (value === null) {
-    comment = `Il valore aziendale di ${kpi.kpi_label} non è disponibile: completare o verificare i dati di bilancio necessari al calcolo.`;
+    comment = `Il valore aziendale di ${kpi.kpi_label} non è disponibile. ${sourceText}`;
   } else if (benchmark === null) {
-    comment = `Il valore aziendale di ${kpi.kpi_label} è ${valueFormatted}, ma il benchmark settoriale non è disponibile; il confronto viene quindi indicato come N/D.`;
+    comment = `Il valore aziendale di ${kpi.kpi_label} è ${valueFormatted}, ma il benchmark settoriale non è disponibile; il confronto viene quindi indicato come N/D. ${sourceText}`;
   } else {
     const directionNote = kpi.inverso ? 'per questo indicatore un valore più basso è preferibile' : 'per questo indicatore un valore più alto è preferibile';
-    comment = `Il valore aziendale (${valueFormatted}) è ${position.phrase} (${formatKpiBenchmarkValue(kpi.kpi_key, benchmark)}; scostamento ${formatDelta(kpi.kpi_key, delta)}, ${formatDeltaPercent(deltaPercent)}; ${directionNote}). ${indicatorInterpretation(kpi.kpi_key, position.tone)}`;
+    comment = `Il valore aziendale (${valueFormatted}) è ${position.phrase} (${formatKpiBenchmarkValue(kpi.kpi_key, benchmark)}; scostamento ${formatDelta(kpi.kpi_key, delta)}, ${formatDeltaPercent(deltaPercent)}; ${directionNote}). ${indicatorInterpretation(kpi.kpi_key, position.tone)} ${sourceText}`;
   }
 
   return {
@@ -234,6 +239,8 @@ export function buildKpiBenchmarkComparison(
     judgement: position.judgement,
     tone: position.tone,
     comment,
+    source,
+    sourceNote,
   };
 }
 

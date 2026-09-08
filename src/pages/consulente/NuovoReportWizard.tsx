@@ -194,7 +194,7 @@ export default function NuovoReportWizard() {
   } | null>(null);
   const [ratingBancabile, setRatingBancabile] = useState<'bancabile' | 'attenzione' | 'non_bancabile' | null>(null);
   const [motiviRating,    setMotiviRating]    = useState<string[]>([]);
-  const [dscrMetodo, setDscrMetodo] = useState<'finanziamenti' | 'approssimato'>('approssimato');
+  const [dscrMetodo, setDscrMetodo] = useState<'finanziamenti' | 'non_disponibile'>('non_disponibile');
   const [servizioDebitoAnnuo, setServizioDebitoAnnuo] = useState(0);
 
   // Step 4: AI suggestions
@@ -382,12 +382,6 @@ export default function NuovoReportWizard() {
       toast.error(`Inserisci il debito residuo del finanziamento ${missingResidualDebt.istituto} per calcolare correttamente PFN e indice`);
       return;
     }
-    const missingInstallment = activeFinancing.find(finanziamento => !finanziamento.rata_mensile || finanziamento.rata_mensile <= 0);
-    if (missingInstallment) {
-      toast.error(`Inserisci la rata mensile del finanziamento ${missingInstallment.istituto} per calcolare correttamente il DSCR`);
-      return;
-    }
-
     setRecalculatingScores(true);
     try {
       let recalculatedKpi = kpiResult;
@@ -397,6 +391,7 @@ export default function NuovoReportWizard() {
           debito_residuo: finanziamento.importo_residuo,
           durata_mesi: 0,
           tipologia: finanziamento.tipo,
+          fonte: finanziamento.fonte,
         }));
         const { data, error } = await supabase.functions.invoke('analizza-bilancio', {
           body: {
@@ -411,7 +406,7 @@ export default function NuovoReportWizard() {
         recalculatedKpi = data.kpi as KpiResult;
         setKpiResult(recalculatedKpi);
         setAnomalyAnalysis((data.anomaly_analysis as BalanceAnomalyAnalysis | undefined) ?? null);
-        setDscrMetodo(data.dscr_source === 'finanziamenti' ? 'finanziamenti' : 'approssimato');
+        setDscrMetodo(data.dscr_source === 'finanziamenti' ? 'finanziamenti' : 'non_disponibile');
         setServizioDebitoAnnuo(Number(data.servizio_debito_annuo) || 0);
       }
 
@@ -934,8 +929,8 @@ export default function NuovoReportWizard() {
             </h2>
             <p className="text-sm text-slate-500">
               Inserisci manualmente i finanziamenti attivi dell'azienda (mutui, leasing, fidi, ecc.).
-              Questi dati verranno inclusi nel report finale. Il DSCR viene ricalcolato come rapporto tra EBITDA
-              e somma annuale di tutte le rate mensili inserite.
+              Questi dati verranno inclusi nel report finale. La PFN usa il debito residuo; il DSCR viene calcolato
+              solo quando sono disponibili le rate mensili di tutti i finanziamenti attivi.
             </p>
 
             <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-4 space-y-3">
@@ -1012,7 +1007,7 @@ export default function NuovoReportWizard() {
                         value={f.importo_residuo || ''} onChange={e => updateFinanziamento(i, 'importo_residuo', parseFloat(e.target.value) || 0)} />
                     </div>
                     <div>
-                      <label className="text-xs font-semibold text-slate-500">Rata mensile (€) *</label>
+                      <label className="text-xs font-semibold text-slate-500">Rata mensile (€)</label>
                       <input type="number" className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" placeholder="—"
                         value={f.rata_mensile ?? ''} onChange={e => updateFinanziamento(i, 'rata_mensile', e.target.value ? parseFloat(e.target.value) : null)} />
                     </div>
@@ -1061,12 +1056,12 @@ export default function NuovoReportWizard() {
               </div>
             )}
 
-            {kpiScores.some(kpi => kpi.kpi_key === 'dscr' && kpi.score !== null) && (
+            {kpiScores.some(kpi => kpi.kpi_key === 'dscr') && (
               <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800">
                 <strong>DSCR:</strong>{' '}
                 {dscrMetodo === 'finanziamenti'
                   ? `calcolato includendo € ${servizioDebitoAnnuo.toLocaleString('it-IT', { maximumFractionDigits: 0 })} di rate annue complessive.`
-                  : 'calcolo approssimato su EBITDA e interessi passivi perché non risultano finanziamenti con rate mensili.'}
+                  : 'non disponibile perché non risultano rate complete o un servizio annuo del debito attendibile.'}
               </div>
             )}
 
@@ -1210,7 +1205,7 @@ export default function NuovoReportWizard() {
                   <p className="font-bold">Il report includerà:</p>
                   <p>📄 Copertina con gauge bancabilità e badge rating</p>
                   <p>📊 14 KPI ponderati vs benchmark settore {benchmarkData ? `(${benchmarkData.settore_label})` : ''}</p>
-                  <p>🏦 DSCR ricalcolato sulle rate annue complessive dei finanziamenti</p>
+                  <p>🏦 DSCR calcolato solo sulle rate annue complete; altrimenti indicato come N/D</p>
                   <p>🌐 Commento situazione settore</p>
                   <p>📋 Top 3 / Bottom 3 KPI con barre visive</p>
                   {finanziamenti.filter(f => f.istituto).length > 0 && <p>🏦 {finanziamenti.filter(f => f.istituto).length} finanziamenti in essere</p>}

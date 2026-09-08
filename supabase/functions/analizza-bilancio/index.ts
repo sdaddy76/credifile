@@ -5,6 +5,7 @@ import {
 } from '../_shared/balance-anomaly-engine.ts';
 import {
   BALANCE_VALUE_PATTERNS,
+  extractBalanceCompanyName,
   extractBalanceValue,
   splitBalanceDocument,
 } from '../_shared/balance-parser.ts';
@@ -82,8 +83,7 @@ function parseBilancio(text: string) {
   const eCe = (patterns: string[]) => e(sections.contoEconomico, patterns);
 
   // Dati anagrafici — supporta sia markdown (##) che testo grezzo pdfjs
-  const rsMatch = text.match(/(?:^|\n)\s*(?:##\s*)?([^\n]{2,160}?)\s+Bilancio di esercizio al/i);
-  const ragione_sociale = rsMatch ? rsMatch[1].trim() : null;
+  const ragione_sociale = extractBalanceCompanyName(text);
   const annoMatch = text.match(/Bilancio di esercizio al\s+\d{1,2}[-/]\d{2}[-/](\d{4})/);
   const anno_esercizio = annoMatch ? parseInt(annoMatch[1]) : null;
   const atecoMatch = text.match(/(?:ATECO|attività prevalente)[^0-9]{0,30}(\d{4,6}(?:[.,]\d{1,2})?)/i);
@@ -125,7 +125,11 @@ function parseBilancio(text: string) {
   const costo_personale_salari = eCe(['Salari e stipendi']);
   const costo_personale_oneri = eCe(['Oneri sociali']);
   const costo_personale_tfr_quota = eCe(['Trattamento di fine rapporto']);
-  const costo_personale = (costo_personale_salari ?? 0) + (costo_personale_oneri ?? 0) + (costo_personale_tfr_quota ?? 0) || null;
+  const costoPersonaleParts = [costo_personale_salari, costo_personale_oneri, costo_personale_tfr_quota]
+    .filter((value): value is number => value !== null);
+  const costo_personale = costoPersonaleParts.length > 0
+    ? costoPersonaleParts.reduce((sum, value) => sum + value, 0)
+    : null;
   const ammortamentiTotali = eCe(['Totale ammortamenti e svalutazioni']);
   const amm_imm = eCe(['Ammortamento delle immobilizzazioni immateriali', 'Ammortamento immobilizzazioni immateriali']);
   const amm_mat = eCe(['Ammortamento delle immobilizzazioni materiali', 'Ammortamento immobilizzazioni materiali']);
@@ -136,7 +140,13 @@ function parseBilancio(text: string) {
   const proventi_partecipazioni = eCe(['Totale proventi da partecipazioni', 'da imprese controllate']);
   const interessi_passivi = eCe(['Totale interessi e altri oneri finanziari', 'Interessi e altri oneri finanziari']);
   const risultato_ante_imposte = eCe(['Risultato prima delle imposte']);
-  const imposte = eCe(['21) Imposte', '20) Imposte', 'Imposte sul reddito']);
+  const imposte = eCe([
+    'Totale delle imposte sul reddito dell\'esercizio, correnti, differite e anticipate',
+    'imposte correnti',
+    '21) Imposte',
+    '20) Imposte',
+    'Imposte sul reddito',
+  ]);
   const utile_netto = eCe([
     '21) Utile (perdita)',
     '22) Utile (perdita)',
@@ -153,6 +163,19 @@ function parseBilancio(text: string) {
 
   // Formato
   const isXbrl = text.includes('tassonomia itcc-ci') || text.includes('Conforme alla tassonomia');
+  const voci_mancanti = Object.entries({
+    debiti_banche_breve,
+    debiti_banche_lungo: null,
+    debiti_altri_finanziatori,
+    debiti_fornitori,
+    debiti_tributari,
+    differenza_ab,
+    risultato_ante_imposte,
+    imposte,
+    costo_personale,
+  })
+    .filter(([, value]) => value === null)
+    .map(([key]) => key);
 
   return {
     ragione_sociale, anno_esercizio, codice_ateco,
@@ -161,22 +184,30 @@ function parseBilancio(text: string) {
     totale_patrimonio_netto, capitale_sociale, utile_perdita_esercizio,
     fondi_rischi, tfr,
     totale_passivo,
-    debiti_banche_breve: debiti_banche_breve ?? 0, debiti_banche_lungo: 0,
-    debiti_altri_finanziatori: debiti_altri_finanziatori ?? 0,
-    debiti_fornitori: debiti_fornitori ?? 0, debiti_tributari: debiti_tributari ?? 0,
+    debiti_banche_breve, debiti_banche_lungo: null,
+    debiti_altri_finanziatori,
+    debiti_fornitori, debiti_tributari,
     totale_debiti, ratei_risconti_passivi,
     ricavi_vendite, totale_valore_produzione,
     costi_materie, costi_servizi, costo_personale, ammortamenti, oneri_diversi_gestione,
     totale_costi_produzione, differenza_ab,
     proventi_partecipazioni, interessi_passivi,
     risultato_ante_imposte, imposte, utile_netto,
+    voci_mancanti,
     formato_rilevato: isXbrl ? 'xbrl_standard' : 'libero',
   };
 }
 
 // ─── Calcolo KPI ─────────────────────────────────────────────────────────────
 type Semaforo = 'verde' | 'giallo' | 'rosso' | 'nd';
-interface KpiEntry { valore: number | null; formatted: string; semaforo: Semaforo; label: string }
+interface KpiEntry {
+  valore: number | null;
+  formatted: string;
+  semaforo: Semaforo;
+  label: string;
+  source: string;
+  source_note?: string;
+}
 
 function semaforo(v: number | null, thresholds: { green: [number, number] | null; yellow: [number, number] | null }, higherIsBetter: boolean): Semaforo {
   if (v === null || !isFinite(v)) return 'nd';
@@ -194,16 +225,29 @@ function fmtEur(v: number | null) {
 }
 function fmtGiorni(v: number | null) { return v !== null ? Math.round(v) + ' gg' : 'N/D'; }
 
-interface FinRow { rata: number; debito_residuo: number; durata_mesi: number; tipologia: string }
+interface FinRow {
+  rata: number;
+  debito_residuo: number;
+  durata_mesi: number;
+  tipologia: string;
+  fonte?: string;
+}
 
 function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = []) {
   const pn = d.totale_patrimonio_netto;
   const ta = d.totale_attivo;
-  const ac = d.totale_attivo_circolante ?? 0;
-  const rim = d.rimanenze ?? 0;
-  const liq = d.disponibilita_liquide ?? 0;
-  const td = d.totale_debiti ?? 0;
-  const dbBrv = (d.debiti_banche_breve ?? 0) + (d.debiti_banche_lungo ?? 0) + (d.debiti_altri_finanziatori ?? 0);
+  const ac = d.totale_attivo_circolante;
+  const rim = d.rimanenze;
+  const liq = d.disponibilita_liquide;
+  const td = d.totale_debiti;
+  const financialDebtParts = [
+    d.debiti_banche_breve,
+    d.debiti_banche_lungo,
+    d.debiti_altri_finanziatori,
+  ].filter((value): value is number => value !== null);
+  const financialDebtFromBalance = financialDebtParts.length > 0
+    ? financialDebtParts.reduce((sum, value) => sum + value, 0)
+    : null;
   const passCorr = td;
   const tvp = d.totale_valore_produzione;
   // La Differenza A-B è già il risultato operativo (EBIT) prima della gestione finanziaria.
@@ -219,45 +263,70 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   const isHolding = (d.ricavi_vendite === 0 || d.ricavi_vendite === null) && (d.proventi_partecipazioni ?? 0) > 0;
 
   // ── Dati da scheda finanziamenti (se disponibili) ──────────────────────────
-  const hasFin = financing.length > 0;
-  const totRataMensile = hasFin ? financing.reduce((s, f) => s + Math.max(0, Number(f.rata) || 0), 0) : 0;
-  const hasDebtService = totRataMensile > 0;
-  const servizioDebitoAnnuo = totRataMensile * 12;           // Debt Service = Σrate × 12
-  const debitoResidualeTot = hasFin
-    ? financing.reduce((s, f) => s + (Number(f.debito_residuo) || 0), 0)
-    : dbBrv;                                                   // fallback: debiti finanziari da SP
+  const activeFinancing = financing.filter(row => (Number(row.debito_residuo) || 0) > 0);
+  const hasFinancingDebt = activeFinancing.length > 0;
+  const hasDebtService = hasFinancingDebt
+    && activeFinancing.every(row => (Number(row.rata) || 0) > 0);
+  const totRataMensile = hasDebtService
+    ? activeFinancing.reduce((sum, row) => sum + Math.max(0, Number(row.rata) || 0), 0)
+    : 0;
+  const servizioDebitoAnnuo = hasDebtService ? totRataMensile * 12 : null;
+  const debitoResidualeTot = hasFinancingDebt
+    ? activeFinancing.reduce((sum, row) => sum + (Number(row.debito_residuo) || 0), 0)
+    : financialDebtFromBalance;
+  const financingSources = new Set(activeFinancing.map(row => (row.fonte ?? '').toLowerCase()).filter(Boolean));
+  const debtSource = hasFinancingDebt
+    ? [...financingSources].some(source => source.includes('centrale_rischi'))
+      ? financingSources.size > 1 ? 'Finanziamenti in essere e Centrale Rischi' : 'Centrale Rischi'
+      : 'Finanziamenti in essere'
+    : financialDebtFromBalance !== null
+      ? 'Bilancio'
+      : 'Non disponibile';
 
   // PFN: usa debito residuo reale se disponibile, altrimenti stima da SP
-  const pfn = debitoResidualeTot - liq;
+  const pfn = debitoResidualeTot !== null && liq !== null
+    ? debitoResidualeTot - liq
+    : null;
 
-  // DSCR: usa servizio del debito reale se disponibile, altrimenti EBITDA/interessi
-  const dscr = hasDebtService && ebitda !== null
+  // DSCR: si calcola solo con un servizio del debito completo e attendibile.
+  // EBITDA / interessi passivi è Interest Coverage e non sostituisce il DSCR.
+  const dscr = hasDebtService && ebitda !== null && servizioDebitoAnnuo
     ? ebitda / servizioDebitoAnnuo
-    : (intPass && intPass > 0 && ebitda !== null ? ebitda / intPass : null);
-  const dscrLabel = hasDebtService ? 'DSCR (da finanziamenti)' : 'DSCR (approx.)';
+    : null;
+  const dscrLabel = hasDebtService ? 'DSCR (da finanziamenti)' : 'DSCR';
 
-  function kpi(label: string, valore: number | null, formatted: string, sem: Semaforo): KpiEntry {
-    return { valore, formatted, semaforo: sem, label };
+  function kpi(
+    label: string,
+    valore: number | null,
+    formatted: string,
+    sem: Semaforo,
+    source = valore === null ? 'Non disponibile' : 'Bilancio',
+    sourceNote?: string,
+  ): KpiEntry {
+    return { valore, formatted, semaforo: sem, label, source, source_note: sourceNote };
   }
 
-  const currentRatio = passCorr > 0 ? ac / passCorr : null;
-  const quickRatio = passCorr > 0 ? (ac - rim) / passCorr : null;
-  const acidTest = passCorr > 0 ? liq / passCorr : null;
-  const debtEquity = pn && pn > 0 ? td / pn : null;
-  const leverage = pn && pn > 0 ? (ta ?? 0) / pn : null;
-  const pnSuTa = ta && ta > 0 ? (pn ?? 0) / ta * 100 : null;
-  const gradoIndebit = pn && pn > 0 ? dbBrv / pn : null;
-  const roe = pn && pn > 0 ? (d.utile_netto ?? 0) / pn * 100 : null;
+  const currentRatio = ac !== null && passCorr !== null && passCorr > 0 ? ac / passCorr : null;
+  const quickRatio = ac !== null && rim !== null && passCorr !== null && passCorr > 0 ? (ac - rim) / passCorr : null;
+  const acidTest = liq !== null && passCorr !== null && passCorr > 0 ? liq / passCorr : null;
+  const debtEquity = pn && pn > 0 && td !== null ? td / pn : null;
+  const leverage = pn && pn > 0 && ta !== null ? ta / pn : null;
+  const pnSuTa = ta && ta > 0 && pn !== null ? pn / ta * 100 : null;
+  const gradoIndebit = pn && pn > 0 && financialDebtFromBalance !== null
+    ? financialDebtFromBalance / pn
+    : null;
+  const netIncome = d.utile_netto ?? d.utile_perdita_esercizio;
+  const roe = pn && pn > 0 && netIncome !== null ? netIncome / pn * 100 : null;
   const roi = ta && ta > 0 && ebit !== null ? ebit / ta * 100 : null;
   const ros = tvp && tvp > 0 && ebit !== null ? ebit / tvp * 100 : null;
   const ebitdaMargin = tvp && tvp > 0 && ebitda !== null ? ebitda / tvp * 100 : null;
-  const pfnEbitda = ebitda && ebitda > 0 ? pfn / ebitda : null;
-  const pfnPn = pn && pn > 0 ? pfn / pn : null;
+  const pfnEbitda = pfn !== null && ebitda && ebitda > 0 ? pfn / ebitda : null;
+  const pfnPn = pfn !== null && pn && pn > 0 ? pfn / pn : null;
   const dso = d.ricavi_vendite && d.ricavi_vendite > 0 && d.crediti_circolante !== null
     ? d.crediti_circolante / (d.ricavi_vendite / 365) : null;
   const dpo = d.costi_materie && d.costi_materie > 0 && d.debiti_fornitori !== null
     ? d.debiti_fornitori / (d.costi_materie / 365) : null;
-  const dsi = d.costi_materie && d.costi_materie > 0 && rim > 0
+  const dsi = d.costi_materie && d.costi_materie > 0 && rim !== null && rim > 0
     ? rim / (d.costi_materie / 365) : null;
   const intCov = intPass && intPass > 0 && ebit !== null ? ebit / intPass : null;
   // DSCR e PFN già calcolati sopra con dati finanziamenti (o fallback SP)
@@ -265,7 +334,7 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   return {
     is_holding: isHolding,
     ebit, ebitda, pfn,
-    dscr_source: hasDebtService ? 'finanziamenti' : 'approssimato',
+    dscr_source: hasDebtService ? 'finanziamenti' : 'non_disponibile',
     servizio_debito_annuo: servizioDebitoAnnuo,
     kpi: {
       liquidita: {
@@ -284,7 +353,9 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
         pn_su_ta: kpi('PN / Totale Attivo', pnSuTa, fmtPct(pnSuTa),
           pnSuTa === null ? 'nd' : pnSuTa >= 25 ? 'verde' : pnSuTa >= 15 ? 'giallo' : 'rosso'),
         grado_indebitamento: kpi('Grado Indebitamento', gradoIndebit, fmtRatio(gradoIndebit),
-          gradoIndebit === null ? 'nd' : gradoIndebit <= 1.0 ? 'verde' : gradoIndebit <= 2.0 ? 'giallo' : 'rosso'),
+          gradoIndebit === null ? 'nd' : gradoIndebit <= 1.0 ? 'verde' : gradoIndebit <= 2.0 ? 'giallo' : 'rosso',
+          gradoIndebit === null ? 'Non disponibile' : 'Bilancio',
+          gradoIndebit === null ? 'Dettaglio dei debiti finanziari non presente nel bilancio' : undefined),
       },
       redditivita: {
         roe: kpi('ROE', roe, fmtPct(roe),
@@ -300,11 +371,18 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
         utile_netto: kpi('Utile Netto (€)', d.utile_netto ?? d.utile_perdita_esercizio, fmtEur(d.utile_netto ?? d.utile_perdita_esercizio), (d.utile_netto ?? d.utile_perdita_esercizio) === null ? 'nd' : (d.utile_netto ?? d.utile_perdita_esercizio)! > 0 ? 'verde' : 'rosso'),
       },
       indebitamento: {
-        pfn: kpi('PFN (€)', pfn, fmtEur(pfn), pfn <= 0 ? 'verde' : pfn <= (pn ?? 0) ? 'giallo' : 'rosso'),
+        pfn: kpi('PFN (€)', pfn, fmtEur(pfn),
+          pfn === null ? 'nd' : pfn <= 0 ? 'verde' : pfn <= (pn ?? 0) ? 'giallo' : 'rosso',
+          pfn === null ? 'Non disponibile' : `${debtSource} + Bilancio`,
+          pfn === null ? 'Mancano debito finanziario attendibile o disponibilità liquide' : `Debito finanziario meno disponibilità liquide`),
         pfn_ebitda: kpi('PFN / EBITDA', pfnEbitda, pfnEbitda !== null ? pfnEbitda.toFixed(1) + 'x' : 'N/D',
-          pfnEbitda === null ? 'nd' : pfnEbitda <= 3 ? 'verde' : pfnEbitda <= 5 ? 'giallo' : 'rosso'),
+          pfnEbitda === null ? 'nd' : pfnEbitda <= 3 ? 'verde' : pfnEbitda <= 5 ? 'giallo' : 'rosso',
+          pfnEbitda === null ? 'Non disponibile' : `${debtSource} + Bilancio`,
+          pfnEbitda === null ? 'PFN o EBITDA non disponibili' : undefined),
         pfn_pn: kpi('PFN / PN', pfnPn, fmtRatio(pfnPn),
-          pfnPn === null ? 'nd' : pfnPn <= 1.0 ? 'verde' : pfnPn <= 2.0 ? 'giallo' : 'rosso'),
+          pfnPn === null ? 'nd' : pfnPn <= 1.0 ? 'verde' : pfnPn <= 2.0 ? 'giallo' : 'rosso',
+          pfnPn === null ? 'Non disponibile' : `${debtSource} + Bilancio`,
+          pfnPn === null ? 'PFN o patrimonio netto non disponibili' : undefined),
       },
       efficienza: {
         dso: kpi('DSO (giorni crediti)', dso, fmtGiorni(dso),
@@ -316,7 +394,11 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
         interest_coverage: kpi('Interest Coverage', intCov, fmtMult(intCov),
           intCov === null ? 'nd' : intCov >= 3 ? 'verde' : intCov >= 1.5 ? 'giallo' : 'rosso'),
         dscr: kpi(dscrLabel, dscr, fmtMult(dscr),
-          dscr === null ? 'nd' : dscr >= 1.25 ? 'verde' : dscr >= 1.0 ? 'giallo' : 'rosso'),
+          dscr === null ? 'nd' : dscr >= 1.25 ? 'verde' : dscr >= 1.0 ? 'giallo' : 'rosso',
+          dscr === null ? 'Non disponibile' : debtSource,
+          dscr === null
+            ? 'Rate mensili complete non disponibili; EBITDA/interessi resta classificato come Interest Coverage'
+            : `Servizio annuo del debito ${fmtEur(servizioDebitoAnnuo)}`),
       },
     },
   };
@@ -433,6 +515,7 @@ Deno.serve(async (req) => {
     risultato_ante_imposte: bilData.risultato_ante_imposte,
     imposte: bilData.imposte,
     utile_netto: bilData.utile_netto,
+    voci_mancanti: bilData.voci_mancanti,
     kpi,
     is_holding,
     formato_rilevato: bilData.formato_rilevato,

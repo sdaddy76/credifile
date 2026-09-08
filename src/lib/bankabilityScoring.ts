@@ -5,6 +5,8 @@ export interface KpiEntry {
   formatted: string;
   semaforo: string;
   label: string;
+  source?: string;
+  source_note?: string;
 }
 
 export type KpiResult = Record<string, Record<string, KpiEntry>>;
@@ -92,6 +94,8 @@ export function buildBankabilityAssessment(kpi: KpiResult): BankabilityAssessmen
       benchmark: config.ottimo,
       benchmark_formatted: String(config.ottimo),
       benchmark_key: config.benchmarkKey,
+      source: entry?.source,
+      source_note: entry?.source_note,
       inverso: config.inverso,
       peso: config.peso,
     };

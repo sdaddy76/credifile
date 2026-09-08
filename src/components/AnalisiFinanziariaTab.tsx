@@ -20,7 +20,14 @@ interface Props { practiceId: string }
 
 interface UploadedPdf { id: string; nome_file: string; storage_path: string; created_at: string }
 
-interface KpiEntry { valore: number | null; formatted: string; semaforo: 'verde' | 'giallo' | 'rosso' | 'nd'; label: string }
+interface KpiEntry {
+  valore: number | null;
+  formatted: string;
+  semaforo: 'verde' | 'giallo' | 'rosso' | 'nd';
+  label: string;
+  source?: string;
+  source_note?: string;
+}
 interface KpiResult {
   liquidita: Record<string, KpiEntry>;
   solidita: Record<string, KpiEntry>;
@@ -136,7 +143,8 @@ const KPI_DESC: Record<string, string> = {
   'DSI (giorni magazzino)':'Days Sales Inventory — rotazione del magazzino in giorni',
   'Interest Coverage':    'EBIT / Interessi Passivi — quante volte l\'azienda copre gli interessi (≥ 3×)',
   'DSCR (da finanziamenti)': 'EBITDA / Rata annua finanziamenti — copertura del servizio del debito (≥ 1,25)',
-  'DSCR (approx.)':       'EBITDA / Interessi passivi — proxy DSCR in assenza di dati finanziamenti (≥ 1,25)',
+  'DSCR':                 'EBITDA / servizio annuo del debito — N/D se le rate non sono disponibili',
+  'DSCR (da estratto conto)': 'EBITDA / rate annue ricorrenti riconosciute sui movimenti bancari (≥ 1,25)',
 };
 
 function fmt(n: number | null, isEur = false) {
@@ -1207,13 +1215,14 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     // Carica finanziamenti in essere dalla pratica
     const { data: finData } = await supabase
       .from('client_financing')
-      .select('rata, debito_residuo, durata_mesi, tipologia')
+      .select('rata, debito_residuo, durata_mesi, tipologia, fonte')
       .eq('practice_id', practiceId);
     const financing = (finData ?? []).map(f => ({
       rata: Number(f.rata) || 0,
       debito_residuo: Number(f.debito_residuo) || 0,
       durata_mesi: Number(f.durata_mesi) || 0,
       tipologia: f.tipologia ?? '',
+      fonte: f.fonte ?? '',
     }));
 
     const { data: result, error: fnErr } = await supabase.functions.invoke('analizza-bilancio', {
