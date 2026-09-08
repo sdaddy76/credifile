@@ -14,6 +14,16 @@ const QUESTION_IDS = [
   'visita_sede','visita_stato_immobile','visita_logistica','visita_disponibilita','pregressa_contatti','pregressa_erogati','foto_note',
 ];
 
+const NARRATIVE_IDS = [
+  '__company_situation',
+  '__growth_opportunities',
+  '__main_balance_items',
+  '__year_over_year_comment',
+  '__provisional_balance_comment',
+];
+
+const OUTPUT_IDS = [...QUESTION_IDS, ...NARRATIVE_IDS];
+
 type BodyInput = {
   practice_id?: string | null;
   consulente_mode?: boolean;
@@ -29,6 +39,8 @@ type BodyInput = {
   cr_testo?: string;
   reputazione_json?: string;
   visura_json?: string;
+  deterministic_analysis?: Record<string, string>;
+  kpi_comments?: Array<Record<string, unknown>>;
 };
 
 const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -55,11 +67,13 @@ function sectorFromAteco(ateco?: string | null) {
   return `macro-settore ATECO ${clean.slice(0, 2)}`;
 }
 
-function normalizeAnswers(raw: Record<string, unknown>) {
+function normalizeAnswers(raw: Record<string, unknown>, allowedIds = OUTPUT_IDS) {
   const answers: Record<string, string> = {};
-  for (const id of QUESTION_IDS) {
+  for (const id of allowedIds) {
     const v = raw?.[id];
-    answers[id] = typeof v === 'string' ? v.trim() : String(v ?? '').trim();
+    if (v === null || v === undefined) continue;
+    const normalized = typeof v === 'string' ? v.trim() : String(v).trim();
+    if (normalized) answers[id] = normalized;
   }
   return answers;
 }
@@ -78,11 +92,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const openaiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!openaiKey) {
-      return new Response(JSON.stringify({ error: 'OPENAI_API_KEY non configurata nei secrets Supabase' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
+    const groqKey = Deno.env.get('GROQ_API_KEY');
 
     const input = (await req.json()) as BodyInput;
     const supabase = createClient(
@@ -134,6 +144,11 @@ Deno.serve(async (req) => {
           .select('*')
           .eq('practice_id', input.practice_id)
           .limit(200)),
+        safeSelect('uploaded_documents', supabase
+          .from('uploaded_files')
+          .select('id,nome_file,created_at,practice_document_id,practice_documents(nome,tipo,status)')
+          .eq('practice_id', input.practice_id)
+          .order('created_at', { ascending: false })),
       ]);
 
       for (const item of results) {
@@ -173,10 +188,21 @@ Deno.serve(async (req) => {
     const durata = input.durata ?? practice?.durata ?? 'N/D';
     const finalita = input.finalita ?? practice?.finalita ?? practice?.descrizione_finalita ?? 'N/D';
 
+    const deterministicAnswers = normalizeAnswers(input.deterministic_analysis ?? {}, NARRATIVE_IDS);
+    if (deterministicAnswers.__company_situation || deterministicAnswers.__year_over_year_comment) {
+      deterministicAnswers.bilancio_analisi = [
+        deterministicAnswers.__company_situation,
+        deterministicAnswers.__year_over_year_comment,
+        deterministicAnswers.__provisional_balance_comment,
+      ].filter(Boolean).join('\n\n');
+    }
+
     const systemPrompt = `Sei un esperto analista creditizio italiano specializzato in relazioni commerciali bancarie.
 Compila la relazione commerciale per la società indicata usando i dati forniti.
 Scrivi in italiano professionale e formale, adatto a una richiesta di finanziamento bancario.
-Per le sezioni senza dati sufficienti scrivi una risposta professionale generica appropriata al settore.
+Non inventare informazioni e non sostituire mai con zero un dato assente.
+Quando i documenti non permettono una conclusione, scrivi esplicitamente "Non disponibile" o "Non verificabile" e indica quale informazione deve essere acquisita.
+Mantieni distinti i bilanci annuali dal bilancio provvisorio e non annualizzare dati infrannuali se il periodo non è indicato.
 Restituisci SOLO un oggetto JSON valido, senza markdown, senza backtick, senza testo aggiuntivo.`;
 
     const userPrompt = `Compila una relazione commerciale bancaria italiana per la società indicata.
@@ -196,6 +222,12 @@ ${clip(context, 12000)}
 KPI / ANALISI BILANCIO FORNITI DAL CLIENT
 ${clip(input.kpi_scores ?? ctx.bilanci_kpi ?? ctx.analisi_bilancio ?? ctx.bilanci_kpi_cliente ?? {}, 5000)}
 
+COMMENTI DETERMINISTICI DEGLI INDICI DI BILANCIO
+${clip(input.kpi_comments ?? [], 8000)}
+
+BASE DI ANALISI CALCOLATA DAL SISTEMA
+${clip(input.deterministic_analysis ?? {}, 9000)}
+
 FINANZIAMENTI / CENTRALE RISCHI
 ${clip(input.finanziamenti ?? ctx.client_financing ?? [], 5000)}
 
@@ -208,25 +240,42 @@ ${clip(input.bilancio_testo ?? '', 6000)}
 TESTO CENTRALE RISCHI / ESTRATTO CONTO
 ${clip({ cr_testo: input.cr_testo, estratto_conto_transactions: ctx.estratto_conto_transactions }, 6000)}
 
-Restituisci un JSON valido con una stringa professionale per ognuno di questi campi, senza chiavi aggiuntive e senza contenitore answers:
-${QUESTION_IDS.join(', ')}
+Restituisci un JSON valido con una stringa professionale dettagliata per ognuno di questi cinque campi, senza chiavi aggiuntive e senza contenitore answers:
+${NARRATIVE_IDS.join(', ')}
 
 Regole:
 - Non inventare nomi, percentuali, protesti, procedure o importi non presenti nei dati.
-- Se una sezione non ha dati puntuali, scrivi una risposta generica professionale appropriata al settore e indica cosa l'agente dovrebbe verificare.
+- Non creare frasi generiche per colmare dati mancanti: usa "Non disponibile" o "Non verificabile" e indica cosa l'agente dovrebbe verificare.
 - Per clienti, fornitori, export, import e concentrazioni, non creare valori numerici se assenti.
-- La sezione foto aziendale è opzionale: specifica che si usano solo foto fornite/scattate e non immagini da siti web.`;
+- __company_situation deve commentare redditività, equilibrio patrimoniale, liquidità e indebitamento sulla base dei dati documentati.
+- __growth_opportunities deve descrivere soltanto opportunità e leve supportate dall'andamento di ricavi, margini, capitale circolante e debito.
+- __main_balance_items deve commentare le principali voci di Stato patrimoniale e Conto economico, incluse materie, servizi, personale, crediti, rimanenze, liquidità, patrimonio e debiti quando disponibili.
+- __year_over_year_comment deve confrontare esplicitamente l'ultimo bilancio annuale con il precedente, riportando gli anni e distinguendo valori assenti da valori pari a zero.
+- __provisional_balance_comment deve commentare il bilancio provvisorio solo se identificabile dai documenti o dal file collegato al record; se è caricato ma non analizzato dichiararlo; se manca scrivere "Non disponibile".
+- I commenti degli indici sono già calcolati in modo deterministico: non alterare valori, benchmark, fonte o giudizio. La selezione finale degli indici da inviare alla banca è effettuata dall'agente nell'interfaccia.
+- Mantieni la risposta complessiva entro 900 token, privilegiando dati, variazioni e conclusioni verificabili.`;
 
-    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    if (!groqKey) {
+      return jsonResponse({
+        answers: deterministicAnswers,
+        source: 'deterministic_fallback',
+        warning: 'GROQ_API_KEY non configurata: applicata la base di analisi deterministica.',
+      });
+    }
+
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${openaiKey}`,
+        'Authorization': `Bearer ${groqKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'qwen/qwen3.6-27b',
         temperature: 0.3,
-        max_tokens: 4000,
+        max_tokens: 1000,
+        reasoning_effort: 'none',
+        reasoning_format: 'hidden',
+        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -236,7 +285,14 @@ Regole:
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return new Response(JSON.stringify({ error: `OpenAI errore ${resp.status}: ${errText}` }),
+      if (Object.keys(deterministicAnswers).length > 0) {
+        return jsonResponse({
+          answers: deterministicAnswers,
+          source: 'deterministic_fallback',
+          warning: `Servizio AI non disponibile (${resp.status}); mantenuta la base deterministica.`,
+        });
+      }
+      return new Response(JSON.stringify({ error: `Servizio AI errore ${resp.status}: ${errText}` }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -251,12 +307,16 @@ Regole:
       if (match) {
         answers = JSON.parse(match[0]);
       } else {
-        return new Response(JSON.stringify({ error: 'OpenAI non ha restituito JSON valido', raw: content.slice(0, 500) }),
+        return new Response(JSON.stringify({ error: 'Il servizio AI non ha restituito JSON valido', raw: content.slice(0, 500) }),
           { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
     }
 
-    return new Response(JSON.stringify({ answers: normalizeAnswers(answers) }),
+    const aiAnswers = normalizeAnswers(answers, NARRATIVE_IDS);
+    return new Response(JSON.stringify({
+      answers: { ...deterministicAnswers, ...aiAnswers },
+      source: 'groq',
+    }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e) {
     return jsonResponse({ error: String((e as Error)?.message ?? e) }, 500);

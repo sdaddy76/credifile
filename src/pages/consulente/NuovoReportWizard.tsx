@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { pdfTextItemsToLines } from '@/lib/pdfTextLines';
 import { buildKpiBenchmarkComparisons } from '@/lib/kpiBenchmarkComments';
+import { COMMERCIAL_REPORT_SECTIONS } from '@/lib/commercialReportAnalysis';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -217,10 +218,15 @@ export default function NuovoReportWizard() {
   const [relazioneAnswers, setRelazioneAnswers] = useState<RelazioneAnswers>({});
   const [relazionePdfBlob, setRelazionePdfBlob] = useState<Blob | null>(null);
   const [relazioneDocxBlob, setRelazioneDocxBlob] = useState<Blob | null>(null);
+  const [relazioneSelectedKpiKeys, setRelazioneSelectedKpiKeys] = useState<string[] | null>(null);
   const relazioneKpiComparisons = useMemo(
     () => buildKpiBenchmarkComparisons(kpiScores, benchmarkData?.kpi_data),
     [benchmarkData?.kpi_data, kpiScores],
   );
+  const selectedRelazioneKpiComparisons = useMemo(() => {
+    if (relazioneSelectedKpiKeys === null) return relazioneKpiComparisons;
+    return relazioneKpiComparisons.filter(comparison => relazioneSelectedKpiKeys.includes(comparison.key));
+  }, [relazioneKpiComparisons, relazioneSelectedKpiKeys]);
 
   // Carica info cliente
   const [client, setClient] = useState<{
@@ -592,6 +598,17 @@ export default function NuovoReportWizard() {
     setRelazioneDocxBlob(null);
   };
 
+  const toggleRelazioneKpi = (key: string, selected: boolean) => {
+    setRelazioneSelectedKpiKeys(current => {
+      const keys = current ?? relazioneKpiComparisons.map(comparison => comparison.key);
+      return selected
+        ? Array.from(new Set([...keys, key]))
+        : keys.filter(item => item !== key);
+    });
+    setRelazionePdfBlob(null);
+    setRelazioneDocxBlob(null);
+  };
+
   const generaRelazioneAI = async () => {
     setRelazioneLoading(true);
     try {
@@ -604,6 +621,15 @@ export default function NuovoReportWizard() {
           importo: undefined,
           finalita: undefined,
           kpi_scores: kpiScores,
+          kpi_comments: relazioneKpiComparisons.map(comparison => ({
+            key: comparison.key,
+            label: comparison.label,
+            value: comparison.valueFormatted,
+            benchmark: comparison.benchmarkFormatted,
+            judgement: comparison.judgement,
+            comment: comparison.comment,
+            source: comparison.source,
+          })),
           finanziamenti: finanziamenti.filter(f => f.istituto.trim() !== ''),
           bilancio_testo: bilancioTestoRelazione,
           cr_testo: crTestoRelazione,
@@ -628,8 +654,15 @@ export default function NuovoReportWizard() {
       new Paragraph({ text: 'RELAZIONE COMMERCIALE', heading: HeadingLevel.TITLE }),
       new Paragraph({ children: [new TextRun({ text: `${ragSociale || client?.ragione_sociale || 'Cliente'} — ${new Date().toLocaleDateString('it-IT')}`, italics: true })] }),
     ];
+    children.push(new Paragraph({ text: 'Analisi economico-finanziaria dettagliata', heading: HeadingLevel.HEADING_1 }));
+    COMMERCIAL_REPORT_SECTIONS.forEach(section => {
+      children.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_2 }));
+      children.push(new Paragraph({
+        children: [new TextRun(relazioneAnswers[section.key]?.trim() || 'Non disponibile.')],
+      }));
+    });
     children.push(new Paragraph({ text: 'Indicatori finanziari e confronto settoriale', heading: HeadingLevel.HEADING_1 }));
-    if (relazioneKpiComparisons.length > 0) {
+    if (selectedRelazioneKpiComparisons.length > 0) {
       children.push(new Paragraph({
         children: [new TextRun({
           text: `${benchmarkData?.settore_label ?? 'Settore N/D'} · benchmark aggiornati al ${
@@ -652,7 +685,7 @@ export default function NuovoReportWizard() {
               relazioneDocxCell('Giudizio', true),
             ],
           }),
-          ...relazioneKpiComparisons.flatMap(comparison => [
+          ...selectedRelazioneKpiComparisons.flatMap(comparison => [
             new TableRow({
               children: [
                 relazioneDocxCell(`${comparison.label} (${comparison.areaLabel})`, true),
@@ -669,7 +702,9 @@ export default function NuovoReportWizard() {
         ],
       }));
     } else {
-      children.push(new Paragraph('KPI non disponibili.'));
+      children.push(new Paragraph(relazioneKpiComparisons.length > 0
+        ? 'Nessun indicatore selezionato dal consulente per il documento.'
+        : 'KPI non disponibili.'));
     }
     RELAZIONE_SEZIONI.forEach(section => {
       children.push(new Paragraph({ text: section.titolo, heading: HeadingLevel.HEADING_1 }));
@@ -695,8 +730,13 @@ export default function NuovoReportWizard() {
     };
     addText('RELAZIONE COMMERCIALE', 17, true);
     addText(`${ragSociale || client?.ragione_sociale || 'Cliente'} — ${new Date().toLocaleDateString('it-IT')}`, 10);
+    addText('Analisi economico-finanziaria dettagliata', 14, true);
+    COMMERCIAL_REPORT_SECTIONS.forEach(section => {
+      addText(section.title, 11, true);
+      addText(relazioneAnswers[section.key]?.trim() || 'Non disponibile.', 10);
+    });
     addText('Indicatori finanziari e confronto settoriale', 14, true);
-    if (relazioneKpiComparisons.length > 0) {
+    if (selectedRelazioneKpiComparisons.length > 0) {
       addText(
         `${benchmarkData?.settore_label ?? 'Settore N/D'} · benchmark aggiornati al ${
           benchmarkData?.aggiornato_il
@@ -708,7 +748,7 @@ export default function NuovoReportWizard() {
       autoTable(doc, {
         startY: y,
         head: [['Indicatore', 'Azienda', 'Benchmark', 'Scostamento', 'Giudizio', 'Commento']],
-        body: relazioneKpiComparisons.map(comparison => [
+        body: selectedRelazioneKpiComparisons.map(comparison => [
           comparison.label,
           comparison.valueFormatted,
           comparison.benchmarkFormatted,
@@ -730,7 +770,9 @@ export default function NuovoReportWizard() {
       });
       y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
     } else {
-      addText('KPI non disponibili.', 10);
+      addText(relazioneKpiComparisons.length > 0
+        ? 'Nessun indicatore selezionato dal consulente per il documento.'
+        : 'KPI non disponibili.', 10);
     }
     RELAZIONE_SEZIONI.forEach(section => {
       addText(section.titolo, 14, true);
@@ -751,7 +793,10 @@ export default function NuovoReportWizard() {
       await supabase.from('relazioni_commerciali').insert({
         consulente_report_id: reportId,
         status: 'generata',
-        risposte: relazioneAnswers,
+        risposte: {
+          ...relazioneAnswers,
+          __selected_kpi_keys: selectedRelazioneKpiComparisons.map(comparison => comparison.key),
+        },
       });
     }
     toast.success('Relazione pronta per il download');
@@ -1263,20 +1308,44 @@ export default function NuovoReportWizard() {
             </div>
             {relazioneKpiComparisons.length > 0 && (
               <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-4">
-                <p className="text-sm font-bold text-teal-900">Indicatori inclusi nella relazione</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-teal-900">Indicatori da includere nella relazione</p>
+                  <span className="rounded-full border border-teal-200 bg-white px-2 py-1 text-[11px] font-semibold text-teal-800">
+                    {selectedRelazioneKpiComparisons.length}/{relazioneKpiComparisons.length} selezionati
+                  </span>
+                </div>
                 <p className="mt-1 text-xs text-teal-800">
-                  {relazioneKpiComparisons.length} KPI commentati con confronto rispetto a {benchmarkData?.settore_label ?? 'benchmark settore'}.
+                  Tutti i KPI hanno un commento positivo o negativo; il consulente sceglie quali inserire nel PDF e nel DOCX.
                 </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setRelazioneSelectedKpiKeys(relazioneKpiComparisons.map(comparison => comparison.key))}>
+                    Seleziona tutti
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setRelazioneSelectedKpiKeys([])}>
+                    Deseleziona tutti
+                  </Button>
+                </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {relazioneKpiComparisons.map(comparison => (
                     <div key={comparison.key} className="rounded-lg border border-teal-100 bg-white px-3 py-2 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold text-slate-800">{comparison.label}</span>
-                        <span className="font-bold text-teal-700">{comparison.judgement}</span>
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-teal-700"
+                          checked={selectedRelazioneKpiComparisons.some(item => item.key === comparison.key)}
+                          onChange={event => toggleRelazioneKpi(comparison.key, event.target.checked)}
+                          aria-label={`Includi ${comparison.label} nella relazione`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-800">{comparison.label}</span>
+                            <span className="font-bold text-teal-700">{comparison.judgement}</span>
+                          </div>
+                          <p className="mt-1 text-slate-500">
+                            Azienda {comparison.valueFormatted} · settore {comparison.benchmarkFormatted}
+                          </p>
+                        </div>
                       </div>
-                      <p className="mt-1 text-slate-500">
-                        Azienda {comparison.valueFormatted} · settore {comparison.benchmarkFormatted}
-                      </p>
                     </div>
                   ))}
                 </div>
@@ -1293,6 +1362,22 @@ export default function NuovoReportWizard() {
             ) : (
               <div className="space-y-4">
                 <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                  <details className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3" open>
+                    <summary className="cursor-pointer text-sm font-bold text-indigo-950">Analisi economico-finanziaria dettagliata</summary>
+                    <div className="mt-3 space-y-3">
+                      {COMMERCIAL_REPORT_SECTIONS.map(section => (
+                        <div key={section.key}>
+                          <label className="text-xs font-semibold text-slate-700">{section.title}</label>
+                          <p className="mb-1 text-[11px] text-slate-500">{section.description}</p>
+                          <textarea
+                            className="min-h-[110px] w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                            value={relazioneAnswers[section.key] ?? ''}
+                            onChange={event => updateRelazioneAnswer(section.key, event.target.value)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                   {RELAZIONE_SEZIONI.map(section => (
                     <details key={section.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3" open={section.id === 'presentazione_azienda'}>
                       <summary className="cursor-pointer text-sm font-bold text-slate-800">{section.titolo}</summary>

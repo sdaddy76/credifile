@@ -30,6 +30,11 @@ import {
   type KpiBenchmarkTone,
 } from '@/lib/kpiBenchmarkComments';
 import { enrichCommercialKpis } from '@/lib/commercialKpiEnrichment';
+import {
+  buildCommercialReportAnalysis,
+  COMMERCIAL_REPORT_SECTIONS,
+  type CommercialBalanceRecord,
+} from '@/lib/commercialReportAnalysis';
 
 /* @section: relazione-commerciale-types */
 type Domanda = {
@@ -60,7 +65,7 @@ type RelazioneCommerciale = {
   template_id: string | null;
   bank_id: string | null;
   status: 'bozza' | 'completata' | 'generata' | string;
-  risposte: Record<string, string | null>;
+  risposte: Record<string, string | string[] | null>;
   docx_url: string | null;
   pdf_url: string | null;
   created_at: string;
@@ -94,6 +99,7 @@ type Props = {
 };
 
 const NA_VALUE = '__na__';
+const SELECTED_KPI_KEYS = '__selected_kpi_keys';
 
 /* @section: relazione-commerciale-helpers */
 const formatEuro = (value?: number | null) => {
@@ -154,7 +160,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const [relazioni, setRelazioni] = useState<RelazioneCommerciale[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [activeRelazioneId, setActiveRelazioneId] = useState<string | null>(null);
-  const [answers, setAnswers] = useState<Record<string, string | null>>({});
+  const [answers, setAnswers] = useState<Record<string, string | string[] | null>>({});
   const [autoData, setAutoData] = useState<AutoData>({ ragione_sociale: '', cf: '', piva: '', ateco: '', indirizzo: '', importo: null });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -162,6 +168,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const [compilingAi, setCompilingAi] = useState(false);
   const [kpiScores, setKpiScores] = useState<KpiScore[]>([]);
   const [benchmarkInfo, setBenchmarkInfo] = useState<BenchmarkInfo | null>(null);
+  const [balanceRecords, setBalanceRecords] = useState<CommercialBalanceRecord[]>([]);
+  const [provisionalFileIds, setProvisionalFileIds] = useState<string[]>([]);
+  const [hasProvisionalDocument, setHasProvisionalDocument] = useState(false);
 
   const activeRelazione = useMemo(
     () => relazioni.find(r => r.id === activeRelazioneId) ?? relazioni[0] ?? null,
@@ -172,6 +181,23 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const kpiComparisons = useMemo(
     () => buildKpiBenchmarkComparisons(kpiScores, benchmarkInfo?.kpiData),
     [benchmarkInfo?.kpiData, kpiScores]
+  );
+  const selectedKpiKeys = useMemo(() => {
+    const saved = answers[SELECTED_KPI_KEYS];
+    if (Array.isArray(saved)) return saved.filter(key => kpiComparisons.some(item => item.key === key));
+    return kpiComparisons.map(item => item.key);
+  }, [answers, kpiComparisons]);
+  const selectedKpiComparisons = useMemo(
+    () => kpiComparisons.filter(comparison => selectedKpiKeys.includes(comparison.key)),
+    [kpiComparisons, selectedKpiKeys],
+  );
+  const commercialAnalysis = useMemo(
+    () => buildCommercialReportAnalysis({
+      balances: balanceRecords,
+      provisionalFileIds,
+      hasProvisionalDocument,
+    }),
+    [balanceRecords, hasProvisionalDocument, provisionalFileIds],
   );
 
   useEffect(() => {
@@ -192,9 +218,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         { data: rel, error: relErr },
         { data: client },
         { data: practice },
-        { data: latestBilancio },
+        { data: bilanci },
         { data: financing },
         { data: transactions },
+        { data: uploadedDocuments },
       ] = await Promise.all([
         supabase.from('relazione_templates').select('*').eq('attivo', true).order('nome'),
         supabase.from('relazioni_commerciali').select('*, relazione_templates(*)').eq('practice_id', practiceId).order('updated_at', { ascending: false }),
@@ -202,11 +229,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         supabase.from('practices').select('importo_richiesto').eq('id', practiceId).maybeSingle(),
         supabase
           .from('bilanci_kpi')
-          .select('anno_esercizio,kpi,totale_attivo,totale_patrimonio_netto,totale_valore_produzione,totale_costi_produzione,ricavi_vendite,differenza_ab,risultato_ante_imposte,interessi_passivi,proventi_partecipazioni,ammortamenti,disponibilita_liquide,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori,voci_mancanti')
+          .select('id,uploaded_file_id,anno_esercizio,created_at,kpi,totale_attivo,totale_immobilizzazioni,totale_attivo_circolante,rimanenze,crediti_circolante,totale_patrimonio_netto,capitale_sociale,totale_valore_produzione,totale_costi_produzione,ricavi_vendite,costi_materie,costi_servizi,costo_personale,differenza_ab,risultato_ante_imposte,interessi_passivi,proventi_partecipazioni,ammortamenti,utile_netto,utile_perdita_esercizio,disponibilita_liquide,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori,debiti_fornitori,debiti_tributari,totale_debiti,imposte,voci_mancanti')
           .eq('practice_id', practiceId)
           .order('anno_esercizio', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+          .limit(5),
         supabase
           .from('client_financing')
           .select('debito_residuo,rata,fonte')
@@ -214,6 +240,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         supabase
           .from('estratto_conto_transactions')
           .select('data_valuta,data_contabile,importo,tipo,categoria,descrizione,beneficiario_ordinante,saldo_progressivo,classification_confidence,parse_confidence')
+          .eq('practice_id', practiceId),
+        supabase
+          .from('uploaded_files')
+          .select('id,nome_file,practice_document_id,practice_documents(nome,tipo,status)')
           .eq('practice_id', practiceId),
       ]);
       if (tplErr) throw tplErr;
@@ -228,6 +258,25 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       setActiveRelazioneId(prev => prev ?? normalizedRel[0]?.id ?? null);
       const c: any = client ?? {};
       const p: any = practice ?? {};
+      const balances = (bilanci ?? []) as CommercialBalanceRecord[];
+      const provisionalIds = ((uploadedDocuments ?? []) as any[])
+        .filter(file => {
+          const linked = Array.isArray(file.practice_documents)
+            ? file.practice_documents[0]
+            : file.practice_documents;
+          return /provvisor/i.test(`${file.nome_file ?? ''} ${linked?.nome ?? ''}`);
+        })
+        .map(file => String(file.id));
+      const provisionalDocumentPresent = provisionalIds.length > 0;
+      const resolvedAnalysis = buildCommercialReportAnalysis({
+        balances,
+        provisionalFileIds: provisionalIds,
+        hasProvisionalDocument: provisionalDocumentPresent,
+      });
+      const latestBilancio = resolvedAnalysis.latestAnnual ?? balances[0] ?? null;
+      setBalanceRecords(balances);
+      setProvisionalFileIds(provisionalIds);
+      setHasProvisionalDocument(provisionalDocumentPresent);
       const enriched = enrichCommercialKpis(
         latestBilancio as Parameters<typeof enrichCommercialKpis>[0],
         financing ?? [],
@@ -291,7 +340,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     }
   };
 
-  const saveDraftWithAnswers = async (answersToSave: Record<string, string | null>, silent = true) => {
+  const saveDraftWithAnswers = async (answersToSave: Record<string, string | string[] | null>, silent = true) => {
     if (!activeRelazione) return;
     const updatedAt = new Date().toISOString();
     try {
@@ -329,18 +378,65 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
 
   const setAnswer = (id: string, value: string | null) => setAnswers(prev => ({ ...prev, [id]: value }));
 
+  const setKpiSelected = (key: string, selected: boolean) => {
+    setAnswers(prev => {
+      const current = Array.isArray(prev[SELECTED_KPI_KEYS])
+        ? prev[SELECTED_KPI_KEYS] as string[]
+        : kpiComparisons.map(item => item.key);
+      const next = selected
+        ? Array.from(new Set([...current, key]))
+        : current.filter(item => item !== key);
+      return { ...prev, [SELECTED_KPI_KEYS]: next };
+    });
+  };
+
+  const setAllKpisSelected = (selected: boolean) => {
+    setAnswers(prev => ({
+      ...prev,
+      [SELECTED_KPI_KEYS]: selected ? kpiComparisons.map(item => item.key) : [],
+    }));
+  };
+
+  const getSelectedComparisons = (answersSnapshot = answers) => {
+    const saved = answersSnapshot[SELECTED_KPI_KEYS];
+    if (!Array.isArray(saved)) return kpiComparisons;
+    return kpiComparisons.filter(comparison => saved.includes(comparison.key));
+  };
+
+  const getNarrativeValue = (
+    key: typeof COMMERCIAL_REPORT_SECTIONS[number]['key'],
+    answersSnapshot = answers,
+  ) => {
+    const saved = answersSnapshot[key];
+    return typeof saved === 'string' && saved.trim()
+      ? saved.trim()
+      : commercialAnalysis.sections[key];
+  };
+
   const compilaConAI = async () => {
     if (!activeRelazione || !activeTemplate) return toast.error('Crea o seleziona una relazione prima di usare l’AI');
     setCompilingAi(true);
     try {
       const { data, error } = await supabase.functions.invoke('genera-relazione-ai', {
-        body: { practice_id: practiceId }
+        body: {
+          practice_id: practiceId,
+          deterministic_analysis: commercialAnalysis.sections,
+          kpi_comments: kpiComparisons.map(comparison => ({
+            key: comparison.key,
+            label: comparison.label,
+            value: comparison.valueFormatted,
+            benchmark: comparison.benchmarkFormatted,
+            judgement: comparison.judgement,
+            comment: comparison.comment,
+            source: comparison.source,
+          })),
+        }
       });
       if (error) throw error;
       if (data?.answers && typeof data.answers === 'object') {
         console.log('[AI] answers ricevute:', Object.keys(data.answers).length, 'campi');
         console.log('[AI] primo campo:', Object.entries(data.answers)[0]);
-        const normalizedAnswers = Object.entries(data.answers).reduce<Record<string, string | null>>((acc, [key, value]) => {
+        const normalizedAnswers = Object.entries(data.answers).reduce<Record<string, string | string[] | null>>((acc, [key, value]) => {
           if (value === null || value === undefined) {
             acc[key] = null;
           } else if (typeof value === 'string') {
@@ -389,6 +485,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
 
   /* @section: relazione-commerciale-documents */
   const buildDocChildren = (template: RelazioneTemplate, answersSnapshot = answers) => {
+    const comparisonsToExport = getSelectedComparisons(answersSnapshot);
     const rows = [
       ['Richiedente', autoData.ragione_sociale || 'N/D'],
       ['CF/PIVA', `${autoData.cf || 'N/D'} / ${autoData.piva || 'N/D'}`],
@@ -404,8 +501,14 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: rows.map(([k, v]) => new TableRow({ children: [cell(k, true), cell(v)] })) }),
     ];
 
+    children.push(new Paragraph({ text: 'Analisi economico-finanziaria dettagliata', heading: HeadingLevel.HEADING_1 }));
+    COMMERCIAL_REPORT_SECTIONS.forEach(section => {
+      children.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_2 }));
+      children.push(new Paragraph({ children: [new TextRun(getNarrativeValue(section.key, answersSnapshot))] }));
+    });
+
     children.push(new Paragraph({ text: 'Indicatori finanziari e confronto settoriale', heading: HeadingLevel.HEADING_1 }));
-    if (kpiComparisons.length > 0) {
+    if (comparisonsToExport.length > 0) {
       children.push(new Paragraph({
         children: [new TextRun({ text: benchmarkSourceLabel(benchmarkInfo), italics: true })],
       }));
@@ -421,7 +524,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
               cell('Giudizio', true),
             ],
           }),
-          ...kpiComparisons.flatMap(comparison => [
+          ...comparisonsToExport.flatMap(comparison => [
             new TableRow({
               children: [
                 cell(`${comparison.label} (${comparison.areaLabel})`, true),
@@ -437,7 +540,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       }));
     } else {
       children.push(new Paragraph({
-        children: [new TextRun('KPI non disponibili. Analizzare il bilancio prima di generare la relazione commerciale.')],
+        children: [new TextRun(kpiComparisons.length > 0
+          ? 'Nessun indicatore selezionato dall’agente per il documento destinato alla banca.'
+          : 'KPI non disponibili. Analizzare il bilancio prima di generare la relazione commerciale.')],
       }));
     }
 
@@ -455,6 +560,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   };
 
   const generatePdfBlob = (template: RelazioneTemplate, answersSnapshot = answers) => {
+    const comparisonsToExport = getSelectedComparisons(answersSnapshot);
     const doc = new jsPDF();
     const header = `${autoData.ragione_sociale || 'N/D'} — ${template.nome}`;
     let y = 18;
@@ -486,13 +592,19 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     addText(`Sede Legale: ${autoData.indirizzo || 'N/D'}`);
     addText(`Importo Richiesto: ${formatEuro(autoData.importo)}`);
 
+    addText('Analisi economico-finanziaria dettagliata', 14, true);
+    COMMERCIAL_REPORT_SECTIONS.forEach(section => {
+      addText(section.title, 12, true);
+      addText(getNarrativeValue(section.key, answersSnapshot), 10);
+    });
+
     addText('Indicatori finanziari e confronto settoriale', 14, true);
-    if (kpiComparisons.length > 0) {
+    if (comparisonsToExport.length > 0) {
       addText(benchmarkSourceLabel(benchmarkInfo), 8);
       autoTable(doc, {
         startY: y,
         head: [['Indicatore', 'Area', 'Azienda', 'Benchmark', 'Scostamento', 'Giudizio', 'Commento']],
-        body: kpiComparisons.map(comparison => [
+        body: comparisonsToExport.map(comparison => [
           comparison.label,
           comparison.areaLabel,
           `${comparison.valueFormatted}\nFonte: ${comparison.source}`,
@@ -515,7 +627,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         },
         didParseCell(data) {
           if (data.section !== 'body' || data.column.index !== 5) return;
-          const comparison = kpiComparisons[data.row.index];
+          const comparison = comparisonsToExport[data.row.index];
           if (!comparison) return;
           if (comparison.tone === 'positive') {
             data.cell.styles.fillColor = [220, 252, 231];
@@ -537,7 +649,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       });
       y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
     } else {
-      addText('KPI non disponibili. Analizzare il bilancio prima di generare la relazione commerciale.', 10);
+      addText(kpiComparisons.length > 0
+        ? 'Nessun indicatore selezionato dall’agente per il documento destinato alla banca.'
+        : 'KPI non disponibili. Analizzare il bilancio prima di generare la relazione commerciale.', 10);
     }
 
     template.sezioni.forEach(section => {
@@ -698,6 +812,39 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                 </div>
 
                 <div className="mb-4 rounded-lg border bg-white">
+                  <div className="border-b bg-indigo-50/70 p-4">
+                    <div className="text-sm font-semibold text-indigo-950">Analisi economico-finanziaria dettagliata</div>
+                    <p className="mt-1 text-xs text-indigo-800">
+                      Il sistema propone una base verificabile ricavata dai bilanci analizzati. L’agente può integrare o correggere ogni commento prima della generazione.
+                    </p>
+                  </div>
+                  <div className="space-y-4 p-4">
+                    {COMMERCIAL_REPORT_SECTIONS.map(section => {
+                      const savedValue = answers[section.key];
+                      const displayedValue = typeof savedValue === 'string' && savedValue.trim()
+                        ? savedValue
+                        : commercialAnalysis.sections[section.key];
+                      return (
+                        <div key={section.key} className="space-y-2">
+                          <div>
+                            <Label htmlFor={section.key} className="text-sm font-semibold">{section.title}</Label>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{section.description}</p>
+                          </div>
+                          <Textarea
+                            id={section.key}
+                            rows={6}
+                            disabled={!canEdit}
+                            value={displayedValue}
+                            onChange={event => setAnswer(section.key, event.target.value)}
+                            className="min-h-[130px] resize-y"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mb-4 rounded-lg border bg-white">
                   <div className="flex flex-col gap-2 border-b bg-teal-50/70 p-4 md:flex-row md:items-start md:justify-between">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold text-teal-900">
@@ -705,49 +852,72 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                         Indicatori finanziari e confronto settoriale
                       </div>
                       <p className="mt-1 text-xs text-teal-800">
-                        Ogni commento considera il valore aziendale, il benchmark e la direzione economica corretta dell’indicatore.
+                        Ogni indice, positivo o negativo, dispone di un commento completo. Seleziona quelli da inserire nel documento destinato alla banca.
                       </p>
                     </div>
-                    {benchmarkInfo && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {benchmarkInfo && (
+                        <Badge variant="outline" className="w-fit border-teal-200 bg-white text-teal-800">
+                          {benchmarkInfo.settoreLabel}
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="w-fit border-teal-200 bg-white text-teal-800">
-                        {benchmarkInfo.settoreLabel}
+                        {selectedKpiComparisons.length}/{kpiComparisons.length} selezionati
                       </Badge>
-                    )}
+                    </div>
                   </div>
                   {kpiComparisons.length > 0 ? (
-                    <div className="divide-y">
-                      {kpiComparisons.map((comparison: KpiBenchmarkComparison) => (
-                        <div key={comparison.key} className="p-4">
-                          <div className="grid gap-3 lg:grid-cols-[minmax(150px,1.1fr)_repeat(3,minmax(90px,0.6fr))_auto] lg:items-center">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">{comparison.label}</p>
-                              <p className="text-[11px] text-muted-foreground">{comparison.areaLabel}</p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Azienda</p>
-                              <p className="text-sm font-bold tabular-nums">{comparison.valueFormatted}</p>
-                              <p className="mt-0.5 text-[10px] text-muted-foreground">Fonte: {comparison.source}</p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Benchmark</p>
-                              <p className="text-sm font-medium tabular-nums">{comparison.benchmarkFormatted}</p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Scostamento</p>
-                              <p className="text-sm font-medium tabular-nums">
-                                {comparison.deltaFormatted}
-                                <span className="ml-1 text-xs text-muted-foreground">({comparison.deltaPercentFormatted})</span>
-                              </p>
-                            </div>
-                            <Badge className={toneClassName[comparison.tone]}>{comparison.judgement}</Badge>
-                          </div>
-                          <p className="mt-3 text-xs leading-relaxed text-slate-600">{comparison.comment}</p>
-                          {comparison.score !== null && (
-                            <p className="mt-1 text-[10px] text-muted-foreground">Score interno di bancabilità: {comparison.score}/100</p>
-                          )}
+                    <>
+                      {canEdit && (
+                        <div className="flex flex-wrap gap-2 border-b bg-white p-3">
+                          <Button type="button" size="sm" variant="outline" onClick={() => setAllKpisSelected(true)}>
+                            Seleziona tutti
+                          </Button>
+                          <Button type="button" size="sm" variant="outline" onClick={() => setAllKpisSelected(false)}>
+                            Deseleziona tutti
+                          </Button>
                         </div>
-                      ))}
-                    </div>
+                      )}
+                      <div className="divide-y">
+                        {kpiComparisons.map((comparison: KpiBenchmarkComparison) => (
+                          <div key={comparison.key} className="p-4">
+                            <div className="grid gap-3 lg:grid-cols-[auto_minmax(150px,1.1fr)_repeat(3,minmax(90px,0.6fr))_auto] lg:items-center">
+                              <Checkbox
+                                checked={selectedKpiKeys.includes(comparison.key)}
+                                disabled={!canEdit}
+                                onCheckedChange={checked => setKpiSelected(comparison.key, checked === true)}
+                                aria-label={`Includi ${comparison.label} nel documento`}
+                              />
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">{comparison.label}</p>
+                                <p className="text-[11px] text-muted-foreground">{comparison.areaLabel}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">Azienda</p>
+                                <p className="text-sm font-bold tabular-nums">{comparison.valueFormatted}</p>
+                                <p className="mt-0.5 text-[10px] text-muted-foreground">Fonte: {comparison.source}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">Benchmark</p>
+                                <p className="text-sm font-medium tabular-nums">{comparison.benchmarkFormatted}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">Scostamento</p>
+                                <p className="text-sm font-medium tabular-nums">
+                                  {comparison.deltaFormatted}
+                                  <span className="ml-1 text-xs text-muted-foreground">({comparison.deltaPercentFormatted})</span>
+                                </p>
+                              </div>
+                              <Badge className={toneClassName[comparison.tone]}>{comparison.judgement}</Badge>
+                            </div>
+                            <p className="mt-3 text-xs leading-relaxed text-slate-600">{comparison.comment}</p>
+                            {comparison.score !== null && (
+                              <p className="mt-1 text-[10px] text-muted-foreground">Score interno di bancabilità: {comparison.score}/100</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   ) : (
                     <div className="p-4 text-sm text-muted-foreground">
                       KPI non disponibili. Analizza il bilancio nella scheda “Analisi Finanziaria” per attivare il confronto.
@@ -769,6 +939,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                         <div className="space-y-4 pt-2">
                           {section.domande.map(question => {
                             const isNa = answers[question.id] === NA_VALUE;
+                            const answerValue = typeof answers[question.id] === 'string' ? answers[question.id] as string : '';
                             return (
                               <div key={question.id} className="rounded-lg border p-3 space-y-2">
                                 <div className="flex items-start justify-between gap-3">
@@ -781,9 +952,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                                   </label>
                                 </div>
                                 {question.tipo === 'textarea' ? (
-                                  <Textarea id={question.id} rows={5} disabled={!canEdit || isNa} value={isNa ? '' : (answers[question.id] ?? '')} onChange={e => setAnswer(question.id, e.target.value)} placeholder={isNa ? 'Domanda esclusa dalla relazione' : 'Inserisci risposta...'} className="resize-y min-h-[100px]" />
+                                  <Textarea id={question.id} rows={5} disabled={!canEdit || isNa} value={isNa ? '' : answerValue} onChange={e => setAnswer(question.id, e.target.value)} placeholder={isNa ? 'Domanda esclusa dalla relazione' : 'Inserisci risposta...'} className="resize-y min-h-[100px]" />
                                 ) : (
-                                  <Input id={question.id} type={question.tipo === 'number' ? 'number' : 'text'} disabled={!canEdit || isNa} value={isNa ? '' : (answers[question.id] ?? '')} onChange={e => setAnswer(question.id, e.target.value)} placeholder={isNa ? 'Domanda esclusa dalla relazione' : 'Inserisci risposta...'} />
+                                  <Input id={question.id} type={question.tipo === 'number' ? 'number' : 'text'} disabled={!canEdit || isNa} value={isNa ? '' : answerValue} onChange={e => setAnswer(question.id, e.target.value)} placeholder={isNa ? 'Domanda esclusa dalla relazione' : 'Inserisci risposta...'} />
                                 )}
                               </div>
                             );
