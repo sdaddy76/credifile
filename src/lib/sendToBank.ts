@@ -1,3 +1,5 @@
+import { supabase } from '@/lib/supabase';
+
 /**
  * Chiama la Vercel serverless function /api/send-to-bank
  * (sostituisce supabase.functions.invoke('send-to-bank') — BOOT_ERROR su questo progetto)
