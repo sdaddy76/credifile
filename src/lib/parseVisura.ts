@@ -105,14 +105,45 @@ export function parseSoci(raw: string): SocioResult[] {
     .replace(/\n{3,}/g, '\n')
     .trim();
   const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*(?:Amministrat|Organ|Organi)|organi\s+sociali|organi\s+amministrativi|rappresentanza|persone\s+che\s+esercitano|cariche\s+sociali)/i;
-  const s4 = isolaSezione(normalized, [
-    /composizione\s+societaria/i,
-    /compagine\s+societaria/i,
-    /assetto\s+proprietario/i,
-    /elenco\s+soci/i,
-    /soci\s+e\s+titolari/i,
-    /titolari\s+(?:di\s+)?(?:quote|diritti)/i,
-  ], END_S5)
+  const sectionStarts = [
+    /(?:^|\n)\s*(?:sezione\s+)?(?:IV|4)[\s.\-)]*soci\s+e\s+titolari/gi,
+    /(?:^|\n)\s*elenco\s+dei\s+soci\s+e\s+degli\s+altri\s+titolari/gi,
+    /(?:^|\n)\s*sintesi\s+della\s+composizione\s+societaria/gi,
+    /(?:^|\n)\s*composizione\s+societaria/gi,
+    /(?:^|\n)\s*compagine\s+societaria/gi,
+    /(?:^|\n)\s*assetto\s+proprietario/gi,
+  ];
+  const startIndexes = new Set<number>();
+  for (const pattern of sectionStarts) {
+    for (const match of normalized.matchAll(pattern)) {
+      startIndexes.add((match.index ?? 0) + (match[0].startsWith('\n') ? 1 : 0));
+    }
+  }
+  const scoredSections = [...startIndexes].map(startIndex => {
+    const tail = normalized.substring(startIndex);
+    const endIndex = tail.search(END_S5);
+    const section = endIndex > 0 ? tail.substring(0, endIndex) : tail;
+    const personalIds = section.match(/\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/gi)?.length ?? 0;
+    const companyIds = section.match(/\b\d{11}\b/g)?.length ?? 0;
+    const percentages = section.match(/\d{1,3}(?:[.,]\d+)?\s*%/g)?.length ?? 0;
+    const ownershipLabels = section.match(/(?:codice\s+fiscale|quota\s+di\s+nominali|tipo\s+di\s+diritto|propriet[aà]|usufrutto)/gi)?.length ?? 0;
+    const indexPenalty = /\.{5,}\s*\d+\s*$/m.test(section) && personalIds + companyIds === 0 ? 30 : 0;
+    return {
+      section,
+      score: personalIds * 20 + companyIds * 15 + percentages * 8 + ownershipLabels * 3 - indexPenalty,
+    };
+  });
+  scoredSections.sort((a, b) => b.score - a.score || b.section.length - a.section.length);
+
+  const s4 = (scoredSections[0]?.score > 0 ? scoredSections[0].section : '')
+    || isolaSezione(normalized, [
+      /composizione\s+societaria/i,
+      /compagine\s+societaria/i,
+      /assetto\s+proprietario/i,
+      /elenco\s+soci/i,
+      /soci\s+e\s+titolari/i,
+      /titolari\s+(?:di\s+)?(?:quote|diritti)/i,
+    ], END_S5)
     || isolaSezione(normalized, [
       /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|quote\s+sociali|partecipazioni\s+sociali)/i,
     ], END_S5)
@@ -127,7 +158,8 @@ export function parseSoci(raw: string): SocioResult[] {
     'COGNOME', 'VALORE', 'PERCENTUALE', 'TIPO', 'DIRITTI', 'SEZIONE',
     'CAPITALE', 'NATO', 'NATA', 'RESIDENTE', 'DOMICILIO', 'AMMINISTRATORE',
     'PRESIDENTE', 'CONSIGLIERE', 'RAPPRESENTANTE', 'CARICA', 'E',
-    'COMPOSIZIONE', 'SOCIETARIA', 'EUR', 'EURO',
+    'COMPOSIZIONE', 'SOCIETARIA', 'EUR', 'EURO', 'PROPRIETA', 'PROPRIETÀ',
+    'USUFRUTTO', 'DIRITTO', 'NUDA',
   ]);
   const CF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gi;
   const PIVA_RE = /\b(\d{11})\b/g;
@@ -135,7 +167,7 @@ export function parseSoci(raw: string): SocioResult[] {
   const PCT_RE = /(\d{1,3}(?:[.,]\d{1,4})?)\s*%/i;
   const normalizeKey = (value: string) => value.toUpperCase().replace(/[^A-Z0-9ÀÈÉÌÒÙ]/g, '');
   const cleanName = (value: string): string => value
-    .replace(/\b(?:CODICE|FISCALE|CF|P\.?\s*IVA|NOME|COGNOME|SOCIO|SOCI|TITOLARE|TITOLARI|QUOTA|QUOTE|VALORE|PERCENTUALE|DIRITTI)\b/gi, ' ')
+    .replace(/\b(?:CODICE|FISCALE|CF|P\.?\s*IVA|NOME|COGNOME|SOCIO|SOCI|TITOLARE|TITOLARI|QUOTA|QUOTE|VALORE|PERCENTUALE|DIRITTO|DIRITTI|PROPRIET[AÀ]|USUFRUTTO|NUDA)\b/gi, ' ')
     .replace(/\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/gi, ' ')
     .replace(/\b\d{11}\b/g, ' ')
     .replace(/\b\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?\b/g, ' ')
@@ -174,7 +206,16 @@ export function parseSoci(raw: string): SocioResult[] {
       // la versione con più dati invece di creare un doppione.
       if (!results[existing].valore && valore) results[existing].valore = valore;
       if (!results[existing].percentuale && percentuale) results[existing].percentuale = percentuale;
-      if (results[existing].nome.length < clean.length) results[existing].nome = clean;
+      const previousKey = normalizeKey(results[existing].nome);
+      const cleanKey = normalizeKey(clean);
+      const cleanWords = clean.split(/\s+/).length;
+      const isCleanerContainedName = cleanWords >= 2
+        && cleanWords <= 5
+        && previousKey !== cleanKey
+        && (previousKey.endsWith(cleanKey) || previousKey.includes(cleanKey));
+      if (isCleanerContainedName || results[existing].nome.length < clean.length) {
+        results[existing].nome = clean;
+      }
       return;
     }
     seen.set(key, results.length);

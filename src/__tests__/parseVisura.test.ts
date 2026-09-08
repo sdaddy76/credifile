@@ -45,6 +45,49 @@ describe('parseSoci', () => {
       expect.objectContaining({ nome: 'DE LUCA ANNA MARIA', codice_fiscale: 'DLCNMR79D41F205Q', valore: '10.000,00', percentuale: '100%' }),
     ]);
   });
+
+  it('salta riepilogo e indice InfoCamere e legge la sezione soci effettiva', () => {
+    const soci = parseSoci(`
+      L'IMPRESA IN CIFRE
+      Soci e titolari di diritti su
+      azioni e quote
+      1
+      Amministratori 1
+
+      Indice
+      4 Soci e titolari di diritti su azioni e quote ..... 6
+      5 Amministratori ..... 7
+
+      4 Soci e titolari di diritti su azioni e quote
+      Sintesi della composizione societaria e degli altri titolari di diritti su azioni o quote sociali al 17/09/2025
+      Socio Valore % Tipo diritto
+      SCARSELLA LUCA 20.000,00 100 % proprieta'
+      SCRLCU93T02A269D
+
+      Elenco dei soci e degli altri titolari di diritti su azioni o quote sociali al 17/09/2025
+      capitale sociale Capitale sociale dichiarato: 20.000,00 Euro
+      Quota di nominali: 20.000,00 Euro
+      Proprieta'
+      Di cui versati: 20.000,00
+      SCARSELLA LUCA Codice fiscale: SCRLCU93T02A269D
+      Tipo di diritto: proprieta'
+      Domicilio del titolare o rappresentante comune
+      FERENTINO (FR) VIA CASILINA NORD 188 CAP 03013
+
+      5 Amministratori
+      Amministratore Unico SCARSELLA LUCA
+      Codice fiscale: SCRLCU93T02A269D
+    `);
+
+    expect(soci).toEqual([
+      expect.objectContaining({
+        nome: 'SCARSELLA LUCA',
+        codice_fiscale: 'SCRLCU93T02A269D',
+        valore: '20.000,00',
+        percentuale: '100%',
+      }),
+    ]);
+  });
 });
 
 it('separa soci e amministratori nel parsing completo', () => {
