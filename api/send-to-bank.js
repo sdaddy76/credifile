@@ -62,6 +62,14 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function safeAttachmentName(value) {
+  return String(value ?? 'cliente')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'cliente';
+}
 
 // ── calcolaScore (replica IndiceBancabilita.tsx) ───────────────────────────
 function calcolaScoreNode(valore, ottimo, suff, critica, inverso) {
@@ -321,7 +329,7 @@ export default async function handler(req, res) {
       : `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`;
 
     // 1+2+3a. Pratica, banca, ciclo di approfondimento, file e risposte in parallelo
-    const [praticaArr, pbArr, integrationArr, filesRaw, questionsRaw] = await Promise.all([
+    const [praticaArr, pbArr, integrationArr, filesRaw, questionsRaw, relazioniRaw] = await Promise.all([
       fetch(
         `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
         { headers: H },
@@ -343,6 +351,12 @@ export default async function handler(req, res) {
             { headers: H },
           ).then(r => r.json()).catch(() => [])
         : Promise.resolve([]),
+      !integrationMode
+        ? fetch(
+            `${SUPABASE_URL}/rest/v1/relazioni_commerciali?practice_id=eq.${encodeURIComponent(practice_id)}&status=eq.generata&select=id,bank_id,pdf_url,docx_url,risposte,updated_at&order=updated_at.desc&limit=20`,
+            { headers: H },
+          ).then(r => r.ok ? r.json() : []).catch(() => [])
+        : Promise.resolve([]),
     ]);
 
     const pratica = Array.isArray(praticaArr) ? praticaArr[0] : null;
@@ -354,6 +368,35 @@ export default async function handler(req, res) {
 
     const pb = Array.isArray(pbArr) ? pbArr[0] : null;
     if (!pb) return res.status(404).json({ success: false, error: 'Assegnazione banca non trovata' });
+
+    const generatedRelations = Array.isArray(relazioniRaw) ? relazioniRaw : [];
+    const commercialRelation = !integrationMode
+      ? generatedRelations.find(relation => relation.bank_id === bank_id)
+        ?? generatedRelations.find(relation => relation.bank_id === null)
+        ?? null
+      : null;
+    if (!integrationMode && !commercialRelation) {
+      return res.status(422).json({
+        success: false,
+        error: 'Prima di inviare la pratica alla banca devi generare la Relazione Commerciale con AI.',
+      });
+    }
+    if (!integrationMode && !commercialRelation?.pdf_url) {
+      return res.status(422).json({
+        success: false,
+        error: 'La Relazione Commerciale non dispone del PDF. Rigenera DOCX e PDF prima dell’invio alla banca.',
+      });
+    }
+    if (!integrationMode) {
+      const savedSelection = commercialRelation?.risposte?.__selected_kpi_keys;
+      const positiveOnly = commercialRelation?.risposte?.__bank_positive_only === 'true';
+      if (!positiveOnly || !Array.isArray(savedSelection)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Rigenera la Relazione Commerciale: il documento per la banca deve contenere esclusivamente gli indicatori positivi.',
+        });
+      }
+    }
 
     const integrationRequest = integrationMode && Array.isArray(integrationArr) ? integrationArr[0] : null;
     if (integrationMode && !integrationRequest) {
@@ -415,6 +458,49 @@ export default async function handler(req, res) {
         }),
     );
     const docLinks = signResults.filter(Boolean);
+    let relationAttachment = null;
+    if (!integrationMode && commercialRelation?.pdf_url) {
+      try {
+        const relationPath = String(commercialRelation.pdf_url);
+        let relationUrl = /^https:\/\//i.test(relationPath) ? relationPath : null;
+        if (!relationUrl) {
+          const encodedPath = relationPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+          const signRes = await fetch(
+            `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
+            { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
+          );
+          if (!signRes.ok) throw new Error('Impossibile firmare il PDF della relazione');
+          const signData = await signRes.json();
+          relationUrl = signData?.signedUrl ?? null;
+          if (!relationUrl && signData?.signedURL) relationUrl = `${SUPABASE_URL}/storage/v1${signData.signedURL}`;
+        }
+        if (!relationUrl) throw new Error('URL PDF relazione non disponibile');
+
+        const relationResponse = await fetch(relationUrl);
+        if (!relationResponse.ok) throw new Error('Impossibile scaricare il PDF della relazione');
+        const relationBuffer = await relationResponse.arrayBuffer();
+        if (relationBuffer.byteLength > 12 * 1024 * 1024) {
+          throw new Error('Il PDF della relazione supera il limite di 12 MB');
+        }
+        const relationFilename = `Relazione_Commerciale_${safeAttachmentName(pratica.clients?.ragione_sociale)}.pdf`;
+        relationAttachment = {
+          filename: relationFilename,
+          content: Buffer.from(relationBuffer).toString('base64'),
+        };
+        docLinks.push({
+          uploadedFileId: null,
+          relationId: commercialRelation.id,
+          nomeDoc: 'Relazione Commerciale AI — solo indicatori positivi',
+          nomeFile: relationFilename,
+          url: relationUrl,
+        });
+      } catch (relationError) {
+        return res.status(502).json({
+          success: false,
+          error: `Impossibile allegare la Relazione Commerciale: ${relationError instanceof Error ? relationError.message : String(relationError)}`,
+        });
+      }
+    }
     if (integrationMode && docLinks.length === 0 && answeredQuestions.length === 0) {
       return res.status(422).json({
         success: false,
@@ -924,6 +1010,7 @@ ${integrationAnswersHtml}
     if (agentEmail) emailPayload.reply_to = agentEmail;
     if (ccList.length  > 0) emailPayload.cc  = ccList;
     if (bccList.length > 0) emailPayload.bcc = bccList;
+    if (relationAttachment) emailPayload.attachments = [relationAttachment];
 
     const emailRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -1003,7 +1090,7 @@ ${integrationAnswersHtml}
         resend_id: emailBody?.id ?? null,
         integration_request_id: integrationMode ? integration_request_id : null,
         delivery_type: integrationMode ? 'approfondimento' : 'pratica',
-        uploaded_file_ids: docLinks.map(document => document.uploadedFileId),
+        uploaded_file_ids: docLinks.map(document => document.uploadedFileId).filter(Boolean),
       }),
     }).catch(() => null); // Non blocca se il log fallisce
 
@@ -1014,6 +1101,7 @@ ${integrationAnswersHtml}
       bcc: bccList,
       reply_to: agentEmail ?? null,
       docs_sent: docLinks.length,
+      relation_attached: Boolean(relationAttachment),
       answers_sent: answeredQuestions.length,
       delivery_type: integrationMode ? 'approfondimento' : 'pratica',
       bank_status_changed: !integrationMode,

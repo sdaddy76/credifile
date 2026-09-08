@@ -100,6 +100,7 @@ type Props = {
 
 const NA_VALUE = '__na__';
 const SELECTED_KPI_KEYS = '__selected_kpi_keys';
+const BANK_POSITIVE_ONLY_KEY = '__bank_positive_only';
 
 /* @section: relazione-commerciale-helpers */
 const formatEuro = (value?: number | null) => {
@@ -182,14 +183,18 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     () => buildKpiBenchmarkComparisons(kpiScores, benchmarkInfo?.kpiData),
     [benchmarkInfo?.kpiData, kpiScores]
   );
+  const positiveKpiComparisons = useMemo(
+    () => kpiComparisons.filter(comparison => comparison.tone === 'positive'),
+    [kpiComparisons],
+  );
   const selectedKpiKeys = useMemo(() => {
     const saved = answers[SELECTED_KPI_KEYS];
-    if (Array.isArray(saved)) return saved.filter(key => kpiComparisons.some(item => item.key === key));
-    return kpiComparisons.map(item => item.key);
-  }, [answers, kpiComparisons]);
+    if (Array.isArray(saved)) return saved.filter(key => positiveKpiComparisons.some(item => item.key === key));
+    return positiveKpiComparisons.map(item => item.key);
+  }, [answers, positiveKpiComparisons]);
   const selectedKpiComparisons = useMemo(
-    () => kpiComparisons.filter(comparison => selectedKpiKeys.includes(comparison.key)),
-    [kpiComparisons, selectedKpiKeys],
+    () => positiveKpiComparisons.filter(comparison => selectedKpiKeys.includes(comparison.key)),
+    [positiveKpiComparisons, selectedKpiKeys],
   );
   const commercialAnalysis = useMemo(
     () => buildCommercialReportAnalysis({
@@ -379,10 +384,11 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const setAnswer = (id: string, value: string | null) => setAnswers(prev => ({ ...prev, [id]: value }));
 
   const setKpiSelected = (key: string, selected: boolean) => {
+    if (!positiveKpiComparisons.some(item => item.key === key)) return;
     setAnswers(prev => {
       const current = Array.isArray(prev[SELECTED_KPI_KEYS])
         ? prev[SELECTED_KPI_KEYS] as string[]
-        : kpiComparisons.map(item => item.key);
+        : positiveKpiComparisons.map(item => item.key);
       const next = selected
         ? Array.from(new Set([...current, key]))
         : current.filter(item => item !== key);
@@ -393,14 +399,14 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const setAllKpisSelected = (selected: boolean) => {
     setAnswers(prev => ({
       ...prev,
-      [SELECTED_KPI_KEYS]: selected ? kpiComparisons.map(item => item.key) : [],
+      [SELECTED_KPI_KEYS]: selected ? positiveKpiComparisons.map(item => item.key) : [],
     }));
   };
 
   const getSelectedComparisons = (answersSnapshot = answers) => {
     const saved = answersSnapshot[SELECTED_KPI_KEYS];
-    if (!Array.isArray(saved)) return kpiComparisons;
-    return kpiComparisons.filter(comparison => saved.includes(comparison.key));
+    if (!Array.isArray(saved)) return positiveKpiComparisons;
+    return positiveKpiComparisons.filter(comparison => saved.includes(comparison.key));
   };
 
   const getNarrativeValue = (
@@ -671,7 +677,11 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     if (!activeRelazione || !activeTemplate) return;
     setGenerating(true);
     try {
-      const answersToGenerate = { ...answers };
+      const answersToGenerate = {
+        ...answers,
+        [SELECTED_KPI_KEYS]: selectedKpiComparisons.map(comparison => comparison.key),
+        [BANK_POSITIVE_ONLY_KEY]: 'true',
+      };
       await saveDraftWithAnswers(answersToGenerate);
       const doc = new Document({ sections: [{ properties: {}, children: buildDocChildren(activeTemplate, answersToGenerate) }] });
       const docxBlob = await Packer.toBlob(doc);
@@ -852,7 +862,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                         Indicatori finanziari e confronto settoriale
                       </div>
                       <p className="mt-1 text-xs text-teal-800">
-                        Ogni indice, positivo o negativo, dispone di un commento completo. Seleziona quelli da inserire nel documento destinato alla banca.
+                        Tutti gli indici restano visibili per l’analisi, ma nel documento destinato alla banca possono essere inseriti esclusivamente quelli positivi.
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -862,7 +872,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                         </Badge>
                       )}
                       <Badge variant="outline" className="w-fit border-teal-200 bg-white text-teal-800">
-                        {selectedKpiComparisons.length}/{kpiComparisons.length} selezionati
+                        {selectedKpiComparisons.length}/{positiveKpiComparisons.length} positivi selezionati
                       </Badge>
                     </div>
                   </div>
@@ -880,11 +890,11 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                       )}
                       <div className="divide-y">
                         {kpiComparisons.map((comparison: KpiBenchmarkComparison) => (
-                          <div key={comparison.key} className="p-4">
+                          <div key={comparison.key} className={`p-4 ${comparison.tone !== 'positive' ? 'bg-slate-50/70 opacity-70' : ''}`}>
                             <div className="grid gap-3 lg:grid-cols-[auto_minmax(150px,1.1fr)_repeat(3,minmax(90px,0.6fr))_auto] lg:items-center">
                               <Checkbox
                                 checked={selectedKpiKeys.includes(comparison.key)}
-                                disabled={!canEdit}
+                                disabled={!canEdit || comparison.tone !== 'positive'}
                                 onCheckedChange={checked => setKpiSelected(comparison.key, checked === true)}
                                 aria-label={`Includi ${comparison.label} nel documento`}
                               />
@@ -908,7 +918,12 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                                   <span className="ml-1 text-xs text-muted-foreground">({comparison.deltaPercentFormatted})</span>
                                 </p>
                               </div>
-                              <Badge className={toneClassName[comparison.tone]}>{comparison.judgement}</Badge>
+                              <div className="flex flex-col items-end gap-1">
+                                <Badge className={toneClassName[comparison.tone]}>{comparison.judgement}</Badge>
+                                {comparison.tone !== 'positive' && (
+                                  <span className="text-[10px] font-medium text-slate-500">Non inserito nel documento banca</span>
+                                )}
+                              </div>
                             </div>
                             <p className="mt-3 text-xs leading-relaxed text-slate-600">{comparison.comment}</p>
                             {comparison.score !== null && (

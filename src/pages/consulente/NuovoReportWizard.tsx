@@ -223,10 +223,14 @@ export default function NuovoReportWizard() {
     () => buildKpiBenchmarkComparisons(kpiScores, benchmarkData?.kpi_data),
     [benchmarkData?.kpi_data, kpiScores],
   );
+  const positiveRelazioneKpiComparisons = useMemo(
+    () => relazioneKpiComparisons.filter(comparison => comparison.tone === 'positive'),
+    [relazioneKpiComparisons],
+  );
   const selectedRelazioneKpiComparisons = useMemo(() => {
-    if (relazioneSelectedKpiKeys === null) return relazioneKpiComparisons;
-    return relazioneKpiComparisons.filter(comparison => relazioneSelectedKpiKeys.includes(comparison.key));
-  }, [relazioneKpiComparisons, relazioneSelectedKpiKeys]);
+    if (relazioneSelectedKpiKeys === null) return positiveRelazioneKpiComparisons;
+    return positiveRelazioneKpiComparisons.filter(comparison => relazioneSelectedKpiKeys.includes(comparison.key));
+  }, [positiveRelazioneKpiComparisons, relazioneSelectedKpiKeys]);
 
   // Carica info cliente
   const [client, setClient] = useState<{
@@ -599,8 +603,9 @@ export default function NuovoReportWizard() {
   };
 
   const toggleRelazioneKpi = (key: string, selected: boolean) => {
+    if (!positiveRelazioneKpiComparisons.some(comparison => comparison.key === key)) return;
     setRelazioneSelectedKpiKeys(current => {
-      const keys = current ?? relazioneKpiComparisons.map(comparison => comparison.key);
+      const keys = current ?? positiveRelazioneKpiComparisons.map(comparison => comparison.key);
       return selected
         ? Array.from(new Set([...keys, key]))
         : keys.filter(item => item !== key);
@@ -796,6 +801,7 @@ export default function NuovoReportWizard() {
         risposte: {
           ...relazioneAnswers,
           __selected_kpi_keys: selectedRelazioneKpiComparisons.map(comparison => comparison.key),
+          __bank_positive_only: 'true',
         },
       });
     }
@@ -1311,14 +1317,14 @@ export default function NuovoReportWizard() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-bold text-teal-900">Indicatori da includere nella relazione</p>
                   <span className="rounded-full border border-teal-200 bg-white px-2 py-1 text-[11px] font-semibold text-teal-800">
-                    {selectedRelazioneKpiComparisons.length}/{relazioneKpiComparisons.length} selezionati
+                    {selectedRelazioneKpiComparisons.length}/{positiveRelazioneKpiComparisons.length} positivi selezionati
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-teal-800">
-                  Tutti i KPI hanno un commento positivo o negativo; il consulente sceglie quali inserire nel PDF e nel DOCX.
+                  Tutti i KPI restano consultabili, ma nel PDF e nel DOCX destinati alla banca sono ammessi esclusivamente gli indicatori positivi.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={() => setRelazioneSelectedKpiKeys(relazioneKpiComparisons.map(comparison => comparison.key))}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setRelazioneSelectedKpiKeys(positiveRelazioneKpiComparisons.map(comparison => comparison.key))}>
                     Seleziona tutti
                   </Button>
                   <Button type="button" size="sm" variant="outline" onClick={() => setRelazioneSelectedKpiKeys([])}>
@@ -1327,12 +1333,13 @@ export default function NuovoReportWizard() {
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {relazioneKpiComparisons.map(comparison => (
-                    <div key={comparison.key} className="rounded-lg border border-teal-100 bg-white px-3 py-2 text-xs">
+                    <div key={comparison.key} className={`rounded-lg border border-teal-100 px-3 py-2 text-xs ${comparison.tone === 'positive' ? 'bg-white' : 'bg-slate-100 opacity-70'}`}>
                       <div className="flex items-start gap-2">
                         <input
                           type="checkbox"
                           className="mt-0.5 h-4 w-4 accent-teal-700"
                           checked={selectedRelazioneKpiComparisons.some(item => item.key === comparison.key)}
+                          disabled={comparison.tone !== 'positive'}
                           onChange={event => toggleRelazioneKpi(comparison.key, event.target.checked)}
                           aria-label={`Includi ${comparison.label} nella relazione`}
                         />
@@ -1344,6 +1351,9 @@ export default function NuovoReportWizard() {
                           <p className="mt-1 text-slate-500">
                             Azienda {comparison.valueFormatted} · settore {comparison.benchmarkFormatted}
                           </p>
+                          {comparison.tone !== 'positive' && (
+                            <p className="mt-1 font-medium text-slate-500">Escluso dal documento banca</p>
+                          )}
                         </div>
                       </div>
                     </div>
