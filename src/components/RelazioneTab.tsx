@@ -109,6 +109,12 @@ const formatEuro = (value?: number | null) => {
   return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(Number(value));
 };
 
+const isReportValueVisible = (value: unknown) => {
+  const text = String(value ?? '').trim();
+  if (!text) return false;
+  return !/^(?:n\/?d|non disponibile|non verificabile|non fornito|nessun dato|dato non disponibile|kpi non disponibili)$/i.test(text);
+};
+
 const statusBadge = (status: string) => {
   if (status === 'generata') return { label: '🔵 Generata', className: 'bg-blue-100 text-blue-800 border-blue-200' };
   if (status === 'completata') return { label: '🟢 Completata', className: 'bg-green-100 text-green-800 border-green-200' };
@@ -447,7 +453,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         body: {
           practice_id: practiceId,
           deterministic_analysis: commercialAnalysis.sections,
-          kpi_comments: kpiComparisons.map(comparison => ({
+          kpi_comments: positiveKpiComparisons.map(comparison => ({
             key: comparison.key,
             label: comparison.label,
             value: comparison.valueFormatted,
@@ -464,11 +470,12 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         console.log('[AI] primo campo:', Object.entries(data.answers)[0]);
         const normalizedAnswers = Object.entries(data.answers).reduce<Record<string, string | string[] | null>>((acc, [key, value]) => {
           if (value === null || value === undefined) {
-            acc[key] = null;
-          } else if (typeof value === 'string') {
-            acc[key] = value;
+            return acc;
+          } else if (typeof value === 'string' && isReportValueVisible(value)) {
+            acc[key] = value.trim();
           } else {
-            acc[key] = JSON.stringify(value);
+            const serialized = JSON.stringify(value);
+            if (isReportValueVisible(serialized)) acc[key] = serialized;
           }
           return acc;
         }, {});
@@ -519,7 +526,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       ['Sede Legale', autoData.indirizzo || 'N/D'],
       ['Importo Richiesto', formatEuro(autoData.importo)],
       ['Motivazione Richiesta', autoData.motivazione || 'N/D'],
-    ];
+    ].filter(([, value]) => isReportValueVisible(value));
 
     const children: any[] = [
       new Paragraph({ text: `RELAZIONE COMMERCIALE - ${template.nome}`, heading: HeadingLevel.TITLE, alignment: AlignmentType.CENTER }),
@@ -530,8 +537,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
 
     children.push(new Paragraph({ text: 'Analisi economico-finanziaria dettagliata', heading: HeadingLevel.HEADING_1 }));
     COMMERCIAL_REPORT_SECTIONS.forEach(section => {
+      const narrative = getNarrativeValue(section.key, answersSnapshot);
+      if (!isReportValueVisible(narrative)) return;
       children.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_2 }));
-      children.push(new Paragraph({ children: [new TextRun(getNarrativeValue(section.key, answersSnapshot))] }));
+      children.push(new Paragraph({ children: [new TextRun(narrative)] }));
     });
 
     children.push(new Paragraph({ text: 'Indicatori finanziari e confronto settoriale', heading: HeadingLevel.HEADING_1 }));
@@ -574,11 +583,17 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     }
 
     template.sezioni.forEach(section => {
+      const visibleQuestions = section.domande.filter(question => {
+        const raw = answersSnapshot[question.id];
+        return raw !== NA_VALUE && isReportValueVisible(typeof raw === 'string' ? raw.trim() : '');
+      });
+      if (visibleQuestions.length === 0) return;
       children.push(new Paragraph({ text: section.titolo, heading: HeadingLevel.HEADING_1 }));
-      section.domande.forEach(question => {
+      visibleQuestions.forEach(question => {
         const raw = answersSnapshot[question.id];
         if (raw === NA_VALUE) return;
-        const value = typeof raw === 'string' && raw.trim() ? raw.trim() : 'Non fornito';
+        const value = typeof raw === 'string' ? raw.trim() : '';
+        if (!isReportValueVisible(value)) return;
         children.push(new Paragraph({ text: question.testo, heading: HeadingLevel.HEADING_2 }));
         children.push(new Paragraph({ children: [new TextRun(value)] }));
       });
@@ -613,17 +628,23 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     addText(`RELAZIONE COMMERCIALE - ${template.nome}`, 16, true);
     addText(`Pratica: ${autoData.ragione_sociale || 'N/D'} | Data: ${new Date().toLocaleDateString('it-IT')}`, 10);
     addText('Dati automatici pratica', 14, true);
-    addText(`Richiedente: ${autoData.ragione_sociale || 'N/D'}`);
-    addText(`CF/PIVA: ${autoData.cf || 'N/D'} / ${autoData.piva || 'N/D'}`);
-    addText(`Attività ATECO: ${autoData.ateco || 'N/D'}`);
-    addText(`Sede Legale: ${autoData.indirizzo || 'N/D'}`);
-    addText(`Importo Richiesto: ${formatEuro(autoData.importo)}`);
-    addText(`Motivazione Richiesta: ${autoData.motivazione || 'N/D'}`);
+    [
+      [`Richiedente: ${autoData.ragione_sociale || 'N/D'}`, autoData.ragione_sociale],
+      [`CF/PIVA: ${autoData.cf || 'N/D'} / ${autoData.piva || 'N/D'}`, autoData.cf || autoData.piva],
+      [`Attività ATECO: ${autoData.ateco || 'N/D'}`, autoData.ateco],
+      [`Sede Legale: ${autoData.indirizzo || 'N/D'}`, autoData.indirizzo],
+      [`Importo Richiesto: ${formatEuro(autoData.importo)}`, autoData.importo],
+      [`Motivazione Richiesta: ${autoData.motivazione || 'N/D'}`, autoData.motivazione],
+    ].forEach(([label, value]) => {
+      if (isReportValueVisible(value)) addText(String(label));
+    });
 
     addText('Analisi economico-finanziaria dettagliata', 14, true);
     COMMERCIAL_REPORT_SECTIONS.forEach(section => {
+      const narrative = getNarrativeValue(section.key, answersSnapshot);
+      if (!isReportValueVisible(narrative)) return;
       addText(section.title, 12, true);
-      addText(getNarrativeValue(section.key, answersSnapshot), 10);
+      addText(narrative, 10);
     });
 
     addText('Indicatori finanziari e confronto settoriale', 14, true);
@@ -683,11 +704,17 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     }
 
     template.sezioni.forEach(section => {
+      const visibleQuestions = section.domande.filter(question => {
+        const raw = answersSnapshot[question.id];
+        return raw !== NA_VALUE && isReportValueVisible(typeof raw === 'string' ? raw.trim() : '');
+      });
+      if (visibleQuestions.length === 0) return;
       addText(section.titolo, 14, true);
-      section.domande.forEach(question => {
+      visibleQuestions.forEach(question => {
         const raw = answersSnapshot[question.id];
         if (raw === NA_VALUE) return;
-        const value = typeof raw === 'string' && raw.trim() ? raw.trim() : 'Non fornito';
+        const value = typeof raw === 'string' ? raw.trim() : '';
+        if (!isReportValueVisible(value)) return;
         addText(question.testo, 12, true);
         addText(value, 10);
       });
@@ -815,7 +842,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                   <div>
                     <CardTitle>{activeTemplate.nome}</CardTitle>
-                    <p className="text-sm text-muted-foreground mt-1">Ruolo: {role || 'utente'} · Le risposte vuote vengono riportate come “Non fornito”.</p>
+            <p className="text-sm text-muted-foreground mt-1">Ruolo: {role || 'utente'} · Nel documento finale vengono riportati solo i campi compilati e gli indicatori positivi selezionati.</p>
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     {activeRelazione.docx_url && <Button size="sm" variant="outline" onClick={() => downloadGenerated(activeRelazione.docx_url)}><Download className="w-4 h-4 mr-1" />DOCX</Button>}

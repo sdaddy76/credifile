@@ -326,7 +326,7 @@ export default async function handler(req, res) {
 
     const filesUrl = integrationMode
       ? `${SUPABASE_URL}/rest/v1/practice_documents?practice_id=eq.${encodeURIComponent(practice_id)}&integration_request_id=eq.${encodeURIComponent(integration_request_id)}&select=id,nome,status,uploaded_files(id,nome_file,storage_path)&order=created_at.asc`
-      : `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status)&order=created_at.asc`;
+      : `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status,bank_requirement_id,bank_document_requirements(bank_id))&order=created_at.asc`;
 
     // 1+2+3a. Pratica, banca, ciclo di approfondimento, file e risposte in parallelo
     const [
@@ -441,7 +441,13 @@ export default async function handler(req, res) {
             },
           })),
         )
-      : (Array.isArray(filesRaw) ? filesRaw : []);
+      : (Array.isArray(filesRaw) ? filesRaw : []).filter(file => {
+          // I documenti standard sono condivisi; quelli legati a una checklist
+          // specifica vengono invece inviati soltanto alla banca destinataria.
+          const requirement = file.practice_documents?.bank_document_requirements;
+          const requirementBankId = Array.isArray(requirement) ? requirement[0]?.bank_id : requirement?.bank_id;
+          return !requirementBankId || requirementBankId === bank_id;
+        });
     const answeredQuestions = integrationMode
       ? (Array.isArray(questionsRaw) ? questionsRaw : []).filter(question =>
           question.stato === 'risposta' && String(question.risposta ?? '').trim().length > 0
@@ -690,7 +696,11 @@ export default async function handler(req, res) {
   </tbody>
 </table>` : '');
 
-    const generalComment = buildGeneralComment(kpiRows, pratica.clients?.ragione_sociale, annoBilancio);
+    const generalComment = buildGeneralComment(
+      kpiRows.filter(k => k.semaforo === 'verde'),
+      pratica.clients?.ragione_sociale,
+      annoBilancio,
+    );
     const generalSection = safeSection(generalComment ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   📝 Valutazione Complessiva
@@ -740,7 +750,10 @@ export default async function handler(req, res) {
   <div style="font-size:13px;font-weight:600;color:${scoreColor(bancabScore)};margin-top:2px;">${scoreLabel(bancabScore)}</div>
 </div>` : '');
 
-    const bancabDetailSection = safeSection((bancabScore != null && bancabScore >= 80 && bancabDetails.length > 0) ? `
+    const positiveBancabDetails = bancabDetails.filter(detail =>
+      detail.score != null && Number.isFinite(Number(detail.score)) && Number(detail.score) >= 70
+    );
+    const bancabDetailSection = safeSection((bancabScore != null && bancabScore >= 80 && positiveBancabDetails.length > 0) ? `
 <h3 style="color:#1e3a5f;margin-top:18px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   📌 Dettaglio Bancabilità
 </h3>
@@ -755,7 +768,7 @@ export default async function handler(req, res) {
     </tr>
   </thead>
   <tbody>
-    ${bancabDetails.map((d, i) => {
+    ${positiveBancabDetails.map((d, i) => {
       const score = d.score != null && Number.isFinite(Number(d.score)) ? Number(d.score) : null;
       const esito = score == null || score >= 55
         ? (score != null && score >= 70 ? '✅ Soddisfatto' : '⚠️ Limite')
@@ -971,7 +984,10 @@ ${structuredRequirements.map(requirement => {
       ? contacts.beneficial_owners.map((owner, index) => [`Titolare effettivo ${index + 1}`, owner])
       : []),
   ];
-  const rowsHtml = rows.map(([label, rawContact]) => {
+  const rowsHtml = rows.filter(([, rawContact]) => {
+    const contact = rawContact && typeof rawContact === 'object' ? rawContact : {};
+    return [contact.nome, contact.cognome, contact.email, contact.cellulare].some(value => String(value ?? '').trim());
+  }).map(([label, rawContact]) => {
     const contact = rawContact && typeof rawContact === 'object' ? rawContact : {};
     const fullName = [contact.nome, contact.cognome].filter(Boolean).join(' ') || 'Nome non indicato';
     return `<tr>
@@ -981,6 +997,7 @@ ${structuredRequirements.map(requirement => {
       <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(contact.cellulare || '—')}</td>
     </tr>`;
   }).join('');
+  if (!rowsHtml) return '';
   return `<div style="margin:10px 0;">
     <p style="margin:0 0 7px;font-size:13px;font-weight:700;color:#312e81;">${escapeHtml(requirement.nome)}</p>
     <table style="width:100%;border-collapse:collapse;font-size:12px;">

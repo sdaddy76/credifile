@@ -73,7 +73,9 @@ function normalizeAnswers(raw: Record<string, unknown>, allowedIds = OUTPUT_IDS)
     const v = raw?.[id];
     if (v === null || v === undefined) continue;
     const normalized = typeof v === 'string' ? v.trim() : String(v).trim();
-    if (normalized) answers[id] = normalized;
+    if (normalized && !/^(?:n\/?d|non disponibile|non verificabile|non fornito|nessun dato|dato non disponibile)\b/i.test(normalized)) {
+      answers[id] = normalized;
+    }
   }
   return answers;
 }
@@ -201,7 +203,8 @@ Deno.serve(async (req) => {
 Compila la relazione commerciale per la società indicata usando i dati forniti.
 Scrivi in italiano professionale e formale, adatto a una richiesta di finanziamento bancario.
 Non inventare informazioni e non sostituire mai con zero un dato assente.
-Quando i documenti non permettono una conclusione, scrivi esplicitamente "Non disponibile" o "Non verificabile" e indica quale informazione deve essere acquisita.
+Riporta esclusivamente gli elementi positivi e documentati dell'azienda, con tono commerciale favorevole e professionale.
+Se un'informazione o una sezione non è documentata, restituisci una stringa vuota: non inserire "Non disponibile", "Non verificabile", criticità, giudizi negativi o richieste di integrazione nel testo destinato alla relazione.
 Mantieni distinti i bilanci annuali dal bilancio provvisorio e non annualizzare dati infrannuali se il periodo non è indicato.
 Restituisci SOLO un oggetto JSON valido, senza markdown, senza backtick, senza testo aggiuntivo.`;
 
@@ -245,14 +248,14 @@ ${NARRATIVE_IDS.join(', ')}
 
 Regole:
 - Non inventare nomi, percentuali, protesti, procedure o importi non presenti nei dati.
-- Non creare frasi generiche per colmare dati mancanti: usa "Non disponibile" o "Non verificabile" e indica cosa l'agente dovrebbe verificare.
+- Non creare frasi generiche per colmare dati mancanti: lascia vuota la sezione.
 - Per clienti, fornitori, export, import e concentrazioni, non creare valori numerici se assenti.
-- __company_situation deve commentare redditività, equilibrio patrimoniale, liquidità e indebitamento sulla base dei dati documentati.
-- __growth_opportunities deve descrivere soltanto opportunità e leve supportate dall'andamento di ricavi, margini, capitale circolante e debito.
-- __main_balance_items deve commentare le principali voci di Stato patrimoniale e Conto economico, incluse materie, servizi, personale, crediti, rimanenze, liquidità, patrimonio e debiti quando disponibili.
-- __year_over_year_comment deve confrontare esplicitamente l'ultimo bilancio annuale con il precedente, riportando gli anni e distinguendo valori assenti da valori pari a zero.
-- __provisional_balance_comment deve commentare il bilancio provvisorio solo se identificabile dai documenti o dal file collegato al record; se è caricato ma non analizzato dichiararlo; se manca scrivere "Non disponibile".
-- I commenti degli indici sono già calcolati in modo deterministico: non alterare valori, benchmark, fonte o giudizio. La selezione finale degli indici da inviare alla banca è effettuata dall'agente nell'interfaccia.
+- __company_situation deve valorizzare redditività, equilibrio patrimoniale, liquidità e indebitamento soltanto quando i dati sono positivi e documentati.
+- __growth_opportunities deve descrivere soltanto opportunità e leve supportate dall'andamento positivo di ricavi, margini, capitale circolante e debito.
+- __main_balance_items deve valorizzare le principali voci positive di Stato patrimoniale e Conto economico, incluse materie, servizi, personale, crediti, rimanenze, liquidità e patrimonio quando disponibili; ometti le voci assenti o sfavorevoli.
+- __year_over_year_comment deve riportare soltanto miglioramenti o stabilità positive dell'ultimo bilancio annuale rispetto al precedente; ometti variazioni negative e dati non disponibili.
+- __provisional_balance_comment deve commentare il bilancio provvisorio solo se contiene elementi positivi identificabili; se manca o non è analizzato restituisci stringa vuota.
+- I commenti degli indici forniti al modello sono già filtrati agli indicatori positivi: non aggiungere indici negativi, neutri o non disponibili e non alterare valori, benchmark, fonte o giudizio.
 - Mantieni la risposta complessiva entro 900 token, privilegiando dati, variazioni e conclusioni verificabili.`;
 
     if (!groqKey) {
