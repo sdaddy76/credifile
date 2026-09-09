@@ -515,7 +515,7 @@ export default async function handler(req, res) {
         docLinks.push({
           uploadedFileId: null,
           relationId: commercialRelation.id,
-          nomeDoc: 'Relazione Commerciale AI — solo indicatori positivi',
+          nomeDoc: 'Relazione Commerciale',
           nomeFile: relationFilename,
           url: relationUrl,
         });
