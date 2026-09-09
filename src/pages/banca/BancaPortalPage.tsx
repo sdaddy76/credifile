@@ -68,6 +68,7 @@ interface AnonymousPractice {
   numero_pratica: string;
   importo_richiesto?: number;
   motivazione?: string;
+  practice_bank_id?: string;
   status: string;
   codice_ateco?: string;
   created_at: string;
@@ -93,6 +94,7 @@ interface ReceivedPractice {
     numero_pratica: string;
     importo_richiesto?: number;
     motivazione?: string;
+    practice_bank_id?: string;
     status: string;
     created_at: string;
     clients?: {
@@ -299,13 +301,32 @@ export default function BancaPortalPage() {
 
       if (reqErr) console.error('Errore bank_interest_requests:', reqErr);
 
+      const { data: bankAssignments, error: assignmentErr } = await supabase
+        .from('practice_banks')
+        .select('id, practice_id, importo_richiesto, motivazione')
+        .eq('bank_id', bankId)
+        .in('practice_id', pList.length ? pList.map(p => p.id) : ['00000000-0000-0000-0000-000000000000']);
+      if (assignmentErr) console.error('Errore assegnazioni banca:', assignmentErr);
+
       const kpiMap: Record<string, AnonymousPractice['kpi']> = {};
       (kpiData ?? []).forEach(k => { if (!kpiMap[k.practice_id]) kpiMap[k.practice_id] = k; });
 
       const reqMap: Record<string, { status: string; id: string }> = {};
       (reqData ?? []).forEach(r => { reqMap[r.practice_id] = { status: r.status, id: r.id }; });
 
-      setPractices(pList.map(p => ({ ...p, kpi: kpiMap[p.id], myRequest: reqMap[p.id] })));
+      const assignmentMap: Record<string, { id: string; importo_richiesto?: number | null; motivazione?: string | null }> = {};
+      (bankAssignments ?? []).forEach((assignment: any) => { assignmentMap[assignment.practice_id] = assignment; });
+      setPractices(pList.map(p => {
+        const assignment = assignmentMap[p.id];
+        return {
+          ...p,
+          importo_richiesto: assignment?.importo_richiesto ?? p.importo_richiesto,
+          motivazione: assignment?.motivazione ?? p.motivazione,
+          practice_bank_id: assignment?.id,
+          kpi: kpiMap[p.id],
+          myRequest: reqMap[p.id],
+        };
+      }));
     } finally {
       setLoading(false);
     }
@@ -335,6 +356,12 @@ export default function BancaPortalPage() {
         .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(ragione_sociale, piva, codice_fiscale, indirizzo, telefono, email, data_costituzione)')
         .in('id', practiceIds);
 
+      const { data: bankAssignments } = await supabase
+        .from('practice_banks')
+        .select('id, practice_id, importo_richiesto, motivazione')
+        .eq('bank_id', bankId)
+        .in('practice_id', practiceIds);
+
       // 3. KPI (anno più recente per pratica)
       const { data: kpiData } = await supabase
         .from('bilanci_kpi')
@@ -359,6 +386,8 @@ export default function BancaPortalPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pMap: Record<string, any> = {};
       (pData ?? []).forEach(p => { pMap[p.id] = p; });
+      const assignmentMap: Record<string, any> = {};
+      (bankAssignments ?? []).forEach((assignment: any) => { assignmentMap[assignment.practice_id] = assignment; });
 
       const result: ReceivedPractice[] = reqData.map(r => ({
         requestId: r.id,
@@ -369,6 +398,11 @@ export default function BancaPortalPage() {
         segreteriaEmail: segMap[r.handled_by]?.email,
         practice: {
           ...pMap[r.practice_id],
+          ...(assignmentMap[r.practice_id] ? {
+            practice_bank_id: assignmentMap[r.practice_id].id,
+            importo_richiesto: assignmentMap[r.practice_id].importo_richiesto ?? pMap[r.practice_id]?.importo_richiesto,
+            motivazione: assignmentMap[r.practice_id].motivazione ?? pMap[r.practice_id]?.motivazione,
+          } : {}),
           kpi: kpiMap[r.practice_id],
         },
       }));

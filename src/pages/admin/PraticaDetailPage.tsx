@@ -255,7 +255,18 @@ export default function PraticaDetailPage() {
   const [showClientEdit, setShowClientEdit] = useState(false);
   const [clientEditForm, setClientEditForm] = useState<ClientEditForm>(EMPTY_CLIENT_EDIT_FORM);
   const [savingClientEdit, setSavingClientEdit] = useState(false);
-  const [practiceBanks, setPracticeBanks] = useState<{id:string;bank_id:string;status:PracticeBankStatus;note?:string;data_invio?:string;status_updated_at?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
+  const [practiceBanks, setPracticeBanks] = useState<{
+    id:string;
+    bank_id:string;
+    status:PracticeBankStatus;
+    note?:string;
+    data_invio?:string;
+    status_updated_at?:string;
+    importo_richiesto?:number | null;
+    motivazione?:string | null;
+    banks:{nome:string;email?:string;email_invio_banca?:string}
+  }[]>([]);
+  const [savingBankRequestId, setSavingBankRequestId] = useState<string | null>(null);
   const [updatingBankStatusId, setUpdatingBankStatusId] = useState<string | null>(null);
   const [addingBank, setAddingBank] = useState('');
   const [addingBankRequirements, setAddingBankRequirements] = useState<BankDocumentRequirement[]>([]);
@@ -1608,6 +1619,39 @@ export default function PraticaDetailPage() {
     }
   };
 
+  const handlePracticeBankRequestDetailsSave = async (
+    practiceBank: (typeof practiceBanks)[number],
+    importoValue: string,
+    motivazioneValue: string,
+  ) => {
+    if (!id || !canEdit && !canApprove) return;
+    const normalizedAmount = parseItalianAmount(importoValue);
+    if (importoValue.trim() && normalizedAmount === null) {
+      toast.error('Inserisci un importo valido (es. 150.000,00).');
+      return;
+    }
+    setSavingBankRequestId(practiceBank.id);
+    try {
+      const { error } = await supabase
+        .from('practice_banks')
+        .update({
+          importo_richiesto: normalizedAmount,
+          motivazione: motivazioneValue.trim() || null,
+        })
+        .eq('id', practiceBank.id)
+        .eq('practice_id', id);
+      if (error) throw error;
+      setPracticeBanks(prev => prev.map(item => item.id === practiceBank.id
+        ? { ...item, importo_richiesto: normalizedAmount, motivazione: motivazioneValue.trim() || null }
+        : item));
+      toast.success(`Dati per ${practiceBank.banks?.nome ?? 'la banca'} salvati`);
+    } catch (error: any) {
+      toast.error('Errore salvataggio dati banca: ' + (error?.message ?? error));
+    } finally {
+      setSavingBankRequestId(null);
+    }
+  };
+
   // Approva/rifiuta documento
   const approveDoc = async (docId: string) => {
     await supabase.from('practice_documents').update({ status: 'approvato' }).eq('id', docId);
@@ -2004,7 +2048,13 @@ export default function PraticaDetailPage() {
       return;
     }
 
-    const { error } = await supabase.from('practice_banks').insert({ practice_id: id, bank_id: addingBank, status: 'assegnata' });
+    const { error } = await supabase.from('practice_banks').insert({
+      practice_id: id,
+      bank_id: addingBank,
+      status: 'assegnata',
+      importo_richiesto: practice?.importo_richiesto ?? null,
+      motivazione: practice?.motivazione ?? null,
+    });
     if (error) { toast.error('Errore: ' + error.message); return; }
     const applicable = selectedIsFinPromoter
       ? applicableAddingBankRequirements
@@ -3123,6 +3173,57 @@ export default function PraticaDetailPage() {
                                 <p className="text-xs text-muted-foreground mt-0.5">
                                   Stato aggiornato il {new Date(pb.status_updated_at).toLocaleString('it-IT')}
                                 </p>
+                              )}
+                            </div>
+                            <div className="w-full grid gap-2 md:grid-cols-[180px_1fr_auto] items-end rounded-lg border border-blue-100 bg-blue-50/40 p-3">
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Importo per questa banca (€)</Label>
+                                <Input
+                                  inputMode="decimal"
+                                  placeholder="es. 150.000,00"
+                                  value={pb.importo_richiesto == null ? '' : String(pb.importo_richiesto).replace('.', ',')}
+                                  disabled={!canEdit && !canApprove}
+                                  onChange={event => {
+                                    const value = event.target.value;
+                                    setPracticeBanks(prev => prev.map(item => item.id === pb.id
+                                      ? { ...item, importo_richiesto: value === '' ? null : (parseItalianAmount(value) ?? item.importo_richiesto) }
+                                      : item));
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Motivazione per questa banca</Label>
+                                <Textarea
+                                  rows={2}
+                                  placeholder="Finalità della richiesta presso questa banca..."
+                                  value={pb.motivazione ?? ''}
+                                  disabled={!canEdit && !canApprove}
+                                  onChange={event => {
+                                    const value = event.target.value;
+                                    setPracticeBanks(prev => prev.map(item => item.id === pb.id
+                                      ? { ...item, motivazione: value }
+                                      : item));
+                                  }}
+                                />
+                              </div>
+                              {(canEdit || canApprove) && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1.5"
+                                  disabled={savingBankRequestId === pb.id}
+                                  onClick={() => handlePracticeBankRequestDetailsSave(
+                                    pb,
+                                    pb.importo_richiesto == null ? '' : String(pb.importo_richiesto).replace('.', ','),
+                                    pb.motivazione ?? '',
+                                  )}
+                                >
+                                  {savingBankRequestId === pb.id
+                                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    : <Save className="w-3.5 h-3.5" />}
+                                  Salva dati banca
+                                </Button>
                               )}
                             </div>
                             <div className="flex gap-2 items-center">

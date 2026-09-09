@@ -643,7 +643,16 @@ export default async function handler(req, res) {
 
     // ── 7. Componi HTML email ─────────────────────────────────────────────
     const cliente  = pratica.clients?.ragione_sociale ?? pratica.clients?.codice_fiscale ?? 'N/D';
+    const bankRequestAmount = pb.importo_richiesto ?? pratica.importo_richiesto ?? null;
+    const bankRequestReason = pb.motivazione ?? pratica.motivazione ?? null;
     const notaHtml = note ? `<p style="color:#555;margin-top:12px;"><strong>Note:</strong> ${note}</p>` : '';
+    const bankRequestSection = (bankRequestAmount != null || bankRequestReason)
+      ? `<div style="margin-top:18px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:6px;">
+  <h3 style="color:#1e3a8a;margin:0 0 8px;font-size:15px;">Richiesta per ${escapeHtml(pb.banks?.nome ?? 'questa banca')}</h3>
+  ${bankRequestAmount != null ? `<p style="margin:4px 0;font-size:13px;"><strong>Importo richiesto:</strong> € ${safeFmt(bankRequestAmount)}</p>` : ''}
+  ${bankRequestReason ? `<p style="margin:4px 0;font-size:13px;white-space:pre-wrap;"><strong>Motivazione:</strong> ${escapeHtml(String(bankRequestReason))}</p>` : ''}
+</div>`
+      : '';
 
     const docsHtml = docLinks.length > 0
       ? docLinks.map(d =>
@@ -996,6 +1005,7 @@ ${structuredRequirements.map(requirement => {
 <p>Le trasmettiamo la documentazione relativa alla pratica di <strong>${cliente}</strong>
 (rif. <code>${pratica.numero_pratica}</code>).</p>
 ${notaHtml}
+${bankRequestSection}
 <h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   📎 Documenti allegati (${docLinks.length})
 </h3>

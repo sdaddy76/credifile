@@ -80,6 +80,7 @@ type AutoData = {
   ateco: string;
   indirizzo: string;
   importo: number | null;
+  motivazione: string;
 };
 
 type BenchmarkInfo = {
@@ -162,7 +163,8 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [activeRelazioneId, setActiveRelazioneId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string | string[] | null>>({});
-  const [autoData, setAutoData] = useState<AutoData>({ ragione_sociale: '', cf: '', piva: '', ateco: '', indirizzo: '', importo: null });
+  const [autoData, setAutoData] = useState<AutoData>({ ragione_sociale: '', cf: '', piva: '', ateco: '', indirizzo: '', importo: null, motivazione: '' });
+  const [practiceBankDetails, setPracticeBankDetails] = useState<Record<string, { importo_richiesto?: number | null; motivazione?: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -177,6 +179,18 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     () => relazioni.find(r => r.id === activeRelazioneId) ?? relazioni[0] ?? null,
     [relazioni, activeRelazioneId]
   );
+
+  useEffect(() => {
+    const bankId = activeRelazione?.bank_id;
+    if (!bankId) return;
+    const details = practiceBankDetails[bankId];
+    if (!details) return;
+    setAutoData(prev => ({
+      ...prev,
+      importo: details.importo_richiesto ?? prev.importo,
+      motivazione: details.motivazione ?? prev.motivazione,
+    }));
+  }, [activeRelazione?.bank_id, practiceBankDetails]);
 
   const activeTemplate = activeRelazione?.relazione_templates ?? templates.find(t => t.id === activeRelazione?.template_id) ?? null;
   const kpiComparisons = useMemo(
@@ -223,6 +237,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         { data: rel, error: relErr },
         { data: client },
         { data: practice },
+        { data: bankDetails },
         { data: bilanci },
         { data: financing },
         { data: transactions },
@@ -232,6 +247,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         supabase.from('relazioni_commerciali').select('*, relazione_templates(*)').eq('practice_id', practiceId).order('updated_at', { ascending: false }),
         clientId ? supabase.from('clients').select('ragione_sociale,codice_fiscale,piva,indirizzo,codice_ateco').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
         supabase.from('practices').select('importo_richiesto').eq('id', practiceId).maybeSingle(),
+        supabase.from('practice_banks').select('bank_id,importo_richiesto,motivazione').eq('practice_id', practiceId),
         supabase
           .from('bilanci_kpi')
           .select('id,uploaded_file_id,anno_esercizio,created_at,kpi,totale_attivo,totale_immobilizzazioni,totale_attivo_circolante,rimanenze,crediti_circolante,totale_patrimonio_netto,capitale_sociale,totale_valore_produzione,totale_costi_produzione,ricavi_vendite,costi_materie,costi_servizi,costo_personale,differenza_ab,risultato_ante_imposte,interessi_passivi,proventi_partecipazioni,ammortamenti,utile_netto,utile_perdita_esercizio,disponibilita_liquide,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori,debiti_fornitori,debiti_tributari,totale_debiti,imposte,voci_mancanti')
@@ -261,6 +277,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       })) as RelazioneCommerciale[];
       setRelazioni(normalizedRel);
       setActiveRelazioneId(prev => prev ?? normalizedRel[0]?.id ?? null);
+      const bankMap: Record<string, { importo_richiesto?: number | null; motivazione?: string | null }> = {};
+      (bankDetails ?? []).forEach((row: any) => { bankMap[row.bank_id] = row; });
+      setPracticeBankDetails(bankMap);
       const c: any = client ?? {};
       const p: any = practice ?? {};
       const balances = (bilanci ?? []) as CommercialBalanceRecord[];
@@ -295,7 +314,8 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         piva: c.piva ?? '',
         ateco: c.codice_ateco ?? '',
         indirizzo: ((c.indirizzo ?? '').split(/[\n\r]/)[0].trim()).substring(0, 150),
-        importo: p.importo_richiesto ?? null,
+        importo: (normalizedRel[0]?.bank_id ? bankMap[normalizedRel[0].bank_id]?.importo_richiesto : null) ?? p.importo_richiesto ?? null,
+        motivazione: (normalizedRel[0]?.bank_id ? bankMap[normalizedRel[0].bank_id]?.motivazione : null) ?? '',
       });
 
       const benchmarkKey = getAtecoBenchmarkKey(c.codice_ateco ?? null);
@@ -498,6 +518,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       ['Attività ATECO', autoData.ateco || 'N/D'],
       ['Sede Legale', autoData.indirizzo || 'N/D'],
       ['Importo Richiesto', formatEuro(autoData.importo)],
+      ['Motivazione Richiesta', autoData.motivazione || 'N/D'],
     ];
 
     const children: any[] = [
@@ -597,6 +618,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     addText(`Attività ATECO: ${autoData.ateco || 'N/D'}`);
     addText(`Sede Legale: ${autoData.indirizzo || 'N/D'}`);
     addText(`Importo Richiesto: ${formatEuro(autoData.importo)}`);
+    addText(`Motivazione Richiesta: ${autoData.motivazione || 'N/D'}`);
 
     addText('Analisi economico-finanziaria dettagliata', 14, true);
     COMMERCIAL_REPORT_SECTIONS.forEach(section => {
@@ -817,6 +839,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                     <div><span className="text-muted-foreground">CF/PIVA:</span> <b>{autoData.cf || 'N/D'} / {autoData.piva || 'N/D'}</b></div>
                     <div><span className="text-muted-foreground">ATECO:</span> <b>{autoData.ateco || 'N/D'}</b></div>
                     <div><span className="text-muted-foreground">Importo:</span> <b>{formatEuro(autoData.importo)}</b></div>
+                    <div className="md:col-span-2"><span className="text-muted-foreground">Motivazione:</span> <b>{autoData.motivazione || 'N/D'}</b></div>
                     <div className="md:col-span-2"><span className="text-muted-foreground">Sede Legale:</span> <b>{autoData.indirizzo || 'N/D'}</b></div>
                   </div>
                 </div>

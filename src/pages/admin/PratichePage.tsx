@@ -37,7 +37,16 @@ export default function PratichePage() {
   const [assignBankNote, setAssignBankNote] = useState('');
   const [sendBankEmail, setSendBankEmail] = useState(false);
   const [savingBank, setSavingBank] = useState(false);
-  const [existingPracticeBanks, setExistingPracticeBanks] = useState<{id:string;bank_id:string;status:string;note?:string;data_invio?:string;banks:{nome:string;email?:string;email_invio_banca?:string}}[]>([]);
+  const [existingPracticeBanks, setExistingPracticeBanks] = useState<{
+    id:string;
+    bank_id:string;
+    status:string;
+    note?:string;
+    data_invio?:string;
+    importo_richiesto?:number | null;
+    motivazione?:string | null;
+    banks:{nome:string;email?:string;email_invio_banca?:string}
+  }[]>([]);
   const [loadingBankDialog, setLoadingBankDialog] = useState(false);
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [removingBankId, setRemovingBankId] = useState<string|null>(null);
@@ -401,6 +410,8 @@ export default function PratichePage() {
       bank_id: assignBankId,
       status: 'da_inviare',
       created_by: user?.id ?? null,
+      importo_richiesto: showAssignBank.importo_richiesto ?? null,
+      motivazione: showAssignBank.motivazione ?? null,
     });
     if (error) {
       setSavingBank(false);
