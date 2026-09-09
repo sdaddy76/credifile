@@ -111,6 +111,17 @@ type ClientQuestion = {
   created_at: string;
 };
 
+type BankDocumentAccessLog = {
+  id: string;
+  practice_id: string;
+  bank_id: string;
+  practice_document_id?: string | null;
+  uploaded_file_id?: string | null;
+  relation_id?: string | null;
+  event_type: 'opened' | 'downloaded';
+  occurred_at: string;
+};
+
 type StructuredContact = {
   nome: string;
   cognome: string;
@@ -274,6 +285,7 @@ export default function PraticaDetailPage() {
 
   const [practice, setPractice] = useState<Practice | null>(null);
   const [documents, setDocuments] = useState<PracticeDocument[]>([]);
+  const [bankDocumentAccessLogs, setBankDocumentAccessLogs] = useState<BankDocumentAccessLog[]>([]);
   const [logs, setLogs] = useState<PracticeStatusLog[]>([]);
   const [accessCode, setAccessCode] = useState<PracticeAccessCode | null>(null);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -1076,6 +1088,13 @@ export default function PraticaDetailPage() {
         });
     }
     setDocuments(docs.data as PracticeDocument[] ?? []);
+    const { data: accessLogs, error: accessLogsError } = await supabase
+      .from('bank_document_access_logs')
+      .select('id,practice_id,bank_id,practice_document_id,uploaded_file_id,relation_id,event_type,occurred_at')
+      .eq('practice_id', id)
+      .order('occurred_at', { ascending: false });
+    if (accessLogsError) console.warn('Impossibile caricare il tracciamento documenti banca:', accessLogsError.message);
+    setBankDocumentAccessLogs((accessLogs ?? []) as BankDocumentAccessLog[]);
     setLogs(l.data ?? []);
     setAccessCode(ac.data);
     setClientQuestions((questions.data ?? []) as ClientQuestion[]);
@@ -2952,23 +2971,49 @@ export default function PraticaDetailPage() {
                                 {files.length > 0 && (
                                   <div className="mt-2 space-y-1">
                                     {files.map(f => (
-                                      <div key={f.id} className="flex items-center gap-1">
-                                        <button
-                                          className="flex items-center gap-2 text-xs text-primary hover:underline flex-1 min-w-0 text-left"
-                                          onClick={() => downloadFile(f.storage_path, f.nome_file)}
-                                        >
-                                          <Download className="w-3 h-3 shrink-0" />
-                                          <span className="truncate">{f.nome_file}</span>
-                                        </button>
-                                        {canEdit && (
+                                      <div key={f.id} className="rounded-md border border-slate-100 px-2 py-1.5">
+                                        <div className="flex items-center gap-1">
                                           <button
-                                            className="ml-1 shrink-0 text-destructive/50 hover:text-destructive transition-colors"
-                                            title="Elimina questo file"
-                                            onClick={() => handleDeleteFile(f.id, f.storage_path, f.nome_file, doc.id, files.length)}
+                                            className="flex items-center gap-2 text-xs text-primary hover:underline flex-1 min-w-0 text-left"
+                                            onClick={() => downloadFile(f.storage_path, f.nome_file)}
                                           >
-                                            <XCircle className="w-3.5 h-3.5" />
+                                            <Download className="w-3 h-3 shrink-0" />
+                                            <span className="truncate">{f.nome_file}</span>
                                           </button>
-                                        )}
+                                          {canEdit && (
+                                            <button
+                                              className="ml-1 shrink-0 text-destructive/50 hover:text-destructive transition-colors"
+                                              title="Elimina questo file"
+                                              onClick={() => handleDeleteFile(f.id, f.storage_path, f.nome_file, doc.id, files.length)}
+                                            >
+                                              <XCircle className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                        {(() => {
+                                          const access = bankDocumentAccessLogs.filter(log => log.uploaded_file_id === f.id);
+                                          const opened = access.find(log => log.event_type === 'opened');
+                                          const downloaded = access.find(log => log.event_type === 'downloaded');
+                                          const bankName = (bankId: string) =>
+                                            practiceBanks.find(candidate => candidate.bank_id === bankId)?.banks?.nome ?? 'Banca';
+                                          return (
+                                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                                              {!opened && !downloaded && (
+                                                <span>◷ Nessun accesso della banca registrato</span>
+                                              )}
+                                              {opened && (
+                                                <span title={`Ultima apertura registrata: ${new Date(opened.occurred_at).toLocaleString('it-IT')}`}>
+                                                  👁 Aperto dalla banca ({bankName(opened.bank_id)}) {new Date(opened.occurred_at).toLocaleString('it-IT')}
+                                                </span>
+                                              )}
+                                              {downloaded && (
+                                                <span title={`Ultimo download registrato: ${new Date(downloaded.occurred_at).toLocaleString('it-IT')}`}>
+                                                  ↓ Scaricato dalla banca ({bankName(downloaded.bank_id)}) {new Date(downloaded.occurred_at).toLocaleString('it-IT')}
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
                                     ))}
                                   </div>

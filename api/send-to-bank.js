@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 // Vercel Serverless Function — Invia pratica alla banca via Resend
 // Sostituisce la Supabase Edge Function send-to-bank (BOOT_ERROR sul progetto fhieppjqlefdlanvrpik)
 
@@ -326,7 +328,7 @@ export default async function handler(req, res) {
 
     const filesUrl = integrationMode
       ? `${SUPABASE_URL}/rest/v1/practice_documents?practice_id=eq.${encodeURIComponent(practice_id)}&integration_request_id=eq.${encodeURIComponent(integration_request_id)}&select=id,nome,status,uploaded_files(id,nome_file,storage_path)&order=created_at.asc`
-      : `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(nome,status,bank_requirement_id,bank_document_requirements(bank_id))&order=created_at.asc`;
+      : `${SUPABASE_URL}/rest/v1/uploaded_files?practice_id=eq.${encodeURIComponent(practice_id)}&select=id,nome_file,storage_path,practice_documents(id,nome,status,bank_requirement_id,bank_document_requirements(bank_id))&order=created_at.asc`;
 
     // 1+2+3a. Pratica, banca, ciclo di approfondimento, file e risposte in parallelo
     const [
@@ -436,6 +438,7 @@ export default async function handler(req, res) {
           (document.uploaded_files ?? []).map(file => ({
             ...file,
             practice_documents: {
+              id: document.id,
               nome: document.nome,
               status: document.status,
             },
@@ -475,6 +478,7 @@ export default async function handler(req, res) {
             if (!url) return null;
             return {
               uploadedFileId: f.id,
+              practiceDocumentId: f.practice_documents?.id ?? null,
               nomeDoc: f.practice_documents?.nome ?? f.nome_file,
               nomeFile: f.nome_file,
               url,
@@ -482,7 +486,7 @@ export default async function handler(req, res) {
           } catch { return null; }
         }),
     );
-    const docLinks = signResults.filter(Boolean);
+    let docLinks = signResults.filter(Boolean);
     let relationAttachment = null;
     if (!integrationMode && commercialRelation?.pdf_url) {
       try {
@@ -525,6 +529,48 @@ export default async function handler(req, res) {
           error: `Impossibile allegare la Relazione Commerciale: ${relationError instanceof Error ? relationError.message : String(relationError)}`,
         });
       }
+    }
+
+    // Avvolge ogni signed URL con un link di tracking per la banca. In questo
+    // modo apertura e download restano distinti e associati a quel documento,
+    // alla pratica e alla singola banca destinataria.
+    if (docLinks.length > 0) {
+      const accessRows = [];
+      const accessByKey = new Map();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      for (const document of docLinks) {
+        for (const eventType of ['opened', 'downloaded']) {
+          const token = crypto.randomBytes(24).toString('hex');
+          accessRows.push({
+            token,
+            practice_id,
+            bank_id,
+            practice_document_id: document.practiceDocumentId ?? null,
+            uploaded_file_id: document.uploadedFileId ?? null,
+            relation_id: document.relationId ?? null,
+            event_type: eventType,
+            target_url: document.url,
+            expires_at: expiresAt,
+          });
+          accessByKey.set(`${document.uploadedFileId ?? ''}:${document.relationId ?? ''}:${eventType}`, token);
+        }
+      }
+      const accessResponse = await fetch(`${SUPABASE_URL}/rest/v1/bank_document_access_links`, {
+        method: 'POST',
+        headers: { ...H, Prefer: 'return=minimal' },
+        body: JSON.stringify(accessRows),
+      });
+      if (!accessResponse.ok) {
+        return res.status(502).json({ success: false, error: 'Impossibile preparare il tracciamento dei documenti' });
+      }
+      docLinks = docLinks.map(document => {
+        const key = (eventType) => `${document.uploadedFileId ?? ''}:${document.relationId ?? ''}:${eventType}`;
+        return {
+          ...document,
+          openedUrl: `${APP.replace(/\/$/, '')}/api/track-bank-document?token=${accessByKey.get(key('opened'))}`,
+          downloadedUrl: `${APP.replace(/\/$/, '')}/api/track-bank-document?token=${accessByKey.get(key('downloaded'))}`,
+        };
+      });
     }
     if (integrationMode && docLinks.length === 0 && answeredQuestions.length === 0) {
       return res.status(422).json({
@@ -663,8 +709,10 @@ export default async function handler(req, res) {
     const docsHtml = docLinks.length > 0
       ? docLinks.map(d =>
           `<li style="margin:8px 0;">` +
-          `<a href="${d.url}" style="color:#2563eb;font-weight:600;">${d.nomeDoc}</a>` +
+          `<strong style="color:#374151;">${escapeHtml(d.nomeDoc)}</strong>` +
           ` <span style="color:#888;font-size:11px;">(${d.nomeFile})</span>` +
+          ` — <a href="${escapeHtml(d.openedUrl)}" style="color:#2563eb;font-weight:600;">Apri</a>` +
+          ` · <a href="${escapeHtml(d.downloadedUrl)}" style="color:#2563eb;font-weight:600;">Scarica</a>` +
           `</li>`,
         ).join('')
       : '<li style="color:#888;">Nessun documento disponibile al momento</li>';
@@ -1050,7 +1098,9 @@ ${repSection}
       ? docLinks.map(document =>
           `<li style="margin:10px 0;">` +
           `<strong style="color:#374151;">${escapeHtml(document.nomeDoc)}</strong>` +
-          ` — <a href="${escapeHtml(document.url)}" style="color:#2563eb;font-weight:600;">${escapeHtml(document.nomeFile)}</a>` +
+          ` — <a href="${escapeHtml(document.openedUrl)}" style="color:#2563eb;font-weight:600;">Apri</a>` +
+          ` · <a href="${escapeHtml(document.downloadedUrl)}" style="color:#2563eb;font-weight:600;">Scarica</a>` +
+          ` <span style="color:#888;font-size:11px;">(${escapeHtml(document.nomeFile)})</span>` +
           ` <span style="color:#888;font-size:11px;">(link valido 7 giorni)</span>` +
           `</li>`
         ).join('')
