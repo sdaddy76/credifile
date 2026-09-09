@@ -86,6 +86,25 @@ function parseBilancio(text: string) {
   const ragione_sociale = extractBalanceCompanyName(text);
   const annoMatch = text.match(/Bilancio di esercizio al\s+\d{1,2}[-/]\d{2}[-/](\d{4})/);
   const anno_esercizio = annoMatch ? parseInt(annoMatch[1]) : null;
+  const parseDate = (value: string | undefined): string | null => {
+    if (!value) return null;
+    const match = value.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    return match ? `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}` : null;
+  };
+  const periodRange = text.match(/(?:dal|da)\s+(\d{1,2}[-/]\d{1,2}[-/]\d{4}).{0,100}?(?:al|a)\s+(\d{1,2}[-/]\d{1,2}[-/]\d{4})/i);
+  const periodEndMatch = text.match(/(?:situazione contabile|situazione economico[- ]patrimoniale|periodo infrannuale|provvisorio|al)\s*(?:del|al)?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})/i);
+  const periodo_inizio = parseDate(periodRange?.[1]);
+  const periodo_fine = parseDate(periodRange?.[2] ?? periodEndMatch?.[1] ?? (anno_esercizio ? `31/12/${anno_esercizio}` : undefined));
+  const is_provvisorio = /provvisor|situazione contabile|situazione economico[- ]patrimoniale|periodo infrannuale/i.test(text);
+  const startDate = periodo_inizio
+    ? new Date(`${periodo_inizio}T00:00:00Z`)
+    : is_provvisorio && periodo_fine && anno_esercizio
+      ? new Date(Date.UTC(anno_esercizio, 0, 1))
+      : null;
+  const endDate = periodo_fine ? new Date(`${periodo_fine}T00:00:00Z`) : null;
+  const mesi_coperti = startDate && endDate && endDate >= startDate
+    ? Math.round((((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1) / (365.2425 / 12) * 100) / 100
+    : null;
   const atecoMatch = text.match(/(?:ATECO|attività prevalente)[^0-9]{0,30}(\d{4,6}(?:[.,]\d{1,2})?)/i);
   const codice_ateco = atecoMatch?.[1]?.replace(',', '.') ?? null;
 
@@ -108,6 +127,7 @@ function parseBilancio(text: string) {
   const fondi_rischi = ePassivo(['B) Fondi per rischi', 'Fondi per rischi e oneri']);
   const tfr = ePassivo(['C) Trattamento di fine rapporto', 'Trattamento di fine rapporto di lavoro']);
   const totale_debiti = ePassivo(['Totale debiti']);
+  const passivita_correnti = ePassivo(['Totale passività correnti', 'Totale passivita correnti', 'Passività correnti', 'Passivita correnti']);
   const ratei_risconti_passivi = ePassivo(['E) Ratei e risconti', 'Ratei e risconti passivi']);
   const totale_passivo = ePassivo(['Totale passivo']);
 
@@ -179,6 +199,8 @@ function parseBilancio(text: string) {
 
   return {
     ragione_sociale, anno_esercizio, codice_ateco,
+    periodo_inizio: periodo_inizio ?? (is_provvisorio && anno_esercizio ? `${anno_esercizio}-01-01` : null),
+    periodo_fine, mesi_coperti, is_provvisorio,
     totale_attivo, totale_immobilizzazioni, imm_immateriali, imm_materiali, imm_finanziarie,
     totale_attivo_circolante, rimanenze, crediti_circolante, disponibilita_liquide, ratei_risconti_attivi,
     totale_patrimonio_netto, capitale_sociale, utile_perdita_esercizio,
@@ -187,7 +209,7 @@ function parseBilancio(text: string) {
     debiti_banche_breve, debiti_banche_lungo: null,
     debiti_altri_finanziatori,
     debiti_fornitori, debiti_tributari,
-    totale_debiti, ratei_risconti_passivi,
+    totale_debiti, passivita_correnti, ratei_risconti_passivi,
     ricavi_vendite, totale_valore_produzione,
     costi_materie, costi_servizi, costo_personale, ammortamenti, oneri_diversi_gestione,
     totale_costi_produzione, differenza_ab,
@@ -248,17 +270,20 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   const financialDebtFromBalance = financialDebtParts.length > 0
     ? financialDebtParts.reduce((sum, value) => sum + value, 0)
     : null;
-  const passCorr = td;
+  const passCorr = d.passivita_correnti;
   const tvp = d.totale_valore_produzione;
   // La Differenza A-B è già il risultato operativo (EBIT) prima della gestione finanziaria.
   // Se non disponibile, ricostruiamo un proxy dal risultato ante imposte neutralizzando
   // interessi passivi e proventi da partecipazioni.
   const ebit = d.differenza_ab !== null
     ? d.differenza_ab
-    : d.risultato_ante_imposte !== null
-      ? d.risultato_ante_imposte + (d.interessi_passivi ?? 0) - (d.proventi_partecipazioni ?? 0)
-      : null;
-  const ebitda = ebit !== null ? ebit + (d.ammortamenti ?? 0) : null;
+      : d.risultato_ante_imposte !== null
+        && (d.interessi_passivi !== null || d.proventi_partecipazioni !== null)
+        ? d.risultato_ante_imposte + (d.interessi_passivi ?? 0) - (d.proventi_partecipazioni ?? 0)
+        : null;
+  const ebitda = ebit !== null && d.ammortamenti !== null
+    ? ebit + d.ammortamenti
+    : null;
   const intPass = d.interessi_passivi;
   const isHolding = (d.ricavi_vendite === 0 || d.ricavi_vendite === null) && (d.proventi_partecipazioni ?? 0) > 0;
 
@@ -339,11 +364,17 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
     kpi: {
       liquidita: {
         current_ratio: kpi('Current Ratio', currentRatio, fmtRatio(currentRatio),
-          currentRatio === null ? 'nd' : currentRatio >= 1.5 ? 'verde' : currentRatio >= 1.0 ? 'giallo' : 'rosso'),
+          currentRatio === null ? 'nd' : currentRatio >= 1.5 ? 'verde' : currentRatio >= 1.0 ? 'giallo' : 'rosso',
+          currentRatio === null ? 'Non disponibile' : 'Bilancio',
+          currentRatio === null ? 'Passività correnti non presenti: il totale debiti non viene usato come proxy' : undefined),
         quick_ratio: kpi('Quick Ratio', quickRatio, fmtRatio(quickRatio),
-          quickRatio === null ? 'nd' : quickRatio >= 1.0 ? 'verde' : quickRatio >= 0.8 ? 'giallo' : 'rosso'),
+          quickRatio === null ? 'nd' : quickRatio >= 1.0 ? 'verde' : quickRatio >= 0.8 ? 'giallo' : 'rosso',
+          quickRatio === null ? 'Non disponibile' : 'Bilancio',
+          quickRatio === null ? 'Servono attivo circolante, rimanenze e passività correnti' : undefined),
         acid_test: kpi('Acid Test', acidTest, fmtRatio(acidTest),
-          acidTest === null ? 'nd' : acidTest >= 0.5 ? 'verde' : acidTest >= 0.2 ? 'giallo' : 'rosso'),
+          acidTest === null ? 'nd' : acidTest >= 0.5 ? 'verde' : acidTest >= 0.2 ? 'giallo' : 'rosso',
+          acidTest === null ? 'Non disponibile' : 'Bilancio',
+          acidTest === null ? 'Passività correnti non presenti' : undefined),
       },
       solidita: {
         debt_equity: kpi('Debt/Equity', debtEquity, fmtRatio(debtEquity),
@@ -478,6 +509,10 @@ Deno.serve(async (req) => {
     practice_id,
     uploaded_file_id: uploaded_file_id ?? null,
     anno_esercizio: bilData.anno_esercizio,
+    periodo_inizio: bilData.periodo_inizio,
+    periodo_fine: bilData.periodo_fine,
+    mesi_coperti: bilData.mesi_coperti,
+    is_provvisorio: bilData.is_provvisorio,
     ragione_sociale: bilData.ragione_sociale,
     totale_attivo: bilData.totale_attivo,
     totale_immobilizzazioni: bilData.totale_immobilizzazioni,
@@ -500,6 +535,7 @@ Deno.serve(async (req) => {
     debiti_fornitori: bilData.debiti_fornitori,
     debiti_tributari: bilData.debiti_tributari,
     totale_debiti: bilData.totale_debiti,
+    passivita_correnti: bilData.passivita_correnti,
     ratei_risconti_passivi: bilData.ratei_risconti_passivi,
     ricavi_vendite: bilData.ricavi_vendite,
     totale_valore_produzione: bilData.totale_valore_produzione,

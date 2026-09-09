@@ -256,7 +256,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         supabase.from('practice_banks').select('bank_id,importo_richiesto,motivazione').eq('practice_id', practiceId),
         supabase
           .from('bilanci_kpi')
-          .select('id,uploaded_file_id,anno_esercizio,created_at,kpi,totale_attivo,totale_immobilizzazioni,totale_attivo_circolante,rimanenze,crediti_circolante,totale_patrimonio_netto,capitale_sociale,totale_valore_produzione,totale_costi_produzione,ricavi_vendite,costi_materie,costi_servizi,costo_personale,differenza_ab,risultato_ante_imposte,interessi_passivi,proventi_partecipazioni,ammortamenti,utile_netto,utile_perdita_esercizio,disponibilita_liquide,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori,debiti_fornitori,debiti_tributari,totale_debiti,imposte,voci_mancanti')
+          .select('id,uploaded_file_id,anno_esercizio,periodo_inizio,periodo_fine,mesi_coperti,is_provvisorio,created_at,kpi,totale_attivo,totale_immobilizzazioni,totale_attivo_circolante,passivita_correnti,rimanenze,crediti_circolante,totale_patrimonio_netto,capitale_sociale,totale_valore_produzione,totale_costi_produzione,ricavi_vendite,costi_materie,costi_servizi,costo_personale,differenza_ab,risultato_ante_imposte,interessi_passivi,proventi_partecipazioni,ammortamenti,utile_netto,utile_perdita_esercizio,disponibilita_liquide,debiti_banche_breve,debiti_banche_lungo,debiti_altri_finanziatori,debiti_fornitori,debiti_tributari,totale_debiti,imposte,voci_mancanti')
           .eq('practice_id', practiceId)
           .order('anno_esercizio', { ascending: false })
           .limit(5),

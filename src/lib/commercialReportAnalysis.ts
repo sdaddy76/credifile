@@ -40,10 +40,16 @@ export interface CommercialBalanceRecord {
   id?: string | null;
   uploaded_file_id?: string | null;
   anno_esercizio?: number | null;
+  periodo_inizio?: string | null;
+  periodo_fine?: string | null;
+  mesi_coperti?: number | string | null;
+  giorni_coperti?: number | string | null;
+  is_provvisorio?: boolean | null;
   created_at?: string | null;
   totale_attivo?: number | string | null;
   totale_immobilizzazioni?: number | string | null;
   totale_attivo_circolante?: number | string | null;
+  passivita_correnti?: number | string | null;
   rimanenze?: number | string | null;
   crediti_circolante?: number | string | null;
   disponibilita_liquide?: number | string | null;
@@ -76,6 +82,9 @@ export interface CommercialReportAnalysis {
   latestAnnual: CommercialBalanceRecord | null;
   previousAnnual: CommercialBalanceRecord | null;
   provisional: CommercialBalanceRecord | null;
+  provisionalMonths: number | null;
+  provisionalAnnualized: CommercialBalanceRecord | null;
+  financialEvolution: string;
 }
 
 type BuildOptions = {
@@ -106,6 +115,85 @@ const firstNumber = (...values: Array<number | string | null | undefined>): numb
   return null;
 };
 
+const FLOW_FIELDS: Array<keyof CommercialBalanceRecord> = [
+  'ricavi_vendite',
+  'totale_valore_produzione',
+  'costi_materie',
+  'costi_servizi',
+  'costo_personale',
+  'ammortamenti',
+  'totale_costi_produzione',
+  'differenza_ab',
+  'interessi_passivi',
+  'risultato_ante_imposte',
+  'imposte',
+  'utile_netto',
+  'utile_perdita_esercizio',
+];
+
+const dateOnly = (value: string | null | undefined): Date | null => {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+/**
+ * Restituisce i mesi effettivamente coperti da un bilancio provvisorio.
+ * Non deduce il periodo dal solo anno: in assenza di date il dato resta N/D.
+ */
+export function getBalancePeriodMonths(balance: CommercialBalanceRecord | null): number | null {
+  if (!balance) return null;
+  const explicit = numberValue(balance.mesi_coperti);
+  if (explicit !== null && explicit > 0 && explicit <= 12) return explicit;
+  const start = dateOnly(balance.periodo_inizio);
+  const end = dateOnly(balance.periodo_fine);
+  if (!start || !end || end < start) return null;
+  const startDay = start.getUTCDate();
+  const endDay = end.getUTCDate();
+  const endMonthLastDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate();
+  if (startDay === 1 && endDay === endMonthLastDay) {
+    return (end.getUTCFullYear() - start.getUTCFullYear()) * 12
+      + end.getUTCMonth() - start.getUTCMonth() + 1;
+  }
+  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  const months = days / (365.2425 / 12);
+  return months > 0 && months <= 12.5 ? Math.round(months * 100) / 100 : null;
+}
+
+/**
+ * Annualizza esclusivamente le grandezze di flusso. Le poste patrimoniali
+ * (attivo, PN, debiti, liquidità, crediti e rimanenze) restano al valore
+ * puntuale della data di riferimento.
+ */
+export function annualizeBalanceFlows(
+  balance: CommercialBalanceRecord | null,
+  monthsCovered: number | null = getBalancePeriodMonths(balance),
+): CommercialBalanceRecord | null {
+  if (!balance || monthsCovered === null || monthsCovered <= 0 || monthsCovered >= 12) return balance;
+  const factor = 12 / monthsCovered;
+  const annualized = { ...balance };
+  for (const field of FLOW_FIELDS) {
+    const value = numberValue(balance[field] as number | string | null | undefined);
+    if (value !== null) (annualized as Record<string, unknown>)[field] = value * factor;
+  }
+  return annualized;
+}
+
+const periodLabel = (balance: CommercialBalanceRecord | null, months: number | null) => {
+  if (!balance) return 'periodo non disponibile';
+  const start = dateOnly(balance.periodo_inizio);
+  const end = dateOnly(balance.periodo_fine);
+  if (start && end) {
+    const format = (date: Date) => date.toLocaleDateString('it-IT', { timeZone: 'UTC' });
+    return `${format(start)}–${format(end)} (${months?.toLocaleString('it-IT', { maximumFractionDigits: 2 }) ?? 'N/D'} mesi)`;
+  }
+  return months !== null
+    ? `${months.toLocaleString('it-IT', { maximumFractionDigits: 2 })} mesi documentati`
+    : 'periodo non documentato';
+};
+
 const yearLabel = (balance: CommercialBalanceRecord | null) =>
   balance?.anno_esercizio ? String(balance.anno_esercizio) : 'anno non disponibile';
 
@@ -129,7 +217,7 @@ const netIncome = (balance: CommercialBalanceRecord | null): number | null =>
   balance ? firstNumber(balance.utile_netto, balance.utile_perdita_esercizio) : null;
 
 const margin = (balance: CommercialBalanceRecord | null): number | null => {
-  const revenue = numberValue(balance?.ricavi_vendite);
+  const revenue = firstNumber(balance?.totale_valore_produzione, balance?.ricavi_vendite);
   const operatingCashFlow = ebitda(balance);
   if (revenue === null || revenue === 0 || operatingCashFlow === null) return null;
   return (operatingCashFlow / revenue) * 100;
@@ -300,19 +388,50 @@ function buildProvisionalComment(
       : 'Non disponibile: non è stato identificato un bilancio provvisorio tra i documenti analizzati della pratica.';
   }
 
-  const period = yearLabel(provisional);
+  const months = getBalancePeriodMonths(provisional);
+  const annualized = annualizeBalanceFlows(provisional, months);
+  const period = periodLabel(provisional, months);
   const baseYear = yearLabel(latestAnnual);
   const lines = [
     `Il bilancio provvisorio identificato per il periodo ${period} riporta ricavi per ${euro(numberValue(provisional.ricavi_vendite))}, valore della produzione per ${euro(numberValue(provisional.totale_valore_produzione))}, EBITDA ricostruibile per ${euro(ebitda(provisional))} e risultato netto per ${euro(netIncome(provisional))}.`,
     `Patrimonio netto: ${euro(numberValue(provisional.totale_patrimonio_netto))}; debiti complessivi: ${euro(numberValue(provisional.totale_debiti))}; disponibilità liquide: ${euro(numberValue(provisional.disponibilita_liquide))}.`,
   ];
+  if (months !== null && months < 12 && annualized) {
+    lines.push(
+      `Per rendere leggibile l’evoluzione, i flussi sono annualizzati con fattore ${((12 / months)).toLocaleString('it-IT', { maximumFractionDigits: 2 })}: ricavi prospettici ${euro(numberValue(annualized.ricavi_vendite))}, valore della produzione prospettico ${euro(numberValue(annualized.totale_valore_produzione))}, EBITDA prospettico ${euro(ebitda(annualized))} e risultato netto prospettico ${euro(netIncome(annualized))}. Le poste patrimoniali restano quelle rilevate alla data del provvisorio.`);
+  } else if (months === null) {
+    lines.push('Il periodo infrannuale non è documentato in modo sufficiente: non viene applicata alcuna annualizzazione.');
+  }
   if (latestAnnual) {
     lines.push(
-      `Confronto indicativo con il bilancio annuale ${baseYear}: ricavi ${euro(numberValue(provisional.ricavi_vendite))} rispetto a ${euro(numberValue(latestAnnual.ricavi_vendite))}; EBITDA ${euro(ebitda(provisional))} rispetto a ${euro(ebitda(latestAnnual))}.`,
+      `Confronto con il bilancio annuale ${baseYear}: ricavi effettivi ${euro(numberValue(provisional.ricavi_vendite))}${annualized && months !== null && months < 12 ? ` (proiezione annua ${euro(numberValue(annualized.ricavi_vendite))})` : ''} rispetto a ${euro(numberValue(latestAnnual.ricavi_vendite))}; EBITDA effettivo ${euro(ebitda(provisional))}${annualized && months !== null && months < 12 ? ` (proiezione annua ${euro(ebitda(annualized))})` : ''} rispetto a ${euro(ebitda(latestAnnual))}.`,
     );
   }
-  lines.push('Poiché il periodo infrannuale e la data di chiusura del provvisorio non sono strutturati nei dati disponibili, il confronto non viene annualizzato e deve essere validato sul documento originale.');
+  lines.push('La proiezione è indicativa e non sostituisce il bilancio annuale approvato; deve essere validata sul documento originale.');
   return lines.join(' ');
+}
+
+function buildFinancialEvolution(
+  latestAnnual: CommercialBalanceRecord | null,
+  previousAnnual: CommercialBalanceRecord | null,
+  provisional: CommercialBalanceRecord | null,
+): string {
+  const annualLines = [
+    previousAnnual ? `Bilancio ${yearLabel(previousAnnual)}: ricavi ${euro(numberValue(previousAnnual.ricavi_vendite))}, EBITDA ${euro(ebitda(previousAnnual))}, utile ${euro(netIncome(previousAnnual))}, PN ${euro(numberValue(previousAnnual.totale_patrimonio_netto))}.` : null,
+    latestAnnual ? `Bilancio ${yearLabel(latestAnnual)}: ricavi ${euro(numberValue(latestAnnual.ricavi_vendite))}, EBITDA ${euro(ebitda(latestAnnual))}, utile ${euro(netIncome(latestAnnual))}, PN ${euro(numberValue(latestAnnual.totale_patrimonio_netto))}.` : null,
+  ].filter((line): line is string => Boolean(line));
+  if (!provisional) return listAvailable(annualLines, 'Non disponibile: non risultano bilanci comparabili.');
+
+  const months = getBalancePeriodMonths(provisional);
+  const annualized = annualizeBalanceFlows(provisional, months);
+  const provisionalLine = `Provvisorio ${yearLabel(provisional)} (${periodLabel(provisional, months)}): ricavi effettivi ${euro(numberValue(provisional.ricavi_vendite))}, EBITDA effettivo ${euro(ebitda(provisional))}, utile effettivo ${euro(netIncome(provisional))}, PN puntuale ${euro(numberValue(provisional.totale_patrimonio_netto))}.`;
+  annualLines.push(provisionalLine);
+  if (annualized && months !== null && months < 12) {
+    annualLines.push(`Provvisorio ${yearLabel(provisional)} annualizzato sui flussi: ricavi ${euro(numberValue(annualized.ricavi_vendite))}, EBITDA ${euro(ebitda(annualized))}, utile ${euro(netIncome(annualized))}; attivo, PN, debiti, liquidità e altre poste patrimoniali non sono annualizzati.`);
+  } else if (months === null) {
+    annualLines.push('Il provvisorio è incluso nell’evoluzione con i valori effettivi, ma senza proiezione perché il periodo coperto non è documentato.');
+  }
+  return annualLines.join('\n');
 }
 
 export function buildCommercialReportAnalysis({
@@ -335,16 +454,25 @@ export function buildCommercialReportAnalysis({
   const latestAnnual = annualBalances[0] ?? null;
   const previousAnnual = annualBalances[1] ?? null;
   const provisional = provisionalBalances[0] ?? null;
+  const provisionalMonths = getBalancePeriodMonths(provisional);
+  const provisionalAnnualized = annualizeBalanceFlows(provisional, provisionalMonths);
+  const financialEvolution = buildFinancialEvolution(latestAnnual, previousAnnual, provisional);
 
   return {
     latestAnnual,
     previousAnnual,
     provisional,
+    provisionalMonths,
+    provisionalAnnualized,
+    financialEvolution,
     sections: {
       [COMMERCIAL_REPORT_SECTION_KEYS.companySituation]: buildCompanySituation(latestAnnual),
       [COMMERCIAL_REPORT_SECTION_KEYS.growthOpportunities]: buildGrowthOpportunities(latestAnnual, previousAnnual),
       [COMMERCIAL_REPORT_SECTION_KEYS.mainBalanceItems]: buildMainBalanceItems(latestAnnual),
-      [COMMERCIAL_REPORT_SECTION_KEYS.yearOverYear]: buildYearOverYear(latestAnnual, previousAnnual),
+      [COMMERCIAL_REPORT_SECTION_KEYS.yearOverYear]: [
+        buildYearOverYear(latestAnnual, previousAnnual),
+        provisional ? `\nEvoluzione estesa con il provvisorio:\n${financialEvolution}` : '',
+      ].join(''),
       [COMMERCIAL_REPORT_SECTION_KEYS.provisionalBalance]: buildProvisionalComment(
         provisional,
         latestAnnual,

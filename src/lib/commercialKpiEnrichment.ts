@@ -3,6 +3,11 @@ import type { KpiEntry, KpiResult } from '@/lib/bankabilityScoring';
 
 export interface CommercialBalanceData {
   totale_attivo?: number | null;
+  totale_attivo_circolante?: number | null;
+  passivita_correnti?: number | null;
+  rimanenze?: number | null;
+  crediti_circolante?: number | null;
+  totale_debiti?: number | null;
   totale_patrimonio_netto?: number | null;
   totale_valore_produzione?: number | null;
   totale_costi_produzione?: number | null;
@@ -11,11 +16,15 @@ export interface CommercialBalanceData {
   risultato_ante_imposte?: number | null;
   interessi_passivi?: number | null;
   proventi_partecipazioni?: number | null;
+  utile_netto?: number | null;
+  utile_perdita_esercizio?: number | null;
   ammortamenti?: number | null;
   disponibilita_liquide?: number | null;
   debiti_banche_breve?: number | null;
   debiti_banche_lungo?: number | null;
   debiti_altri_finanziatori?: number | null;
+  debiti_fornitori?: number | null;
+  costi_materie?: number | null;
   voci_mancanti?: string[] | null;
   kpi?: KpiResult | null;
 }
@@ -57,6 +66,10 @@ function percent(value: number | null): string {
 
 function multiple(value: number | null): string {
   return value === null ? 'N/D' : `${value.toFixed(2)}x`;
+}
+
+function ratio(value: number | null): string {
+  return value === null ? 'N/D' : value.toFixed(2);
 }
 
 function semaforoHigher(value: number | null, green: number, yellow: number): KpiEntry['semaforo'] {
@@ -117,6 +130,7 @@ export function enrichCommercialKpis(
     : finite(balance.totale_valore_produzione) && finite(balance.totale_costi_produzione)
       ? balance.totale_valore_produzione - balance.totale_costi_produzione
       : finite(balance.risultato_ante_imposte)
+        && (finite(balance.interessi_passivi) || finite(balance.proventi_partecipazioni))
         ? balance.risultato_ante_imposte
           + (finite(balance.interessi_passivi) ? balance.interessi_passivi : 0)
           - (finite(balance.proventi_partecipazioni) ? balance.proventi_partecipazioni : 0)
@@ -223,6 +237,80 @@ export function enrichCommercialKpis(
     ? pfn / balance.totale_patrimonio_netto
     : null;
 
+  // Ricalcolo coerente dei KPI strutturali. I ratio di liquidità non usano
+  // il totale debiti: serve il solo aggregato delle passività correnti.
+  const currentLiabilities = finite(balance.passivita_correnti) && balance.passivita_correnti > 0
+    ? balance.passivita_correnti
+    : null;
+  const currentAssets = finite(balance.totale_attivo_circolante) ? balance.totale_attivo_circolante : null;
+  const inventories = finite(balance.rimanenze) ? balance.rimanenze : null;
+  const currentRatio = currentAssets !== null && currentLiabilities !== null
+    ? currentAssets / currentLiabilities
+    : null;
+  const quickRatio = currentAssets !== null && inventories !== null && currentLiabilities !== null
+    ? (currentAssets - inventories) / currentLiabilities
+    : null;
+  const acidTest = finite(balance.disponibilita_liquide) && currentLiabilities !== null
+    ? balance.disponibilita_liquide / currentLiabilities
+    : null;
+  const debtEquity = finite(balance.totale_debiti) && finite(balance.totale_patrimonio_netto) && balance.totale_patrimonio_netto > 0
+    ? balance.totale_debiti / balance.totale_patrimonio_netto
+    : null;
+  const leverage = finite(balance.totale_attivo) && finite(balance.totale_patrimonio_netto) && balance.totale_patrimonio_netto > 0
+    ? balance.totale_attivo / balance.totale_patrimonio_netto
+    : null;
+  const pnSuTa = finite(balance.totale_attivo) && balance.totale_attivo > 0 && finite(balance.totale_patrimonio_netto)
+    ? (balance.totale_patrimonio_netto / balance.totale_attivo) * 100
+    : null;
+  const netProfit = finite(balance.utile_netto)
+    ? balance.utile_netto
+    : finite(balance.utile_perdita_esercizio)
+      ? balance.utile_perdita_esercizio
+      : null;
+  const roe = finite(balance.totale_patrimonio_netto) && balance.totale_patrimonio_netto > 0
+    && netProfit !== null
+    ? (netProfit / balance.totale_patrimonio_netto) * 100
+    : null;
+  const dso = finite(balance.ricavi_vendite) && balance.ricavi_vendite > 0 && finite(balance.crediti_circolante)
+    ? balance.crediti_circolante / (balance.ricavi_vendite / 365)
+    : null;
+  const dpo = finite(balance.costi_materie) && balance.costi_materie > 0 && finite(balance.debiti_fornitori)
+    ? balance.debiti_fornitori / (balance.costi_materie / 365)
+    : null;
+  const dsi = finite(balance.costi_materie) && balance.costi_materie > 0 && inventories !== null && inventories > 0
+    ? inventories / (balance.costi_materie / 365)
+    : null;
+
+  const setRatio = (
+    area: string,
+    key: string,
+    label: string,
+    value: number | null,
+    format: string,
+    inverse: boolean,
+    green: number,
+    yellow: number,
+    sourceNote: string,
+  ) => setEntry(result, area, key, {
+    label,
+    valore: value,
+    formatted: format,
+    semaforo: inverse ? semaforoLower(value, green, yellow) : semaforoHigher(value, green, yellow),
+    source: value === null ? 'Non disponibile' : 'Bilancio',
+    source_note: value === null ? sourceNote : undefined,
+  });
+  setRatio('liquidita', 'current_ratio', 'Current Ratio', currentRatio, ratio(currentRatio), false, 1.5, 1, 'Passività correnti non disponibili; non viene usato il totale debiti come proxy');
+  setRatio('liquidita', 'quick_ratio', 'Quick Ratio', quickRatio, ratio(quickRatio), false, 1, 0.8, 'Servono attivo circolante, rimanenze e passività correnti');
+  setRatio('liquidita', 'acid_test', 'Acid Test', acidTest, ratio(acidTest), false, 0.5, 0.2, 'Passività correnti non disponibili');
+  setRatio('solidita', 'debt_equity', 'Debt/Equity', debtEquity, ratio(debtEquity), true, 1.5, 3, 'Servono totale debiti e patrimonio netto');
+  setRatio('solidita', 'leverage', 'Leverage', leverage, ratio(leverage), true, 2.5, 4, 'Servono totale attivo e patrimonio netto');
+  setRatio('solidita', 'pn_su_ta', 'PN / Totale Attivo', pnSuTa, percent(pnSuTa), false, 40, 25, 'Servono patrimonio netto e totale attivo');
+  setRatio('efficienza', 'dso', 'DSO (giorni crediti)', dso, dso === null ? 'N/D' : `${Math.round(dso)} gg`, true, 60, 90, 'Servono crediti dell’attivo circolante e ricavi');
+  setRatio('efficienza', 'dpo', 'DPO (giorni debiti)', dpo, dpo === null ? 'N/D' : `${Math.round(dpo)} gg`, true, 60, 90, 'Servono debiti verso fornitori e costi per materie');
+  setRatio('efficienza', 'dsi', 'DSI (giorni magazzino)', dsi, dsi === null ? 'N/D' : `${Math.round(dsi)} gg`, true, 60, 90, 'Servono rimanenze e costi per materie');
+  setRatio('redditivita', 'roe', 'ROE', roe, percent(roe), false, 10, 3, 'Servono utile netto e patrimonio netto');
+
+
   setEntry(result, 'indebitamento', 'pfn', {
     label: 'PFN (€)',
     valore: pfn,
@@ -253,6 +341,7 @@ export function enrichCommercialKpis(
     source: pfnPn === null ? 'Non disponibile' : pfnSource,
     source_note: pfnPn === null ? `${pfnNote}; patrimonio netto non disponibile` : pfnNote,
   });
+
 
   const financingRatesComplete = activeFinancing.length > 0
     && activeFinancing.every(item => (numeric(item.rata) ?? 0) > 0);

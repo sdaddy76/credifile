@@ -1,6 +1,8 @@
 import {
+  annualizeBalanceFlows,
   buildCommercialReportAnalysis,
   COMMERCIAL_REPORT_SECTION_KEYS,
+  getBalancePeriodMonths,
   type CommercialBalanceRecord,
 } from '@/lib/commercialReportAnalysis';
 
@@ -90,7 +92,44 @@ describe('commercialReportAnalysis', () => {
     expect(result.latestAnnual?.anno_esercizio).toBe(2025);
     expect(result.provisional?.anno_esercizio).toBe(2026);
     expect(result.sections[COMMERCIAL_REPORT_SECTION_KEYS.provisionalBalance]).toContain('provvisorio');
-    expect(result.sections[COMMERCIAL_REPORT_SECTION_KEYS.provisionalBalance]).toContain('non viene annualizzato');
+    expect(result.sections[COMMERCIAL_REPORT_SECTION_KEYS.provisionalBalance]).toContain('non viene applicata alcuna annualizzazione');
+  });
+
+  it('annualizza solo i flussi del provvisorio e mantiene puntuali le poste patrimoniali', () => {
+    const provisional: CommercialBalanceRecord = {
+      ...annual2025,
+      uploaded_file_id: 'provisional-6m',
+      anno_esercizio: 2026,
+      periodo_inizio: '2026-01-01',
+      periodo_fine: '2026-06-30',
+      ricavi_vendite: 600_000,
+      totale_valore_produzione: 620_000,
+      totale_costi_produzione: 540_000,
+      ammortamenti: 20_000,
+      utile_netto: 50_000,
+      totale_attivo: 950_000,
+      totale_patrimonio_netto: 390_000,
+      totale_debiti: 510_000,
+      disponibilita_liquide: 130_000,
+    };
+
+    expect(getBalancePeriodMonths(provisional)).toBeCloseTo(6, 1);
+    const annualized = annualizeBalanceFlows(provisional);
+    expect(annualized?.ricavi_vendite).toBeCloseTo(1_200_000, 0);
+    expect(annualized?.totale_valore_produzione).toBeCloseTo(1_240_000, 0);
+    expect(annualized?.utile_netto).toBeCloseTo(100_000, 0);
+    expect(annualized?.totale_attivo).toBe(950_000);
+    expect(annualized?.totale_patrimonio_netto).toBe(390_000);
+
+    const result = buildCommercialReportAnalysis({
+      balances: [provisional, annual2025],
+      provisionalFileIds: ['provisional-6m'],
+      hasProvisionalDocument: true,
+    });
+    expect(result.provisionalMonths).toBeCloseTo(6, 1);
+    expect(result.provisionalAnnualized?.ricavi_vendite).toBeCloseTo(1_200_000, 0);
+    expect(result.financialEvolution).toContain('annualizzato sui flussi');
+    expect(result.sections[COMMERCIAL_REPORT_SECTION_KEYS.yearOverYear]).toContain('annualizzato sui flussi');
   });
 
   it('segnala il documento provvisorio caricato ma non ancora analizzato', () => {
