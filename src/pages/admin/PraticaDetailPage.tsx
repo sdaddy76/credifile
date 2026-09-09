@@ -117,11 +117,14 @@ type StructuredContact = {
   email: string;
   cellulare: string;
 };
+type StructuredContactRole = 'legal_representative' | 'administrator' | 'beneficial_owner';
+type StructuredSubject = StructuredContact & { roles: StructuredContactRole[] };
 
 type StructuredContactsResponse = {
   legal_representative: StructuredContact;
   administrator: StructuredContact;
   beneficial_owners: StructuredContact[];
+  subjects?: StructuredSubject[];
 };
 
 const emptyStructuredContact = (): StructuredContact => ({
@@ -150,7 +153,35 @@ const readStructuredContacts = (
     legal_representative: parseContact(response?.legal_representative),
     administrator: parseContact(response?.administrator),
     beneficial_owners: owners.length > 0 ? owners : [emptyStructuredContact()],
+    subjects: Array.isArray(response?.subjects)
+      ? response.subjects.map(value => {
+          const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+          const roles = Array.isArray(raw.roles)
+            ? raw.roles.filter((role): role is StructuredContactRole => ['legal_representative', 'administrator', 'beneficial_owner'].includes(String(role)))
+            : [];
+          return { ...parseContact(raw), roles };
+        })
+      : undefined,
   };
+};
+
+const getStructuredSubjects = (response?: Record<string, unknown> | null): StructuredSubject[] => {
+  const contacts = readStructuredContacts(response);
+  if (contacts.subjects && contacts.subjects.length > 0) return contacts.subjects;
+  const subjects: StructuredSubject[] = [];
+  const addLegacy = (contact: StructuredContact, role: StructuredContactRole) => {
+    if (!Object.values(contact).some(value => String(value).trim())) return;
+    const existing = subjects.find(subject =>
+      subject.nome === contact.nome && subject.cognome === contact.cognome
+      && subject.email === contact.email && subject.cellulare === contact.cellulare
+    );
+    if (existing) existing.roles = [...new Set([...existing.roles, role])];
+    else subjects.push({ ...contact, roles: [role] });
+  };
+  addLegacy(contacts.legal_representative, 'legal_representative');
+  addLegacy(contacts.administrator, 'administrator');
+  contacts.beneficial_owners.forEach(owner => addLegacy(owner, 'beneficial_owner'));
+  return subjects.length > 0 ? subjects : [{ ...emptyStructuredContact(), roles: ['legal_representative', 'administrator', 'beneficial_owner'] }];
 };
 
 const PRIMARY_STATUS_OPTIONS: PracticeStatus[] = [
@@ -1701,6 +1732,52 @@ export default function PraticaDetailPage() {
     }));
   };
 
+  const updateStructuredSubject = (
+    docId: string,
+    subjectIndex: number,
+    patch: Partial<StructuredSubject>,
+  ) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const subjects = getStructuredSubjects(document.client_response);
+      subjects[subjectIndex] = { ...subjects[subjectIndex], ...patch };
+      return {
+        ...document,
+        client_response: { ...(document.client_response ?? {}), subjects } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const addStructuredSubject = (docId: string) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const subjects = getStructuredSubjects(document.client_response);
+      return {
+        ...document,
+        client_response: {
+          ...(document.client_response ?? {}),
+          subjects: [...subjects, { ...emptyStructuredContact(), roles: ['beneficial_owner'] }],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const removeStructuredSubject = (docId: string, subjectIndex: number) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const subjects = getStructuredSubjects(document.client_response).filter((_, index) => index !== subjectIndex);
+      return {
+        ...document,
+        client_response: {
+          ...(document.client_response ?? {}),
+          subjects: subjects.length > 0
+            ? subjects
+            : [{ ...emptyStructuredContact(), roles: ['legal_representative', 'administrator', 'beneficial_owner'] }],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
   const addStructuredBeneficialOwner = (docId: string) => {
     setDocuments(prev => prev.map(document => {
       if (document.id !== docId) return document;
@@ -1741,22 +1818,27 @@ export default function PraticaDetailPage() {
       }
       response = { text };
     } else if (document.input_type === 'contacts') {
-      const contacts = readStructuredContacts(document.client_response);
-      const allContacts = [
-        contacts.legal_representative,
-        contacts.administrator,
-        ...contacts.beneficial_owners,
-      ];
-      if (allContacts.some(contact =>
+      const subjects = getStructuredSubjects(document.client_response).filter(subject => subject.roles.length > 0);
+      if (subjects.length === 0) {
+        toast.error('Aggiungi almeno un soggetto e assegna un ruolo');
+        return;
+      }
+      if (subjects.some(contact =>
         !contact.nome.trim()
         || !contact.cognome.trim()
         || !contact.email.trim()
         || !contact.cellulare.trim()
       )) {
-        toast.error('Completa nome, cognome, e-mail e cellulare per tutti i soggetti');
+        toast.error('Completa i dati dei soggetti aggiunti');
         return;
       }
-      response = contacts as unknown as Record<string, unknown>;
+      const empty = emptyStructuredContact();
+      response = {
+        subjects,
+        legal_representative: subjects.find(subject => subject.roles.includes('legal_representative')) ?? empty,
+        administrator: subjects.find(subject => subject.roles.includes('administrator')) ?? empty,
+        beneficial_owners: subjects.filter(subject => subject.roles.includes('beneficial_owner')),
+      } as unknown as Record<string, unknown>;
     } else {
       return;
     }
@@ -2714,24 +2796,12 @@ export default function PraticaDetailPage() {
                         && typeof doc.client_response === 'object'
                         ? doc.client_response
                         : null;
-                      const editableContacts = readStructuredContacts(doc.client_response);
+                      const editableSubjects = getStructuredSubjects(doc.client_response);
                       const contactRows = contactsResponse
-                        ? [
-                            {
-                              label: 'Legale rappresentante',
-                              value: contactsResponse.legal_representative,
-                            },
-                            {
-                              label: 'Amministratore',
-                              value: contactsResponse.administrator,
-                            },
-                            ...(Array.isArray(contactsResponse.beneficial_owners)
-                              ? contactsResponse.beneficial_owners.map((value, index) => ({
-                                  label: `Titolare effettivo ${index + 1}`,
-                                  value,
-                                }))
-                              : []),
-                          ]
+                        ? editableSubjects.map((value, index) => ({
+                            label: `Soggetto ${index + 1}`,
+                            value,
+                          }))
                         : [];
                       return (
                         <Card key={doc.id} className="border-border">
@@ -2811,53 +2881,34 @@ export default function PraticaDetailPage() {
                                     })}
                                     {canEdit && (
                                       <div className="mt-3 space-y-3">
-                                        {([
-                                          ['legal_representative', 'Legale rappresentante', editableContacts.legal_representative],
-                                          ['administrator', 'Amministratore', editableContacts.administrator],
-                                        ] as const).map(([role, label, contact]) => (
-                                          <div key={role} className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
-                                            <p className="text-xs font-semibold text-indigo-800">{label}</p>
-                                            <div className="grid gap-2 sm:grid-cols-2">
-                                              {([
-                                                ['nome', 'Nome', 'text'],
-                                                ['cognome', 'Cognome', 'text'],
-                                                ['email', 'E-mail', 'email'],
-                                                ['cellulare', 'Cellulare', 'tel'],
-                                              ] as const).map(([field, fieldLabel, fieldType]) => (
-                                                <Input
-                                                  key={field}
-                                                  type={fieldType}
-                                                  placeholder={fieldLabel}
-                                                  value={contact[field]}
-                                                  onChange={event => updateStructuredContact(
-                                                    doc.id,
-                                                    role,
-                                                    field,
-                                                    event.target.value,
-                                                  )}
-                                                />
-                                              ))}
-                                            </div>
-                                          </div>
-                                        ))}
-                                        {editableContacts.beneficial_owners.map((owner, ownerIndex) => (
-                                          <div key={ownerIndex} className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
+                                        {editableSubjects.map((subject, subjectIndex) => (
+                                          <div key={subjectIndex} className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
                                             <div className="flex items-center justify-between gap-2">
-                                              <p className="text-xs font-semibold text-indigo-800">
-                                                Titolare effettivo {ownerIndex + 1}
-                                              </p>
-                                              {editableContacts.beneficial_owners.length > 1 && (
-                                                <Button
-                                                  type="button"
-                                                  size="sm"
-                                                  variant="ghost"
-                                                  className="h-7 px-2 text-red-600"
-                                                  onClick={() => removeStructuredBeneficialOwner(doc.id, ownerIndex)}
-                                                >
+                                              <p className="text-xs font-semibold text-indigo-800">Soggetto {subjectIndex + 1}</p>
+                                              {editableSubjects.length > 1 && (
+                                                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-red-600"
+                                                  onClick={() => removeStructuredSubject(doc.id, subjectIndex)}>
                                                   <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
                                                 </Button>
                                               )}
                                             </div>
+                                            <div className="flex flex-wrap gap-3">
+                                              {([
+                                                ['legal_representative', 'Legale rappresentante'],
+                                                ['administrator', 'Amministratore'],
+                                                ['beneficial_owner', 'Titolare effettivo'],
+                                              ] as const).map(([role, label]) => (
+                                                <label key={role} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                  <input type="checkbox" checked={subject.roles.includes(role)}
+                                                    onChange={event => updateStructuredSubject(doc.id, subjectIndex, {
+                                                      roles: event.target.checked
+                                                        ? [...new Set([...subject.roles, role])]
+                                                        : subject.roles.filter(currentRole => currentRole !== role),
+                                                    })} />
+                                                  {label}
+                                                </label>
+                                              ))}
+                                            </div>
                                             <div className="grid gap-2 sm:grid-cols-2">
                                               {([
                                                 ['nome', 'Nome', 'text'],
@@ -2865,19 +2916,8 @@ export default function PraticaDetailPage() {
                                                 ['email', 'E-mail', 'email'],
                                                 ['cellulare', 'Cellulare', 'tel'],
                                               ] as const).map(([field, fieldLabel, fieldType]) => (
-                                                <Input
-                                                  key={field}
-                                                  type={fieldType}
-                                                  placeholder={fieldLabel}
-                                                  value={owner[field]}
-                                                  onChange={event => updateStructuredContact(
-                                                    doc.id,
-                                                    'beneficial_owners',
-                                                    field,
-                                                    event.target.value,
-                                                    ownerIndex,
-                                                  )}
-                                                />
+                                                <Input key={field} type={fieldType} placeholder={fieldLabel} value={subject[field]}
+                                                  onChange={event => updateStructuredSubject(doc.id, subjectIndex, { [field]: event.target.value })} />
                                               ))}
                                             </div>
                                           </div>
@@ -2888,9 +2928,9 @@ export default function PraticaDetailPage() {
                                             size="sm"
                                             variant="outline"
                                             className="gap-1.5"
-                                            onClick={() => addStructuredBeneficialOwner(doc.id)}
+                                            onClick={() => addStructuredSubject(doc.id)}
                                           >
-                                            <PlusCircle className="w-3.5 h-3.5" /> Aggiungi titolare effettivo
+                                            <PlusCircle className="w-3.5 h-3.5" /> Aggiungi altro soggetto
                                           </Button>
                                           <Button
                                             size="sm"

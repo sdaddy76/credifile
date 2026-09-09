@@ -56,16 +56,21 @@ interface BankSearchRequest {
 }
 
 type ContactField = 'nome' | 'cognome' | 'email' | 'cellulare';
+type ContactRole = 'legal_representative' | 'administrator' | 'beneficial_owner';
 interface FinPromoterContact {
   nome: string;
   cognome: string;
   email: string;
   cellulare: string;
 }
+interface FinPromoterSubject extends FinPromoterContact {
+  roles: ContactRole[];
+}
 interface FinPromoterContactsResponse {
   legal_representative: FinPromoterContact;
   administrator: FinPromoterContact;
   beneficial_owners: FinPromoterContact[];
+  subjects?: FinPromoterSubject[];
 }
 
 const emptyContact = (): FinPromoterContact => ({
@@ -73,6 +78,11 @@ const emptyContact = (): FinPromoterContact => ({
   cognome: '',
   email: '',
   cellulare: '',
+});
+
+const emptySubject = (roles: ContactRole[] = ['legal_representative', 'administrator', 'beneficial_owner']): FinPromoterSubject => ({
+  ...emptyContact(),
+  roles,
 });
 
 const getContactsResponse = (
@@ -94,7 +104,38 @@ const getContactsResponse = (
     legal_representative: parseContact(response?.legal_representative),
     administrator: parseContact(response?.administrator),
     beneficial_owners: owners.length > 0 ? owners : [emptyContact()],
+    subjects: Array.isArray(response?.subjects)
+      ? response.subjects.map(value => {
+          const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+          const roles = Array.isArray(raw.roles)
+            ? raw.roles.filter((role): role is ContactRole => ['legal_representative', 'administrator', 'beneficial_owner'].includes(String(role)))
+            : [];
+          return { ...parseContact(raw), roles };
+        })
+      : undefined,
   };
+};
+
+const getContactSubjects = (response?: Record<string, unknown> | null): FinPromoterSubject[] => {
+  const contacts = getContactsResponse(response);
+  if (contacts.subjects && contacts.subjects.length > 0) return contacts.subjects;
+  const subjects: FinPromoterSubject[] = [];
+  const addLegacy = (contact: FinPromoterContact, role: ContactRole) => {
+    const hasData = Object.values(contact).some(value => String(value).trim());
+    if (!hasData) return;
+    const existing = subjects.find(subject =>
+      subject.nome === contact.nome
+      && subject.cognome === contact.cognome
+      && subject.email === contact.email
+      && subject.cellulare === contact.cellulare
+    );
+    if (existing) existing.roles = [...new Set([...existing.roles, role])];
+    else subjects.push({ ...contact, roles: [role] });
+  };
+  addLegacy(contacts.legal_representative, 'legal_representative');
+  addLegacy(contacts.administrator, 'administrator');
+  contacts.beneficial_owners.forEach(owner => addLegacy(owner, 'beneficial_owner'));
+  return subjects.length > 0 ? subjects : [emptySubject()];
 };
 
 const notifyAgentDocumentUpload = async ({
@@ -334,6 +375,50 @@ export default function ClientPortalPage() {
     }));
   };
 
+  const updateContactSubject = (
+    documentId: string,
+    subjectIndex: number,
+    patch: Partial<FinPromoterSubject>,
+  ) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const subjects = getContactSubjects(document.client_response);
+      subjects[subjectIndex] = { ...subjects[subjectIndex], ...patch };
+      return {
+        ...document,
+        client_response: { ...(document.client_response ?? {}), subjects } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const addContactSubject = (documentId: string) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const subjects = getContactSubjects(document.client_response);
+      return {
+        ...document,
+        client_response: {
+          ...(document.client_response ?? {}),
+          subjects: [...subjects, emptySubject(['beneficial_owner'])],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const removeContactSubject = (documentId: string, subjectIndex: number) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const subjects = getContactSubjects(document.client_response).filter((_, index) => index !== subjectIndex);
+      return {
+        ...document,
+        client_response: {
+          ...(document.client_response ?? {}),
+          subjects: subjects.length > 0 ? subjects : [emptySubject()],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
   const addBeneficialOwner = (documentId: string) => {
     setDocuments(prev => prev.map(document => {
       if (document.id !== documentId) return document;
@@ -379,23 +464,28 @@ export default function ClientPortalPage() {
       }
       response = { text };
     } else {
-      const contacts = getContactsResponse(document.client_response);
-      const allContacts = [
-        contacts.legal_representative,
-        contacts.administrator,
-        ...contacts.beneficial_owners,
-      ];
-      const hasIncompleteContact = allContacts.some(contact =>
+      const subjects = getContactSubjects(document.client_response).filter(subject => subject.roles.length > 0);
+      if (subjects.length === 0) {
+        toast.error('Aggiungi almeno un soggetto e assegna un ruolo');
+        return;
+      }
+      const hasIncompleteContact = subjects.some(contact =>
         !contact.nome.trim()
         || !contact.cognome.trim()
         || !contact.email.trim()
         || !contact.cellulare.trim()
       );
       if (hasIncompleteContact) {
-        toast.error('Completa nome, cognome, e-mail e cellulare per tutti i soggetti');
+        toast.error('Completa nome, cognome, e-mail e cellulare per i soggetti aggiunti');
         return;
       }
-      response = contacts as unknown as Record<string, unknown>;
+      const empty = emptyContact();
+      response = {
+        subjects,
+        legal_representative: subjects.find(subject => subject.roles.includes('legal_representative')) ?? empty,
+        administrator: subjects.find(subject => subject.roles.includes('administrator')) ?? empty,
+        beneficial_owners: subjects.filter(subject => subject.roles.includes('beneficial_owner')),
+      } as unknown as Record<string, unknown>;
     }
 
     setUploadingDoc(document.id);
@@ -1919,54 +2009,12 @@ export default function ClientPortalPage() {
             );
           }
 
-          const contacts = getContactsResponse(document.client_response);
-          const renderContactFields = (
-            title: string,
-            role: 'legal_representative' | 'administrator' | 'beneficial_owners',
-            contact: FinPromoterContact,
-            ownerIndex?: number,
-          ) => (
-            <div className="rounded-lg border border-border bg-white p-3 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold">{title}</p>
-                {role === 'beneficial_owners' && contacts.beneficial_owners.length > 1 && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2 text-red-600"
-                    onClick={() => removeBeneficialOwner(document.id, ownerIndex ?? 0)}
-                  >
-                    <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
-                  </Button>
-                )}
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {([
-                  ['nome', 'Nome', 'text'],
-                  ['cognome', 'Cognome', 'text'],
-                  ['email', 'E-mail', 'email'],
-                  ['cellulare', 'Cellulare', 'tel'],
-                ] as const).map(([field, label, type]) => (
-                  <div key={field} className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">{label}</label>
-                    <Input
-                      type={type}
-                      value={contact[field]}
-                      placeholder={label}
-                      onChange={event => updateContactRequirement(
-                        document.id,
-                        role,
-                        field,
-                        event.target.value,
-                        ownerIndex,
-                      )}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
+          const subjects = getContactSubjects(document.client_response);
+          const roleLabels: Record<ContactRole, string> = {
+            legal_representative: 'Legale rappresentante',
+            administrator: 'Amministratore',
+            beneficial_owner: 'Titolare effettivo',
+          };
 
           return (
             <Card key={document.id} className="border-indigo-200 bg-indigo-50/20">
@@ -1978,7 +2026,7 @@ export default function ClientPortalPage() {
                       Recapiti dei soggetti della società
                     </CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Inserisci nome, cognome, e-mail e cellulare. Non è richiesto alcun file.
+                      Inserisci ogni persona una sola volta. Per il primo soggetto i tre ruoli sono già selezionati; aggiungi altri soggetti solo se presenti.
                     </p>
                   </div>
                   <Badge className={isSaved
@@ -1990,24 +2038,58 @@ export default function ClientPortalPage() {
                 </div>
               </CardHeader>
               <CardContent className="pb-4 space-y-3">
-                {renderContactFields(
-                  'Legale rappresentante',
-                  'legal_representative',
-                  contacts.legal_representative,
-                )}
-                {renderContactFields(
-                  'Amministratore',
-                  'administrator',
-                  contacts.administrator,
-                )}
-                {contacts.beneficial_owners.map((owner, index) => (
-                  <div key={index}>
-                    {renderContactFields(
-                      `Titolare effettivo ${index + 1}`,
-                      'beneficial_owners',
-                      owner,
-                      index,
-                    )}
+                {subjects.map((subject, index) => (
+                  <div key={index} className="rounded-lg border border-border bg-white p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold">Soggetto {index + 1}</p>
+                      {subjects.length > 1 && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-red-600"
+                          onClick={() => removeContactSubject(document.id, index)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      {(Object.keys(roleLabels) as ContactRole[]).map(role => (
+                        <label key={role} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={subject.roles.includes(role)}
+                            onChange={event => updateContactSubject(
+                              document.id,
+                              index,
+                              { roles: event.target.checked
+                                ? [...new Set([...subject.roles, role])]
+                                : subject.roles.filter(currentRole => currentRole !== role) },
+                            )}
+                          />
+                          {roleLabels[role]}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {([
+                        ['nome', 'Nome', 'text'],
+                        ['cognome', 'Cognome', 'text'],
+                        ['email', 'E-mail', 'email'],
+                        ['cellulare', 'Cellulare', 'tel'],
+                      ] as const).map(([field, label, type]) => (
+                        <div key={field} className="space-y-1">
+                          <label className="text-xs font-medium text-muted-foreground">{label}</label>
+                          <Input
+                            type={type}
+                            value={subject[field]}
+                            placeholder={label}
+                            onChange={event => updateContactSubject(document.id, index, { [field]: event.target.value })}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
                 <Button
@@ -2015,9 +2097,9 @@ export default function ClientPortalPage() {
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
-                  onClick={() => addBeneficialOwner(document.id)}
+                  onClick={() => addContactSubject(document.id)}
                 >
-                  <PlusCircle className="w-3.5 h-3.5" /> Aggiungi titolare effettivo
+                  <PlusCircle className="w-3.5 h-3.5" /> Aggiungi altro soggetto
                 </Button>
                 <div>
                   <Button
