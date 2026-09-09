@@ -111,6 +111,48 @@ type ClientQuestion = {
   created_at: string;
 };
 
+type StructuredContact = {
+  nome: string;
+  cognome: string;
+  email: string;
+  cellulare: string;
+};
+
+type StructuredContactsResponse = {
+  legal_representative: StructuredContact;
+  administrator: StructuredContact;
+  beneficial_owners: StructuredContact[];
+};
+
+const emptyStructuredContact = (): StructuredContact => ({
+  nome: '',
+  cognome: '',
+  email: '',
+  cellulare: '',
+});
+
+const readStructuredContacts = (
+  response?: Record<string, unknown> | null,
+): StructuredContactsResponse => {
+  const parseContact = (value: unknown): StructuredContact => {
+    const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    return {
+      nome: String(raw.nome ?? ''),
+      cognome: String(raw.cognome ?? ''),
+      email: String(raw.email ?? ''),
+      cellulare: String(raw.cellulare ?? ''),
+    };
+  };
+  const owners = Array.isArray(response?.beneficial_owners)
+    ? response.beneficial_owners.map(parseContact)
+    : [];
+  return {
+    legal_representative: parseContact(response?.legal_representative),
+    administrator: parseContact(response?.administrator),
+    beneficial_owners: owners.length > 0 ? owners : [emptyStructuredContact()],
+  };
+};
+
 const PRIMARY_STATUS_OPTIONS: PracticeStatus[] = [
   'bozza',
   'raccolta_documenti',
@@ -267,6 +309,7 @@ export default function PraticaDetailPage() {
   const [noteDeclino, setNoteDeclino] = useState('');
   const [newDocName, setNewDocName] = useState('');
   const [newDocDesc, setNewDocDesc] = useState('');
+  const [newDocInputType, setNewDocInputType] = useState<'upload' | 'text' | 'contacts'>('upload');
   const [rejectNote, setRejectNote] = useState('');
   const [integrationRequests, setIntegrationRequests] = useState<IntegrationRequestDraft[]>([
     { nome: '', descrizione: '' },
@@ -1581,6 +1624,135 @@ export default function PraticaDetailPage() {
     load();
   };
 
+  const updateStructuredText = (docId: string, value: string) => {
+    setDocuments(prev => prev.map(document => (
+      document.id === docId
+        ? { ...document, client_response: { ...(document.client_response ?? {}), text: value } }
+        : document
+    )));
+  };
+
+  const updateStructuredContact = (
+    docId: string,
+    role: 'legal_representative' | 'administrator' | 'beneficial_owners',
+    field: keyof StructuredContact,
+    value: string,
+    ownerIndex?: number,
+  ) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const contacts = readStructuredContacts(document.client_response);
+      if (role === 'beneficial_owners') {
+        const index = ownerIndex ?? 0;
+        contacts.beneficial_owners = contacts.beneficial_owners.map((owner, currentIndex) => (
+          currentIndex === index ? { ...owner, [field]: value } : owner
+        ));
+      } else {
+        contacts[role] = { ...contacts[role], [field]: value };
+      }
+      return {
+        ...document,
+        client_response: contacts as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const addStructuredBeneficialOwner = (docId: string) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const contacts = readStructuredContacts(document.client_response);
+      return {
+        ...document,
+        client_response: {
+          ...contacts,
+          beneficial_owners: [...contacts.beneficial_owners, emptyStructuredContact()],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const removeStructuredBeneficialOwner = (docId: string, ownerIndex: number) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const contacts = readStructuredContacts(document.client_response);
+      const remaining = contacts.beneficial_owners.filter((_, index) => index !== ownerIndex);
+      return {
+        ...document,
+        client_response: {
+          ...contacts,
+          beneficial_owners: remaining.length > 0 ? remaining : [emptyStructuredContact()],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const saveStructuredDocument = async (document: PracticeDocument) => {
+    if (!id || !canEdit) return;
+    let response: Record<string, unknown>;
+    if (document.input_type === 'text') {
+      const text = String(document.client_response?.text ?? '').trim();
+      if (!text) {
+        toast.error('Inserisci un testo prima di salvare');
+        return;
+      }
+      response = { text };
+    } else if (document.input_type === 'contacts') {
+      const contacts = readStructuredContacts(document.client_response);
+      const allContacts = [
+        contacts.legal_representative,
+        contacts.administrator,
+        ...contacts.beneficial_owners,
+      ];
+      if (allContacts.some(contact =>
+        !contact.nome.trim()
+        || !contact.cognome.trim()
+        || !contact.email.trim()
+        || !contact.cellulare.trim()
+      )) {
+        toast.error('Completa nome, cognome, e-mail e cellulare per tutti i soggetti');
+        return;
+      }
+      response = contacts as unknown as Record<string, unknown>;
+    } else {
+      return;
+    }
+
+    setSaving(true);
+    const savedAt = new Date().toISOString();
+    try {
+      const { error } = await supabase
+        .from('practice_documents')
+        .update({
+          client_response: response,
+          response_updated_at: savedAt,
+          status: 'caricato',
+          uploaded_at: savedAt,
+          note_rifiuto: null,
+        })
+        .eq('id', document.id)
+        .eq('practice_id', id);
+      if (error) throw error;
+      await supabase.from('practice_activity_log').insert({
+        practice_id: id,
+        action: 'campo_pratica_compilato_da_agente',
+        actor_id: user?.id ?? null,
+        actor_nome: user?.email ?? 'Agente',
+        actor_ruolo: isSuperAdmin ? 'super_admin' : 'agente',
+        metadata: {
+          practice_document_id: document.id,
+          campo: document.nome,
+          input_type: document.input_type,
+        },
+      });
+      toast.success('Campo salvato nella pratica');
+      await load();
+    } catch (error) {
+      toast.error('Errore salvataggio campo: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Elimina solo il file caricato (non il campo documento)
   const handleDeleteFile = async (
     fileId: string, storagePath: string, nomeFile: string,
@@ -1616,14 +1788,20 @@ export default function PraticaDetailPage() {
   const handleAddDoc = async () => {
     if (!newDocName.trim()) { toast.error('Inserisci il nome del documento'); return; }
     setSaving(true);
-    await supabase.from('practice_documents').insert({
+    const { error } = await supabase.from('practice_documents').insert({
       practice_id: id, nome: newDocName, descrizione: newDocDesc, tipo: 'standard',
+      input_type: newDocInputType,
       obbligatorio: true, status: 'richiesto',
     });
+    if (error) {
+      toast.error('Errore aggiunta campo: ' + error.message);
+      setSaving(false);
+      return;
+    }
     toast.success('Documento aggiunto');
     setSaving(false);
     setShowAddDoc(false);
-    setNewDocName(''); setNewDocDesc('');
+    setNewDocName(''); setNewDocDesc(''); setNewDocInputType('upload');
     load();
   };
 
@@ -2486,6 +2664,7 @@ export default function PraticaDetailPage() {
                         && typeof doc.client_response === 'object'
                         ? doc.client_response
                         : null;
+                      const editableContacts = readStructuredContacts(doc.client_response);
                       const contactRows = contactsResponse
                         ? [
                             {
@@ -2535,6 +2714,27 @@ export default function PraticaDetailPage() {
                                     <p className="mt-1 text-sm whitespace-pre-wrap">
                                       {textResponse || 'Non ancora compilata'}
                                     </p>
+                                    {canEdit && (
+                                      <div className="mt-3 space-y-2">
+                                        <Textarea
+                                          rows={5}
+                                          value={textResponse}
+                                          placeholder="Inserisci o modifica il testo richiesto..."
+                                          onChange={event => updateStructuredText(doc.id, event.target.value)}
+                                        />
+                                        <Button
+                                          size="sm"
+                                          className="gap-1.5"
+                                          disabled={saving || !String(doc.client_response?.text ?? '').trim()}
+                                          onClick={() => saveStructuredDocument(doc)}
+                                        >
+                                          {saving
+                                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                                            : <><Save className="w-3.5 h-3.5" /> Salva testo</>
+                                          }
+                                        </Button>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                                 {inputType === 'contacts' && (
@@ -2559,6 +2759,103 @@ export default function PraticaDetailPage() {
                                         </div>
                                       );
                                     })}
+                                    {canEdit && (
+                                      <div className="mt-3 space-y-3">
+                                        {([
+                                          ['legal_representative', 'Legale rappresentante', editableContacts.legal_representative],
+                                          ['administrator', 'Amministratore', editableContacts.administrator],
+                                        ] as const).map(([role, label, contact]) => (
+                                          <div key={role} className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
+                                            <p className="text-xs font-semibold text-indigo-800">{label}</p>
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                              {([
+                                                ['nome', 'Nome', 'text'],
+                                                ['cognome', 'Cognome', 'text'],
+                                                ['email', 'E-mail', 'email'],
+                                                ['cellulare', 'Cellulare', 'tel'],
+                                              ] as const).map(([field, fieldLabel, fieldType]) => (
+                                                <Input
+                                                  key={field}
+                                                  type={fieldType}
+                                                  placeholder={fieldLabel}
+                                                  value={contact[field]}
+                                                  onChange={event => updateStructuredContact(
+                                                    doc.id,
+                                                    role,
+                                                    field,
+                                                    event.target.value,
+                                                  )}
+                                                />
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ))}
+                                        {editableContacts.beneficial_owners.map((owner, ownerIndex) => (
+                                          <div key={ownerIndex} className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
+                                            <div className="flex items-center justify-between gap-2">
+                                              <p className="text-xs font-semibold text-indigo-800">
+                                                Titolare effettivo {ownerIndex + 1}
+                                              </p>
+                                              {editableContacts.beneficial_owners.length > 1 && (
+                                                <Button
+                                                  type="button"
+                                                  size="sm"
+                                                  variant="ghost"
+                                                  className="h-7 px-2 text-red-600"
+                                                  onClick={() => removeStructuredBeneficialOwner(doc.id, ownerIndex)}
+                                                >
+                                                  <Trash2 className="w-3.5 h-3.5 mr-1" /> Rimuovi
+                                                </Button>
+                                              )}
+                                            </div>
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                              {([
+                                                ['nome', 'Nome', 'text'],
+                                                ['cognome', 'Cognome', 'text'],
+                                                ['email', 'E-mail', 'email'],
+                                                ['cellulare', 'Cellulare', 'tel'],
+                                              ] as const).map(([field, fieldLabel, fieldType]) => (
+                                                <Input
+                                                  key={field}
+                                                  type={fieldType}
+                                                  placeholder={fieldLabel}
+                                                  value={owner[field]}
+                                                  onChange={event => updateStructuredContact(
+                                                    doc.id,
+                                                    'beneficial_owners',
+                                                    field,
+                                                    event.target.value,
+                                                    ownerIndex,
+                                                  )}
+                                                />
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ))}
+                                        <div className="flex flex-wrap gap-2">
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="outline"
+                                            className="gap-1.5"
+                                            onClick={() => addStructuredBeneficialOwner(doc.id)}
+                                          >
+                                            <PlusCircle className="w-3.5 h-3.5" /> Aggiungi titolare effettivo
+                                          </Button>
+                                          <Button
+                                            size="sm"
+                                            className="gap-1.5"
+                                            disabled={saving}
+                                            onClick={() => saveStructuredDocument(doc)}
+                                          >
+                                            {saving
+                                              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                                              : <><Save className="w-3.5 h-3.5" /> Salva contatti</>
+                                            }
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                                 {doc.note_rifiuto && <p className="text-xs text-red-600 mt-1 bg-red-50 px-2 py-1 rounded">Motivo rifiuto: {doc.note_rifiuto}</p>}
@@ -4234,20 +4531,35 @@ export default function PraticaDetailPage() {
       {/* Dialog aggiungi doc */}
       <Dialog open={showAddDoc} onOpenChange={setShowAddDoc}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Aggiungi Documento Richiesto</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Aggiungi richiesta o campo compilabile</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label>Nome Documento *</Label>
-              <Input placeholder="es. Dichiarazione dei redditi 2023" value={newDocName} onChange={e => setNewDocName(e.target.value)} />
+              <Label>Nome della richiesta *</Label>
+              <Input placeholder="es. Nota su garanzie o finalità" value={newDocName} onChange={e => setNewDocName(e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label>Descrizione (opzionale)</Label>
               <Textarea placeholder="Istruzioni per il cliente..." rows={2} value={newDocDesc} onChange={e => setNewDocDesc(e.target.value)} />
             </div>
+            <div className="space-y-2">
+              <Label>Modalità di compilazione</Label>
+              <Select value={newDocInputType} onValueChange={value => setNewDocInputType(value as 'upload' | 'text' | 'contacts')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="upload">Upload documento</SelectItem>
+                  <SelectItem value="text">Campo di testo / nota</SelectItem>
+                  <SelectItem value="contacts">Contatti strutturati</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                I campi testo e contatti saranno compilabili sia dal cliente, dopo la privacy,
+                sia dall’agente o dal super admin direttamente nella pratica.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDoc(false)}>Annulla</Button>
-            <Button onClick={handleAddDoc} disabled={saving}>Aggiungi</Button>
+            <Button onClick={handleAddDoc} disabled={saving}>Aggiungi richiesta</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
