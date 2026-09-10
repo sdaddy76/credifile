@@ -1014,24 +1014,60 @@ ${structuredRequirements.map(requirement => {
   }
 
   const contacts = requirement.client_response ?? {};
-  const rows = [
-    ['Legale rappresentante', contacts.legal_representative],
-    ['Amministratore', contacts.administrator],
-    ...(Array.isArray(contacts.beneficial_owners)
-      ? contacts.beneficial_owners.map((owner, index) => [`Titolare effettivo ${index + 1}`, owner])
-      : []),
-  ];
+  const contactRoleLabels = {
+    legal_representative: 'Legale rappresentante',
+    administrator: 'Amministratore',
+    beneficial_owner: 'Titolare effettivo',
+  };
+  const rows = Array.isArray(contacts.subjects) && contacts.subjects.length > 0
+    ? contacts.subjects.map((subject, index) => {
+        const roles = Array.isArray(subject?.roles)
+          ? subject.roles.map(role => contactRoleLabels[role]).filter(Boolean)
+          : [];
+        return [roles.join(', ') || `Soggetto ${index + 1}`, subject];
+      })
+    : [
+        ['Legale rappresentante', contacts.legal_representative],
+        ['Amministratore', contacts.administrator],
+        ...(Array.isArray(contacts.beneficial_owners)
+          ? contacts.beneficial_owners.map((owner, index) => [`Titolare effettivo ${index + 1}`, owner])
+          : []),
+      ];
   const rowsHtml = rows.filter(([, rawContact]) => {
     const contact = rawContact && typeof rawContact === 'object' ? rawContact : {};
-    return [contact.nome, contact.cognome, contact.email, contact.cellulare].some(value => String(value ?? '').trim());
+    return contact.subject_type === 'societa'
+      ? [
+          contact.denominazione_societa,
+          contact.partita_iva,
+          contact.legale_rappresentante_nome,
+          contact.legale_rappresentante_cognome,
+          contact.legale_rappresentante_email,
+          contact.legale_rappresentante_cellulare,
+        ].some(value => String(value ?? '').trim())
+      : [contact.nome, contact.cognome, contact.email, contact.cellulare]
+          .some(value => String(value ?? '').trim());
   }).map(([label, rawContact]) => {
     const contact = rawContact && typeof rawContact === 'object' ? rawContact : {};
-    const fullName = [contact.nome, contact.cognome].filter(Boolean).join(' ') || 'Nome non indicato';
+    const isCompanyOwner = contact.subject_type === 'societa';
+    const fullName = isCompanyOwner
+      ? String(contact.denominazione_societa || 'Denominazione non indicata')
+      : [contact.nome, contact.cognome].filter(Boolean).join(' ') || 'Nome non indicato';
+    const representativeName = [
+      contact.legale_rappresentante_nome,
+      contact.legale_rappresentante_cognome,
+    ].filter(Boolean).join(' ') || 'Non indicato';
+    const subjectCell = isCompanyOwner
+      ? `${escapeHtml(fullName)}<br><span style="font-size:11px;color:#64748b;">Legale rappresentante: ${escapeHtml(representativeName)}</span>`
+      : escapeHtml(fullName);
+    const email = isCompanyOwner ? contact.legale_rappresentante_email : contact.email;
+    const mobile = isCompanyOwner ? contact.legale_rappresentante_cellulare : contact.cellulare;
     return `<tr>
       <td style="padding:7px;border:1px solid #cbd5e1;font-weight:700;">${escapeHtml(label)}</td>
-      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(fullName)}</td>
-      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(contact.email || '—')}</td>
-      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(contact.cellulare || '—')}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${isCompanyOwner ? 'Società' : 'Persona fisica'}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${subjectCell}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(isCompanyOwner ? contact.partita_iva || '—' : '—')}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(email || '—')}</td>
+      <td style="padding:7px;border:1px solid #cbd5e1;">${escapeHtml(mobile || '—')}</td>
     </tr>`;
   }).join('');
   if (!rowsHtml) return '';
@@ -1040,7 +1076,9 @@ ${structuredRequirements.map(requirement => {
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead><tr style="background:#eef2ff;">
         <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Ruolo</th>
-        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Nome e cognome</th>
+        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Tipo</th>
+        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Soggetto</th>
+        <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">P.IVA</th>
         <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">E-mail</th>
         <th style="padding:7px;border:1px solid #cbd5e1;text-align:left;">Cellulare</th>
       </tr></thead>

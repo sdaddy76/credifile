@@ -67,6 +67,16 @@ import {
   type FinPromoterCompanyType,
   type RegimeContabile,
 } from '@/lib/finpromoterChecklist';
+import {
+  buildStructuredContactsResponse,
+  emptyStructuredSubject,
+  getStructuredSubjects,
+  isStructuredSubjectComplete,
+  readStructuredContacts,
+  type StructuredContact,
+  type StructuredSubject,
+  type StructuredSubjectType,
+} from '@/lib/structuredContacts';
 
 type AssignedAgent = { id: string; nome?: string; email: string };
 type IntegrationRequestDraft = { nome: string; descrizione: string };
@@ -120,79 +130,6 @@ type BankDocumentAccessLog = {
   relation_id?: string | null;
   event_type: 'opened' | 'downloaded';
   occurred_at: string;
-};
-
-type StructuredContact = {
-  nome: string;
-  cognome: string;
-  email: string;
-  cellulare: string;
-};
-type StructuredContactRole = 'legal_representative' | 'administrator' | 'beneficial_owner';
-type StructuredSubject = StructuredContact & { roles: StructuredContactRole[] };
-
-type StructuredContactsResponse = {
-  legal_representative: StructuredContact;
-  administrator: StructuredContact;
-  beneficial_owners: StructuredContact[];
-  subjects?: StructuredSubject[];
-};
-
-const emptyStructuredContact = (): StructuredContact => ({
-  nome: '',
-  cognome: '',
-  email: '',
-  cellulare: '',
-});
-
-const readStructuredContacts = (
-  response?: Record<string, unknown> | null,
-): StructuredContactsResponse => {
-  const parseContact = (value: unknown): StructuredContact => {
-    const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-    return {
-      nome: String(raw.nome ?? ''),
-      cognome: String(raw.cognome ?? ''),
-      email: String(raw.email ?? ''),
-      cellulare: String(raw.cellulare ?? ''),
-    };
-  };
-  const owners = Array.isArray(response?.beneficial_owners)
-    ? response.beneficial_owners.map(parseContact)
-    : [];
-  return {
-    legal_representative: parseContact(response?.legal_representative),
-    administrator: parseContact(response?.administrator),
-    beneficial_owners: owners.length > 0 ? owners : [emptyStructuredContact()],
-    subjects: Array.isArray(response?.subjects)
-      ? response.subjects.map(value => {
-          const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-          const roles = Array.isArray(raw.roles)
-            ? raw.roles.filter((role): role is StructuredContactRole => ['legal_representative', 'administrator', 'beneficial_owner'].includes(String(role)))
-            : [];
-          return { ...parseContact(raw), roles };
-        })
-      : undefined,
-  };
-};
-
-const getStructuredSubjects = (response?: Record<string, unknown> | null): StructuredSubject[] => {
-  const contacts = readStructuredContacts(response);
-  if (contacts.subjects && contacts.subjects.length > 0) return contacts.subjects;
-  const subjects: StructuredSubject[] = [];
-  const addLegacy = (contact: StructuredContact, role: StructuredContactRole) => {
-    if (!Object.values(contact).some(value => String(value).trim())) return;
-    const existing = subjects.find(subject =>
-      subject.nome === contact.nome && subject.cognome === contact.cognome
-      && subject.email === contact.email && subject.cellulare === contact.cellulare
-    );
-    if (existing) existing.roles = [...new Set([...existing.roles, role])];
-    else subjects.push({ ...contact, roles: [role] });
-  };
-  addLegacy(contacts.legal_representative, 'legal_representative');
-  addLegacy(contacts.administrator, 'administrator');
-  contacts.beneficial_owners.forEach(owner => addLegacy(owner, 'beneficial_owner'));
-  return subjects.length > 0 ? subjects : [{ ...emptyStructuredContact(), roles: ['legal_representative', 'administrator', 'beneficial_owner'] }];
 };
 
 const PRIMARY_STATUS_OPTIONS: PracticeStatus[] = [
@@ -1775,7 +1712,7 @@ export default function PraticaDetailPage() {
         ...document,
         client_response: {
           ...(document.client_response ?? {}),
-          subjects: [...subjects, { ...emptyStructuredContact(), roles: ['beneficial_owner'] }],
+          subjects: [...subjects, emptyStructuredSubject(['beneficial_owner'])],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -1791,7 +1728,7 @@ export default function PraticaDetailPage() {
           ...(document.client_response ?? {}),
           subjects: subjects.length > 0
             ? subjects
-            : [{ ...emptyStructuredContact(), roles: ['legal_representative', 'administrator', 'beneficial_owner'] }],
+            : [emptyStructuredSubject()],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -1805,7 +1742,7 @@ export default function PraticaDetailPage() {
         ...document,
         client_response: {
           ...contacts,
-          beneficial_owners: [...contacts.beneficial_owners, emptyStructuredContact()],
+          beneficial_owners: [...contacts.beneficial_owners, emptyStructuredSubject(['beneficial_owner'])],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -1820,7 +1757,7 @@ export default function PraticaDetailPage() {
         ...document,
         client_response: {
           ...contacts,
-          beneficial_owners: remaining.length > 0 ? remaining : [emptyStructuredContact()],
+          beneficial_owners: remaining.length > 0 ? remaining : [emptyStructuredSubject(['beneficial_owner'])],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -1842,22 +1779,11 @@ export default function PraticaDetailPage() {
         toast.error('Aggiungi almeno un soggetto e assegna un ruolo');
         return;
       }
-      if (subjects.some(contact =>
-        !contact.nome.trim()
-        || !contact.cognome.trim()
-        || !contact.email.trim()
-        || !contact.cellulare.trim()
-      )) {
+      if (subjects.some(subject => !isStructuredSubjectComplete(subject))) {
         toast.error('Completa i dati dei soggetti aggiunti');
         return;
       }
-      const empty = emptyStructuredContact();
-      response = {
-        subjects,
-        legal_representative: subjects.find(subject => subject.roles.includes('legal_representative')) ?? empty,
-        administrator: subjects.find(subject => subject.roles.includes('administrator')) ?? empty,
-        beneficial_owners: subjects.filter(subject => subject.roles.includes('beneficial_owner')),
-      } as unknown as Record<string, unknown>;
+      response = buildStructuredContactsResponse(subjects) as unknown as Record<string, unknown>;
     } else {
       return;
     }
@@ -2817,10 +2743,17 @@ export default function PraticaDetailPage() {
                         : null;
                       const editableSubjects = getStructuredSubjects(doc.client_response);
                       const contactRows = contactsResponse
-                        ? editableSubjects.map((value, index) => ({
-                            label: `Soggetto ${index + 1}`,
-                            value,
-                          }))
+                        ? editableSubjects.map((value, index) => {
+                            const labels: Record<StructuredSubject['roles'][number], string> = {
+                              legal_representative: 'Legale rappresentante',
+                              administrator: 'Amministratore',
+                              beneficial_owner: 'Titolare effettivo',
+                            };
+                            return {
+                              label: value.roles.map(role => labels[role]).join(', ') || `Soggetto ${index + 1}`,
+                              value,
+                            };
+                          })
                         : [];
                       return (
                         <Card key={doc.id} className="border-border">
@@ -2887,14 +2820,29 @@ export default function PraticaDetailPage() {
                                       const raw = row.value && typeof row.value === 'object'
                                         ? row.value as Record<string, unknown>
                                         : {};
+                                      const isCompanyOwner = raw.subject_type === 'societa';
                                       return (
                                         <div key={row.label} className="text-xs">
                                           <p className="font-semibold text-foreground">{row.label}</p>
-                                          <p className="text-muted-foreground">
-                                            {[raw.nome, raw.cognome].filter(Boolean).join(' ') || 'Nome non indicato'}
-                                            {' · '}{String(raw.email ?? 'e-mail non indicata')}
-                                            {' · '}{String(raw.cellulare ?? 'cellulare non indicato')}
-                                          </p>
+                                          {isCompanyOwner ? (
+                                            <>
+                                              <p className="text-muted-foreground">
+                                                {String(raw.denominazione_societa || 'Denominazione non indicata')}
+                                                {' · P.IVA '}{String(raw.partita_iva || 'non indicata')}
+                                              </p>
+                                              <p className="text-muted-foreground">
+                                                Legale rappresentante: {[raw.legale_rappresentante_nome, raw.legale_rappresentante_cognome].filter(Boolean).join(' ') || 'non indicato'}
+                                                {' · '}{String(raw.legale_rappresentante_email || 'e-mail non indicata')}
+                                                {' · '}{String(raw.legale_rappresentante_cellulare || 'cellulare non indicato')}
+                                              </p>
+                                            </>
+                                          ) : (
+                                            <p className="text-muted-foreground">
+                                              {[raw.nome, raw.cognome].filter(Boolean).join(' ') || 'Nome non indicato'}
+                                              {' · '}{String(raw.email ?? 'e-mail non indicata')}
+                                              {' · '}{String(raw.cellulare ?? 'cellulare non indicato')}
+                                            </p>
+                                          )}
                                         </div>
                                       );
                                     })}
@@ -2919,6 +2867,7 @@ export default function PraticaDetailPage() {
                                               ] as const).map(([role, label]) => (
                                                 <label key={role} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                                   <input type="checkbox" checked={subject.roles.includes(role)}
+                                                    disabled={subject.subject_type === 'societa'}
                                                     onChange={event => updateStructuredSubject(doc.id, subjectIndex, {
                                                       roles: event.target.checked
                                                         ? [...new Set([...subject.roles, role])]
@@ -2928,17 +2877,94 @@ export default function PraticaDetailPage() {
                                                 </label>
                                               ))}
                                             </div>
-                                            <div className="grid gap-2 sm:grid-cols-2">
-                                              {([
-                                                ['nome', 'Nome', 'text'],
-                                                ['cognome', 'Cognome', 'text'],
-                                                ['email', 'E-mail', 'email'],
-                                                ['cellulare', 'Cellulare', 'tel'],
-                                              ] as const).map(([field, fieldLabel, fieldType]) => (
-                                                <Input key={field} type={fieldType} placeholder={fieldLabel} value={subject[field]}
-                                                  onChange={event => updateStructuredSubject(doc.id, subjectIndex, { [field]: event.target.value })} />
-                                              ))}
-                                            </div>
+                                            {(subject.roles.includes('beneficial_owner') || subject.subject_type === 'societa') && (
+                                              <div className="max-w-sm space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Tipologia titolare effettivo</Label>
+                                                <Select
+                                                  value={subject.subject_type}
+                                                  onValueChange={(value: StructuredSubjectType) => updateStructuredSubject(
+                                                    doc.id,
+                                                    subjectIndex,
+                                                    value === 'societa'
+                                                      ? { subject_type: value, roles: ['beneficial_owner'] }
+                                                      : { subject_type: value },
+                                                  )}
+                                                >
+                                                  <SelectTrigger>
+                                                    <SelectValue />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                    <SelectItem value="persona_fisica">Persona fisica</SelectItem>
+                                                    <SelectItem
+                                                      value="societa"
+                                                      disabled={subject.roles.some(role => role !== 'beneficial_owner')}
+                                                    >
+                                                      Società
+                                                    </SelectItem>
+                                                  </SelectContent>
+                                                </Select>
+                                                {subject.roles.some(role => role !== 'beneficial_owner') && (
+                                                  <p className="text-[11px] text-muted-foreground">
+                                                    Per indicare una società, lascia selezionato soltanto il ruolo Titolare effettivo.
+                                                  </p>
+                                                )}
+                                              </div>
+                                            )}
+                                            {subject.subject_type === 'societa' ? (
+                                              <div className="space-y-3">
+                                                <div className="grid gap-2 sm:grid-cols-2">
+                                                  <Input
+                                                    placeholder="Denominazione società"
+                                                    value={subject.denominazione_societa}
+                                                    onChange={event => updateStructuredSubject(doc.id, subjectIndex, {
+                                                      denominazione_societa: event.target.value,
+                                                    })}
+                                                  />
+                                                  <Input
+                                                    placeholder="Partita IVA"
+                                                    value={subject.partita_iva}
+                                                    onChange={event => updateStructuredSubject(doc.id, subjectIndex, {
+                                                      partita_iva: event.target.value,
+                                                    })}
+                                                  />
+                                                </div>
+                                                <div className="border-t border-indigo-100 pt-3">
+                                                  <p className="mb-2 text-xs font-semibold text-indigo-800">
+                                                    Legale rappresentante della società titolare effettivo
+                                                  </p>
+                                                  <div className="grid gap-2 sm:grid-cols-2">
+                                                    {([
+                                                      ['legale_rappresentante_nome', 'Nome', 'text'],
+                                                      ['legale_rappresentante_cognome', 'Cognome', 'text'],
+                                                      ['legale_rappresentante_email', 'E-mail', 'email'],
+                                                      ['legale_rappresentante_cellulare', 'Cellulare', 'tel'],
+                                                    ] as const).map(([field, fieldLabel, fieldType]) => (
+                                                      <Input
+                                                        key={field}
+                                                        type={fieldType}
+                                                        placeholder={fieldLabel}
+                                                        value={subject[field]}
+                                                        onChange={event => updateStructuredSubject(doc.id, subjectIndex, {
+                                                          [field]: event.target.value,
+                                                        })}
+                                                      />
+                                                    ))}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ) : (
+                                              <div className="grid gap-2 sm:grid-cols-2">
+                                                {([
+                                                  ['nome', 'Nome', 'text'],
+                                                  ['cognome', 'Cognome', 'text'],
+                                                  ['email', 'E-mail', 'email'],
+                                                  ['cellulare', 'Cellulare', 'tel'],
+                                                ] as const).map(([field, fieldLabel, fieldType]) => (
+                                                  <Input key={field} type={fieldType} placeholder={fieldLabel} value={subject[field]}
+                                                    onChange={event => updateStructuredSubject(doc.id, subjectIndex, { [field]: event.target.value })} />
+                                                ))}
+                                              </div>
+                                            )}
                                           </div>
                                         ))}
                                         <div className="flex flex-wrap gap-2">

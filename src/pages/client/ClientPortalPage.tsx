@@ -22,6 +22,17 @@ import {
 } from '@/lib/types';
 import { buildPracticeTimeline, normalizePrimaryStatus } from '@/lib/practiceTimeline';
 import { generateClientSummaryPdf } from '@/lib/generateClientSummaryPdf';
+import {
+  buildStructuredContactsResponse,
+  emptyStructuredSubject as emptySubject,
+  getStructuredSubjects as getContactSubjects,
+  isStructuredSubjectComplete,
+  readStructuredContacts as getContactsResponse,
+  type StructuredContact,
+  type StructuredContactRole as ContactRole,
+  type StructuredSubject as FinPromoterSubject,
+  type StructuredSubjectType,
+} from '@/lib/structuredContacts';
 
 interface ClientSession {
   practiceId: string;
@@ -55,88 +66,7 @@ interface BankSearchRequest {
   } | null;
 }
 
-type ContactField = 'nome' | 'cognome' | 'email' | 'cellulare';
-type ContactRole = 'legal_representative' | 'administrator' | 'beneficial_owner';
-interface FinPromoterContact {
-  nome: string;
-  cognome: string;
-  email: string;
-  cellulare: string;
-}
-interface FinPromoterSubject extends FinPromoterContact {
-  roles: ContactRole[];
-}
-interface FinPromoterContactsResponse {
-  legal_representative: FinPromoterContact;
-  administrator: FinPromoterContact;
-  beneficial_owners: FinPromoterContact[];
-  subjects?: FinPromoterSubject[];
-}
-
-const emptyContact = (): FinPromoterContact => ({
-  nome: '',
-  cognome: '',
-  email: '',
-  cellulare: '',
-});
-
-const emptySubject = (roles: ContactRole[] = ['legal_representative', 'administrator', 'beneficial_owner']): FinPromoterSubject => ({
-  ...emptyContact(),
-  roles,
-});
-
-const getContactsResponse = (
-  response?: Record<string, unknown> | null
-): FinPromoterContactsResponse => {
-  const parseContact = (value: unknown): FinPromoterContact => {
-    const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-    return {
-      nome: String(raw.nome ?? ''),
-      cognome: String(raw.cognome ?? ''),
-      email: String(raw.email ?? ''),
-      cellulare: String(raw.cellulare ?? ''),
-    };
-  };
-  const owners = Array.isArray(response?.beneficial_owners)
-    ? response.beneficial_owners.map(parseContact)
-    : [];
-  return {
-    legal_representative: parseContact(response?.legal_representative),
-    administrator: parseContact(response?.administrator),
-    beneficial_owners: owners.length > 0 ? owners : [emptyContact()],
-    subjects: Array.isArray(response?.subjects)
-      ? response.subjects.map(value => {
-          const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-          const roles = Array.isArray(raw.roles)
-            ? raw.roles.filter((role): role is ContactRole => ['legal_representative', 'administrator', 'beneficial_owner'].includes(String(role)))
-            : [];
-          return { ...parseContact(raw), roles };
-        })
-      : undefined,
-  };
-};
-
-const getContactSubjects = (response?: Record<string, unknown> | null): FinPromoterSubject[] => {
-  const contacts = getContactsResponse(response);
-  if (contacts.subjects && contacts.subjects.length > 0) return contacts.subjects;
-  const subjects: FinPromoterSubject[] = [];
-  const addLegacy = (contact: FinPromoterContact, role: ContactRole) => {
-    const hasData = Object.values(contact).some(value => String(value).trim());
-    if (!hasData) return;
-    const existing = subjects.find(subject =>
-      subject.nome === contact.nome
-      && subject.cognome === contact.cognome
-      && subject.email === contact.email
-      && subject.cellulare === contact.cellulare
-    );
-    if (existing) existing.roles = [...new Set([...existing.roles, role])];
-    else subjects.push({ ...contact, roles: [role] });
-  };
-  addLegacy(contacts.legal_representative, 'legal_representative');
-  addLegacy(contacts.administrator, 'administrator');
-  contacts.beneficial_owners.forEach(owner => addLegacy(owner, 'beneficial_owner'));
-  return subjects.length > 0 ? subjects : [emptySubject()];
-};
+type ContactField = keyof StructuredContact;
 
 const notifyAgentDocumentUpload = async ({
   practiceId,
@@ -427,7 +357,7 @@ export default function ClientPortalPage() {
         ...document,
         client_response: {
           ...contacts,
-          beneficial_owners: [...contacts.beneficial_owners, emptyContact()],
+          beneficial_owners: [...contacts.beneficial_owners, emptySubject(['beneficial_owner'])],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -442,7 +372,7 @@ export default function ClientPortalPage() {
         ...document,
         client_response: {
           ...contacts,
-          beneficial_owners: remaining.length > 0 ? remaining : [emptyContact()],
+          beneficial_owners: remaining.length > 0 ? remaining : [emptySubject(['beneficial_owner'])],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -469,23 +399,12 @@ export default function ClientPortalPage() {
         toast.error('Aggiungi almeno un soggetto e assegna un ruolo');
         return;
       }
-      const hasIncompleteContact = subjects.some(contact =>
-        !contact.nome.trim()
-        || !contact.cognome.trim()
-        || !contact.email.trim()
-        || !contact.cellulare.trim()
-      );
+      const hasIncompleteContact = subjects.some(subject => !isStructuredSubjectComplete(subject));
       if (hasIncompleteContact) {
-        toast.error('Completa nome, cognome, e-mail e cellulare per i soggetti aggiunti');
+        toast.error('Completa tutti i dati richiesti per i soggetti aggiunti');
         return;
       }
-      const empty = emptyContact();
-      response = {
-        subjects,
-        legal_representative: subjects.find(subject => subject.roles.includes('legal_representative')) ?? empty,
-        administrator: subjects.find(subject => subject.roles.includes('administrator')) ?? empty,
-        beneficial_owners: subjects.filter(subject => subject.roles.includes('beneficial_owner')),
-      } as unknown as Record<string, unknown>;
+      response = buildStructuredContactsResponse(subjects) as unknown as Record<string, unknown>;
     }
 
     setUploadingDoc(document.id);
@@ -2026,7 +1945,7 @@ export default function ClientPortalPage() {
                       Recapiti dei soggetti della società
                     </CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Inserisci ogni persona una sola volta. Per il primo soggetto i tre ruoli sono già selezionati; aggiungi altri soggetti solo se presenti.
+                      Inserisci ogni soggetto una sola volta. Il titolare effettivo può essere una persona fisica oppure una società; aggiungi altri soggetti solo se presenti.
                     </p>
                   </div>
                   <Badge className={isSaved
@@ -2060,6 +1979,7 @@ export default function ClientPortalPage() {
                           <input
                             type="checkbox"
                             checked={subject.roles.includes(role)}
+                            disabled={subject.subject_type === 'societa'}
                             onChange={event => updateContactSubject(
                               document.id,
                               index,
@@ -2072,24 +1992,99 @@ export default function ClientPortalPage() {
                         </label>
                       ))}
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {([
-                        ['nome', 'Nome', 'text'],
-                        ['cognome', 'Cognome', 'text'],
-                        ['email', 'E-mail', 'email'],
-                        ['cellulare', 'Cellulare', 'tel'],
-                      ] as const).map(([field, label, type]) => (
-                        <div key={field} className="space-y-1">
-                          <label className="text-xs font-medium text-muted-foreground">{label}</label>
-                          <Input
-                            type={type}
-                            value={subject[field]}
-                            placeholder={label}
-                            onChange={event => updateContactSubject(document.id, index, { [field]: event.target.value })}
-                          />
+                    {(subject.roles.includes('beneficial_owner') || subject.subject_type === 'societa') && (
+                      <div className="max-w-sm space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Tipologia titolare effettivo</label>
+                        <Select
+                          value={subject.subject_type}
+                          onValueChange={(value: StructuredSubjectType) => updateContactSubject(
+                            document.id,
+                            index,
+                            value === 'societa'
+                              ? { subject_type: value, roles: ['beneficial_owner'] }
+                              : { subject_type: value },
+                          )}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="persona_fisica">Persona fisica</SelectItem>
+                            <SelectItem
+                              value="societa"
+                              disabled={subject.roles.some(role => role !== 'beneficial_owner')}
+                            >
+                              Società
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {subject.roles.some(role => role !== 'beneficial_owner') && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Per indicare una società, lascia selezionato soltanto il ruolo Titolare effettivo.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {subject.subject_type === 'societa' ? (
+                      <div className="space-y-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {([
+                            ['denominazione_societa', 'Denominazione società', 'text'],
+                            ['partita_iva', 'Partita IVA', 'text'],
+                          ] as const).map(([field, label, type]) => (
+                            <div key={field} className="space-y-1">
+                              <label className="text-xs font-medium text-muted-foreground">{label}</label>
+                              <Input
+                                type={type}
+                                value={subject[field]}
+                                placeholder={label}
+                                onChange={event => updateContactSubject(document.id, index, { [field]: event.target.value })}
+                              />
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                        <div className="border-t border-indigo-100 pt-3">
+                          <p className="mb-2 text-xs font-semibold text-indigo-800">Legale rappresentante della società titolare effettivo</p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {([
+                              ['legale_rappresentante_nome', 'Nome', 'text'],
+                              ['legale_rappresentante_cognome', 'Cognome', 'text'],
+                              ['legale_rappresentante_email', 'E-mail', 'email'],
+                              ['legale_rappresentante_cellulare', 'Cellulare', 'tel'],
+                            ] as const).map(([field, label, type]) => (
+                              <div key={field} className="space-y-1">
+                                <label className="text-xs font-medium text-muted-foreground">{label}</label>
+                                <Input
+                                  type={type}
+                                  value={subject[field]}
+                                  placeholder={label}
+                                  onChange={event => updateContactSubject(document.id, index, { [field]: event.target.value })}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {([
+                          ['nome', 'Nome', 'text'],
+                          ['cognome', 'Cognome', 'text'],
+                          ['email', 'E-mail', 'email'],
+                          ['cellulare', 'Cellulare', 'tel'],
+                        ] as const).map(([field, label, type]) => (
+                          <div key={field} className="space-y-1">
+                            <label className="text-xs font-medium text-muted-foreground">{label}</label>
+                            <Input
+                              type={type}
+                              value={subject[field]}
+                              placeholder={label}
+                              onChange={event => updateContactSubject(document.id, index, { [field]: event.target.value })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
                 <Button
