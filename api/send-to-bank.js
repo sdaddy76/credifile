@@ -487,7 +487,6 @@ export default async function handler(req, res) {
         }),
     );
     let docLinks = signResults.filter(Boolean);
-    let relationAttachment = null;
     if (!integrationMode && commercialRelation?.pdf_url) {
       try {
         const relationPath = String(commercialRelation.pdf_url);
@@ -505,17 +504,7 @@ export default async function handler(req, res) {
         }
         if (!relationUrl) throw new Error('URL PDF relazione non disponibile');
 
-        const relationResponse = await fetch(relationUrl);
-        if (!relationResponse.ok) throw new Error('Impossibile scaricare il PDF della relazione');
-        const relationBuffer = await relationResponse.arrayBuffer();
-        if (relationBuffer.byteLength > 12 * 1024 * 1024) {
-          throw new Error('Il PDF della relazione supera il limite di 12 MB');
-        }
         const relationFilename = `Relazione_Commerciale_${safeAttachmentName(pratica.clients?.ragione_sociale)}.pdf`;
-        relationAttachment = {
-          filename: relationFilename,
-          content: Buffer.from(relationBuffer).toString('base64'),
-        };
         docLinks.push({
           uploadedFileId: null,
           relationId: commercialRelation.id,
@@ -526,7 +515,7 @@ export default async function handler(req, res) {
       } catch (relationError) {
         return res.status(502).json({
           success: false,
-          error: `Impossibile allegare la Relazione Commerciale: ${relationError instanceof Error ? relationError.message : String(relationError)}`,
+          error: `Impossibile preparare il link della Relazione Commerciale: ${relationError instanceof Error ? relationError.message : String(relationError)}`,
         });
       }
     }
@@ -1155,7 +1144,6 @@ ${integrationAnswersHtml}
     if (agentEmail) emailPayload.reply_to = agentEmail;
     if (ccList.length  > 0) emailPayload.cc  = ccList;
     if (bccList.length > 0) emailPayload.bcc = bccList;
-    if (relationAttachment) emailPayload.attachments = [relationAttachment];
 
     const emailRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -1246,7 +1234,8 @@ ${integrationAnswersHtml}
       bcc: bccList,
       reply_to: agentEmail ?? null,
       docs_sent: docLinks.length,
-      relation_attached: Boolean(relationAttachment),
+      relation_attached: false,
+      relation_linked: !integrationMode && Boolean(commercialRelation?.pdf_url),
       answers_sent: answeredQuestions.length,
       delivery_type: integrationMode ? 'approfondimento' : 'pratica',
       bank_status_changed: !integrationMode,
