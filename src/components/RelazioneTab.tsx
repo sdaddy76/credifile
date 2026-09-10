@@ -881,7 +881,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                   <div className="space-y-4 p-4">
                     {COMMERCIAL_REPORT_SECTIONS.map(section => {
                       const savedValue = answers[section.key];
-                      const displayedValue = typeof savedValue === 'string' && savedValue.trim()
+                      const displayedValue = typeof savedValue === 'string'
                         ? savedValue
                         : commercialAnalysis.sections[section.key];
                       return (
