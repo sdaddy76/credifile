@@ -976,6 +976,9 @@ export default async function handler(req, res) {
       const positivi = segnali.filter(s => s.tipo === 'positivo');
       const amm = vj.storico_amministratori ?? [];
       const sedi = vj.storico_sedi ?? [];
+      const trasferimentiSede = Number.isInteger(vj.trasferimenti_sede)
+        ? vj.trasferimenti_sede
+        : sedi.filter(s => s.tipo === 'variazione').length;
       const rami = vj.passaggi_rami ?? [];
       return `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
@@ -990,7 +993,7 @@ export default async function handler(req, res) {
   <div style="flex:1;min-width:140px;background:#f8fafc;border-radius:8px;padding:10px 14px;border:1px solid #e2e8f0;text-align:center;">
     <div style="font-size:22px;font-weight:800;color:#1e293b;">${sedi.length}</div>
     <div style="font-size:11px;color:#64748b;margin-top:2px;">Sedi rilevate</div>
-    <div style="font-size:11px;font-weight:600;color:${sedi.length>2?'#d97706':'#374151'};">${sedi.filter(s=>s.tipo==='variazione').length} variazioni</div>
+    <div style="font-size:11px;font-weight:600;color:${trasferimentiSede>1?'#d97706':'#374151'};">${trasferimentiSede} trasferimenti</div>
   </div>
   <div style="flex:1;min-width:140px;background:#f8fafc;border-radius:8px;padding:10px 14px;border:1px solid #e2e8f0;text-align:center;">
     <div style="font-size:22px;font-weight:800;color:${rami.length>0?'#d97706':'#1e293b'};">${rami.length}</div>

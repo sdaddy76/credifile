@@ -740,6 +740,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
     storico_amministratori?: Array<{ carica: string; nome: string; data_inizio?: string | null; data_fine?: string | null; cessato?: boolean }>;
     storico_soci?: Array<{ nome: string; percentuale?: number | null; data_variazione?: string | null }>;
     storico_sedi?: Array<{ indirizzo: string; data_inizio?: string | null; tipo?: string }>;
+    trasferimenti_sede?: number;
     passaggi_rami?: Array<{ descrizione: string; data?: string | null }>;
     segnali_strutturali?: StructuralSignal[];
     excluded_from_bank_email?: string[];
@@ -1022,7 +1023,10 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
             <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
               <span className="flex items-center gap-1.5"><FileSearch className="w-3.5 h-3.5 text-blue-600" /> Segnali da Visura Camerale</span>
               <div className="flex items-center gap-3 text-[10px] font-normal">
-                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {visuraData.storico_sedi?.length ?? 0} sedi</span>
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  {visuraData.storico_sedi?.length ?? 0} sedi · {visuraData.trasferimenti_sede ?? visuraData.storico_sedi?.filter(sede => sede.tipo === 'variazione').length ?? 0} trasferimenti
+                </span>
                 <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {visuraData.storico_amministratori?.length ?? 0} cariche</span>
                 <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" /> {visuraData.passaggi_rami?.length ?? 0} rami</span>
                 <button
