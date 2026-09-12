@@ -307,6 +307,7 @@ export default function PraticaDetailPage() {
   ]);
   const [integrationQuestions, setIntegrationQuestions] = useState<string[]>(['']);
   const [clientQuestions, setClientQuestions] = useState<ClientQuestion[]>([]);
+  const [savingClientQuestionId, setSavingClientQuestionId] = useState<string | null>(null);
   const [integrationCycles, setIntegrationCycles] = useState<PracticeIntegrationRequest[]>([]);
   const [clientBankPositions, setClientBankPositions] = useState<ClientBankPosition[]>([]);
   const [saving, setSaving] = useState(false);
@@ -327,6 +328,64 @@ export default function PraticaDetailPage() {
   }
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
+
+  const updateClientQuestionAnswer = (questionId: string, value: string) => {
+    setClientQuestions(prev => prev.map(question => (
+      question.id === questionId
+        ? { ...question, risposta: value }
+        : question
+    )));
+  };
+
+  const saveClientQuestionAnswer = async (question: ClientQuestion) => {
+    if (!id || !canEdit) return;
+    const answer = question.risposta ?? '';
+    if (!answer.trim()) {
+      toast.error('Inserisci una risposta prima di salvare');
+      return;
+    }
+
+    setSavingClientQuestionId(question.id);
+    const answeredAt = new Date().toISOString();
+    try {
+      const { error } = await supabase
+        .from('practice_client_questions')
+        .update({
+          risposta: answer,
+          stato: 'risposta',
+          answered_at: answeredAt,
+        })
+        .eq('id', question.id)
+        .eq('practice_id', id);
+      if (error) throw error;
+
+      setClientQuestions(prev => prev.map(item => (
+        item.id === question.id
+          ? { ...item, risposta: answer, stato: 'risposta', answered_at: answeredAt }
+          : item
+      )));
+
+      await supabase.from('practice_activity_log').insert({
+        practice_id: id,
+        action: 'risposta_domanda_cliente_inserita',
+        actor_id: user?.id ?? null,
+        actor_nome: user?.email ?? 'Agente',
+        actor_ruolo: isSuperAdmin ? 'super_admin' : 'agente',
+        metadata: {
+          question_id: question.id,
+          domanda: question.domanda,
+          risposta: answer,
+          risposta_inserita_da: isSuperAdmin ? 'super_admin' : 'agente',
+        },
+      });
+
+      toast.success('Risposta salvata e disponibile nella pratica');
+    } catch (error) {
+      toast.error('Errore salvataggio risposta: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setSavingClientQuestionId(null);
+    }
+  };
 
   const loadActivityLogs = async () => {
     if (!id) return;
@@ -3107,6 +3166,11 @@ export default function PraticaDetailPage() {
                       <MessageSquare className="w-4 h-4 text-blue-600" />
                       Domande al cliente ({clientQuestions.length})
                     </CardTitle>
+                    {canEdit && (
+                      <p className="text-xs text-muted-foreground">
+                        Puoi rispondere direttamente per conto della pratica oppure modificare una risposta già ricevuta. La risposta salvata sarà visibile anche al cliente.
+                      </p>
+                    )}
                   </CardHeader>
                   <CardContent className="space-y-2">
                     {clientQuestions.map((question, index) => (
@@ -3127,12 +3191,40 @@ export default function PraticaDetailPage() {
                             </Badge>
                           )}
                         </div>
-                        {question.risposta && (
+                        {canEdit ? (
+                          <div className="mt-3 space-y-2 rounded-md border border-blue-100 bg-blue-50/50 p-3">
+                            <p className="text-xs font-semibold text-blue-800">
+                              Risposta alla domanda
+                            </p>
+                            <Textarea
+                              rows={3}
+                              value={question.risposta ?? ''}
+                              placeholder="Inserisci la risposta per conto della pratica..."
+                              onChange={event => updateClientQuestionAnswer(question.id, event.target.value)}
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="gap-1.5"
+                              disabled={
+                                savingClientQuestionId === question.id
+                                || !(question.risposta?.trim())
+                              }
+                              onClick={() => saveClientQuestionAnswer(question)}
+                            >
+                              {savingClientQuestionId === question.id
+                                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                                : <><Save className="w-3.5 h-3.5" /> {question.risposta?.trim() ? 'Salva risposta' : 'Rispondi'}
+                                </>
+                              }
+                            </Button>
+                          </div>
+                        ) : question.risposta ? (
                           <div className="mt-2 rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
-                            <p className="text-xs font-semibold text-muted-foreground mb-1">Risposta del cliente</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">Risposta</p>
                             <p className="text-sm whitespace-pre-wrap">{question.risposta}</p>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     ))}
                   </CardContent>
