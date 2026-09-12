@@ -37,9 +37,17 @@ const PERCENT_KPIS = new Set(['ebitda_margin', 'roe', 'roi', 'ros', 'pn_totale_a
 const DAYS_KPIS = new Set(['dso']);
 
 function formatNumber(value: number, maximumFractionDigits = 2): string {
+  // Intl.NumberFormat/Number.prototype.toLocaleString solleva un RangeError
+  // quando minimumFractionDigits è maggiore di maximumFractionDigits. Questo
+  // può accadere per indicatori espressi in giorni (es. DSO < 10), per i quali
+  // chiediamo una sola cifra decimale ma la regola generale dei valori piccoli
+  // ne richiederebbe due.
+  const safeMaximumFractionDigits = Math.max(0, Math.min(20, maximumFractionDigits));
+  const preferredMinimumFractionDigits = Math.abs(value) < 10 ? 2 : 1;
+  const minimumFractionDigits = Math.min(preferredMinimumFractionDigits, safeMaximumFractionDigits);
   return value.toLocaleString('it-IT', {
-    minimumFractionDigits: Math.abs(value) < 10 ? 2 : 1,
-    maximumFractionDigits,
+    minimumFractionDigits,
+    maximumFractionDigits: safeMaximumFractionDigits,
   });
 }
 

@@ -72,6 +72,31 @@ describe('commenti KPI con benchmark settoriale', () => {
     expect(missingBenchmark.comment).toContain('benchmark settoriale non è disponibile');
   });
 
+  it('formatta i giorni inferiori a 10 senza generare RangeError', () => {
+    expect(() => buildKpiBenchmarkComparison(score({
+      kpi_key: 'dso',
+      kpi_label: 'DSO (giorni)',
+      kpi_area: 'efficienza',
+      benchmark_key: 'DSO',
+      valore: 5,
+      formatted: '5 gg',
+      inverso: true,
+    }), { DSO: 8 })).not.toThrow();
+
+    const comparison = buildKpiBenchmarkComparison(score({
+      kpi_key: 'dso',
+      kpi_label: 'DSO (giorni)',
+      kpi_area: 'efficienza',
+      benchmark_key: 'DSO',
+      valore: 5,
+      formatted: '5 gg',
+      inverso: true,
+    }), { DSO: 8 });
+
+    expect(comparison.valueFormatted).toBe('5,0 gg');
+    expect(comparison.benchmarkFormatted).toBe('8,0 gg');
+  });
+
   it('produce un commento per ogni KPI ricevuto', () => {
     const comparisons = buildKpiBenchmarkComparisons([
       score(),
