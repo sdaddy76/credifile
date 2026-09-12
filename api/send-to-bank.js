@@ -73,6 +73,12 @@ function safeAttachmentName(value) {
     .slice(0, 80) || 'cliente';
 }
 
+function getStructuralSignalId(signal) {
+  return [signal?.tipo, signal?.categoria, signal?.titolo, signal?.descrizione]
+    .map(value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('it-IT').trim())
+    .join('|');
+}
+
 // ── calcolaScore (replica IndiceBancabilita.tsx) ───────────────────────────
 function calcolaScoreNode(valore, ottimo, suff, critica, inverso) {
   if (ottimo === null || suff === null || critica === null) return 50;
@@ -957,7 +963,13 @@ export default async function handler(req, res) {
     // ── Segnali strutturali da visura ─────────────────────────────────────
     const visuraSection = safeSection((() => {
       const vj = clienteExt.visura_json;
-      const segnali = Array.isArray(vj?.segnali_strutturali) ? vj.segnali_strutturali : [];
+      const allSegnali = Array.isArray(vj?.segnali_strutturali) ? vj.segnali_strutturali : [];
+      const excludedFromBankEmail = new Set(
+        Array.isArray(vj?.excluded_from_bank_email)
+          ? vj.excluded_from_bank_email.filter(value => typeof value === 'string')
+          : [],
+      );
+      const segnali = allSegnali.filter(signal => !excludedFromBankEmail.has(getStructuralSignalId(signal)));
       if (!vj || segnali.length === 0) return '';
       const warnings = segnali.filter(s => s.tipo === 'warning');
       const attenzione = segnali.filter(s => s.tipo === 'attenzione');

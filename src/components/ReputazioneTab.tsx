@@ -107,6 +107,21 @@ interface ExcludedSignal {
   excluded_by?: string;
   excluded_at: string;
 }
+
+type StructuralSignal = {
+  tipo: string;
+  categoria: string;
+  titolo: string;
+  descrizione: string;
+  peso: number;
+};
+
+function getStructuralSignalId(signal: Pick<StructuralSignal, 'tipo' | 'categoria' | 'titolo' | 'descrizione'>): string {
+  return [signal.tipo, signal.categoria, signal.titolo, signal.descrizione]
+    .map(value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('it-IT').trim())
+    .join('|');
+}
+
 interface AnalysisRecord {
   id: string; created_at: string;
   score_globale: number; score_societa: number; score_amm: number; score_soci: number;
@@ -726,7 +741,8 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
     storico_soci?: Array<{ nome: string; percentuale?: number | null; data_variazione?: string | null }>;
     storico_sedi?: Array<{ indirizzo: string; data_inizio?: string | null; tipo?: string }>;
     passaggi_rami?: Array<{ descrizione: string; data?: string | null }>;
-    segnali_strutturali?: Array<{ tipo: string; categoria: string; titolo: string; descrizione: string; peso: number }>;
+    segnali_strutturali?: StructuralSignal[];
+    excluded_from_bank_email?: string[];
     anagrafica?: { data_costituzione?: string; forma_giuridica?: string; capitale_sociale?: number; codice_ateco?: string; ateco_descrizione?: string };
     data_analisi?: string;
   };
@@ -818,6 +834,29 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
     } finally {
       setAnalyzingVisura(false);
     }
+  };
+
+  const toggleStructuralSignalEmail = async (signal: StructuralSignal) => {
+    if (!clientId || !visuraData) return;
+    const signalId = getStructuralSignalId(signal);
+    const current = visuraData.excluded_from_bank_email ?? [];
+    const isExcluded = current.includes(signalId);
+    const updated = isExcluded
+      ? current.filter(id => id !== signalId)
+      : [...current, signalId];
+    const updatedVisuraData = { ...visuraData, excluded_from_bank_email: updated };
+
+    const { error } = await supabase
+      .from('clients')
+      .update({ visura_json: updatedVisuraData })
+      .eq('id', clientId);
+    if (error) {
+      toast.error('Errore nel salvataggio della scelta per l’email');
+      return;
+    }
+
+    setVisuraData(updatedVisuraData);
+    toast.success(isExcluded ? 'Nota nuovamente inclusa nell’email' : 'Nota esclusa dall’email alla banca');
   };
 
   const loadHistory = useCallback(async () => {
@@ -997,20 +1036,42 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
             </CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-3 space-y-2">
-            {visuraData.segnali_strutturali.map((s, i) => (
+            {visuraData.segnali_strutturali.map((s, i) => {
+              const excludedFromBankEmail = (visuraData.excluded_from_bank_email ?? []).includes(getStructuralSignalId(s));
+              return (
               <div key={i} className={`flex items-start gap-2 rounded-lg px-3 py-2 border ${
+                excludedFromBankEmail ? 'bg-slate-50 border-slate-200 opacity-75' :
                 s.tipo === 'warning'    ? 'bg-red-50 border-red-200' :
                 s.tipo === 'attenzione' ? 'bg-amber-50 border-amber-200' :
                 s.tipo === 'positivo'  ? 'bg-green-50 border-green-200' :
                 'bg-muted/30 border-border'}`}>
                 <span className="text-sm mt-0.5">{s.tipo === 'warning' ? '⚠️' : s.tipo === 'positivo' ? '✅' : '💡'}</span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold">{s.titolo}</p>
+                  <p className={`text-xs font-semibold ${excludedFromBankEmail ? 'text-slate-500 line-through' : ''}`}>{s.titolo}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">{s.descrizione}</p>
                 </div>
-                <Badge variant="outline" className="text-[10px] shrink-0">{s.categoria}</Badge>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Badge variant="outline" className="text-[10px]">{s.categoria}</Badge>
+                  <button
+                    type="button"
+                    onClick={() => toggleStructuralSignalEmail(s)}
+                    className={`inline-flex items-center gap-1 rounded border px-1.5 py-1 text-[10px] transition-colors ${
+                      excludedFromBankEmail
+                        ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        : 'border-slate-200 bg-white text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700'
+                    }`}
+                    title={excludedFromBankEmail ? 'Includi nuovamente questa nota nell’email alla banca' : 'Escludi questa nota dall’email alla banca'}
+                  >
+                    {excludedFromBankEmail ? <RotateCcw className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
+                    {excludedFromBankEmail ? 'Inclusa email' : 'Escludi email'}
+                  </button>
+                </div>
               </div>
-            ))}
+              );
+            })}
+            <p className="text-[10px] text-muted-foreground/70 flex items-center gap-1 pt-1">
+              <Info className="w-3 h-3" /> Le note escluse restano visibili nell’analisi, ma non vengono inserite nell’email inviata alla banca.
+            </p>
             {visuraData.storico_amministratori && visuraData.storico_amministratori.filter(a => a.cessato).length > 0 && (
               <div className="mt-2">
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Amministratori cessati</p>

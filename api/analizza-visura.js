@@ -109,6 +109,12 @@ function generaSegnali(amm, soci, sedi, rami) {
   return s;
 }
 
+function getStructuralSignalId(signal) {
+  return [signal?.tipo, signal?.categoria, signal?.titolo, signal?.descrizione]
+    .map(value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('it-IT').trim())
+    .join('|');
+}
+
 export default async function handler(req, res) {
   Object.entries(CORS).forEach(([k,v]) => res.setHeader(k,v));
   if (req.method === 'OPTIONS') return res.status(204).end();
@@ -130,7 +136,24 @@ export default async function handler(req, res) {
     const anagrafica = parseAnagrafica(testo);
     const segnali = generaSegnali(amm, soci, sedi, rami);
 
-    const visuraJson = { storico_amministratori:amm, storico_soci:soci, storico_sedi:sedi, passaggi_rami:rami, segnali_strutturali:segnali, anagrafica, data_analisi:new Date().toISOString(), caratteri_analizzati:testo.length };
+    const currentClientRes = await supa(`clients?id=eq.${encodeURIComponent(pratica.client_id)}&select=visura_json`);
+    const currentClient = (await currentClientRes.json())?.[0];
+    const previousExclusions = Array.isArray(currentClient?.visura_json?.excluded_from_bank_email)
+      ? currentClient.visura_json.excluded_from_bank_email.filter(value => typeof value === 'string')
+      : [];
+    const currentSignalIds = new Set(segnali.map(getStructuralSignalId));
+    const preservedExclusions = previousExclusions.filter(value => currentSignalIds.has(value));
+    const visuraJson = {
+      storico_amministratori: amm,
+      storico_soci: soci,
+      storico_sedi: sedi,
+      passaggi_rami: rami,
+      segnali_strutturali: segnali,
+      excluded_from_bank_email: preservedExclusions,
+      anagrafica,
+      data_analisi: new Date().toISOString(),
+      caratteri_analizzati: testo.length,
+    };
 
     const updatePayload = { visura_json: visuraJson };
     if (anagrafica.forma_giuridica)   updatePayload.forma_giuridica   = anagrafica.forma_giuridica;
