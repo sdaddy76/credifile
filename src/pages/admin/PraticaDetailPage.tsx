@@ -213,6 +213,20 @@ function getAssignedAgentEmail(currentPractice: Practice | null): string | undef
   return email || undefined;
 }
 
+function isFinancingRequestDocument(document: Pick<PracticeDocument, 'nome'>): boolean {
+  const normalizedName = document.nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('it-IT');
+
+  return normalizedName.includes('finanziament')
+    && (
+      normalizedName.includes('essere')
+      || normalizedName.includes('attiv')
+      || normalizedName.includes('situazione')
+    );
+}
+
 export default function PraticaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -2822,7 +2836,11 @@ export default function PraticaDetailPage() {
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <p className="text-sm font-medium text-foreground">{doc.nome}</p>
                                   {doc.obbligatorio && <span className="text-xs text-red-500">*</span>}
-                                  <Badge className={`text-xs ${DOC_STATUS_COLORS[doc.status]}`}>{DOC_STATUS_LABELS[doc.status]}</Badge>
+                                  <Badge className={`text-xs ${DOC_STATUS_COLORS[doc.status]}`}>
+                                    {isFinancingRequestDocument(doc) && doc.status === 'caricato'
+                                      ? 'Risposta'
+                                      : DOC_STATUS_LABELS[doc.status]}
+                                  </Badge>
                                   {doc.integration_request_id && integrationCycleById.get(doc.integration_request_id) && (
                                     <Badge variant="outline" className="text-xs border-amber-200 text-amber-700">
                                       Richiesta durante {STATUS_LABELS[
@@ -3776,13 +3794,34 @@ export default function PraticaDetailPage() {
                               fonte: r.fonte || 'manuale',
                             };
                             if (r._new) {
-                              const { data: ins } = await supabase.from('client_financing').insert(payload).select('id').single();
+                              const { data: ins, error } = await supabase.from('client_financing').insert(payload).select('id').single();
+                              if (error) throw error;
                               if (ins) setFinancing(prev => prev.map((row, idx) => idx === i ? { ...row, id: ins.id, _new: false, _dirty: false } : row));
                             } else {
-                              await supabase.from('client_financing').update(payload).eq('id', r.id);
+                              const { error } = await supabase.from('client_financing').update(payload).eq('id', r.id);
+                              if (error) throw error;
                               setFinancing(prev => prev.map((row, idx) => idx === i ? { ...row, _dirty: false } : row));
                             }
                           }
+
+                          const pendingFinancingDocumentIds = documents
+                            .filter(isFinancingRequestDocument)
+                            .filter(doc => doc.status === 'richiesto' || doc.status === 'rifiutato')
+                            .map(doc => doc.id);
+                          if (pendingFinancingDocumentIds.length > 0) {
+                            const { error } = await supabase
+                              .from('practice_documents')
+                              .update({
+                                status: 'caricato',
+                                uploaded_at: new Date().toISOString(),
+                                note_rifiuto: null,
+                              })
+                              .in('id', pendingFinancingDocumentIds)
+                              .eq('practice_id', id);
+                            if (error) throw error;
+                          }
+
+                          await load();
                           toast.success('Finanziamenti salvati!');
                         } catch {
                           toast.error('Errore nel salvataggio');

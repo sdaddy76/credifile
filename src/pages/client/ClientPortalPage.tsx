@@ -1724,7 +1724,7 @@ export default function ClientPortalPage() {
                   ? 'bg-green-100 text-green-700 border-green-200 text-xs'
                   : 'bg-amber-100 text-amber-700 border-amber-200 text-xs'
                 }>
-                  {financingRequestCompleted ? 'Completato' : 'Richiesto'}
+                  {financingRequestCompleted ? 'Risposta' : 'Richiesto'}
                 </Badge>
                 <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={addFinRow}>
                   <PlusCircle className="w-3.5 h-3.5" /> Aggiungi
