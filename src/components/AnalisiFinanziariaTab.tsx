@@ -15,6 +15,7 @@ import { fmtBenchmark, getAtecoBenchmark, type SectorBenchmark } from '@/lib/sec
 import type { BalanceAnomalyAnalysis } from '../../supabase/functions/_shared/balance-anomaly-engine';
 import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
 import { buildAppUrl } from '@/lib/appUrl';
+import { parseLocalizedNumber } from '@/lib/numberParsing';
 
 interface Props { practiceId: string }
 
@@ -1218,9 +1219,9 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       .select('rata, debito_residuo, durata_mesi, tipologia, fonte')
       .eq('practice_id', practiceId);
     const financing = (finData ?? []).map(f => ({
-      rata: Number(f.rata) || 0,
-      debito_residuo: Number(f.debito_residuo) || 0,
-      durata_mesi: Number(f.durata_mesi) || 0,
+      rata: parseLocalizedNumber(f.rata) ?? 0,
+      debito_residuo: parseLocalizedNumber(f.debito_residuo) ?? 0,
+      durata_mesi: parseLocalizedNumber(f.durata_mesi) ?? 0,
       tipologia: f.tipologia ?? '',
       fonte: f.fonte ?? '',
     }));

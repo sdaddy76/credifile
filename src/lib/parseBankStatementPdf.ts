@@ -4,6 +4,7 @@ import {
   type ConfidenzaClassificazione,
 } from '@/lib/classificaTransazione';
 import { inferBankStatementDirection } from '@/lib/bankStatementDirection';
+import { parseLocalizedNumber } from '@/lib/numberParsing';
 
 export interface ParsedBankStatementTransaction {
   data_valuta: string;
@@ -43,9 +44,7 @@ const MAX_ASSOCIATION_DISTANCE = 18;
 const MAX_DETACHED_AMOUNT_DISTANCE = 9;
 
 function parseImporto(value: string): number | null {
-  const clean = value.replace(/[€\s]/g, '').replace(/\./g, '').replace(',', '.');
-  const parsed = Number.parseFloat(clean);
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseLocalizedNumber(value);
 }
 
 function dataISO(giorno: string, mese: string, anno: string): string {

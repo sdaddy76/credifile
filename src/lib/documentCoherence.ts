@@ -4,6 +4,7 @@ import {
   type BankStatementTransaction,
   type StatementConfidence,
 } from '@/lib/bankStatementAnalysis';
+import { parseLocalizedNumber } from '@/lib/numberParsing';
 
 export type CoherenceSeverity = 'alta' | 'media' | 'bassa';
 export type CoherenceCheckStatus = 'coerente' | 'da_approfondire' | 'non_verificabile';
@@ -85,20 +86,7 @@ export interface DocumentCoherenceInput {
 }
 
 function numberValue(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  let normalized = String(value).trim().replace(/[€\s]/g, '');
-  const lastComma = normalized.lastIndexOf(',');
-  const lastDot = normalized.lastIndexOf('.');
-  if (lastComma >= 0 && lastDot >= 0) {
-    normalized = lastComma > lastDot
-      ? normalized.replace(/\./g, '').replace(',', '.')
-      : normalized.replace(/,/g, '');
-  } else if (lastComma >= 0) {
-    normalized = normalized.replace(/\./g, '').replace(',', '.');
-  }
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseLocalizedNumber(value);
 }
 
 function normalizedCompanyName(value: string | null | undefined): string {

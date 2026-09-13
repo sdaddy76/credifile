@@ -1,3 +1,5 @@
+import { parseLocalizedNumber } from '@/lib/numberParsing';
+
 export type StatementConfidence = 'alta' | 'media' | 'bassa';
 
 export interface BankStatementTransaction {
@@ -50,20 +52,7 @@ export interface BankStatementAdvancedAnalysis {
 }
 
 function toNumber(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  let normalized = String(value).trim().replace(/[€\s]/g, '');
-  const lastComma = normalized.lastIndexOf(',');
-  const lastDot = normalized.lastIndexOf('.');
-  if (lastComma >= 0 && lastDot >= 0) {
-    normalized = lastComma > lastDot
-      ? normalized.replace(/\./g, '').replace(',', '.')
-      : normalized.replace(/,/g, '');
-  } else if (lastComma >= 0) {
-    normalized = normalized.replace(/\./g, '').replace(',', '.');
-  }
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseLocalizedNumber(value);
 }
 
 function transactionDate(transaction: BankStatementTransaction): Date | null {

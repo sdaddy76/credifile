@@ -7,6 +7,8 @@ import {
   BALANCE_VALUE_PATTERNS,
   extractBalanceCompanyName,
   extractBalanceValue,
+  extractBankDebtByMaturity,
+  parseItalianBalanceNumber,
   splitBalanceDocument,
 } from '../_shared/balance-parser.ts';
 
@@ -131,8 +133,15 @@ function parseBilancio(text: string) {
   const ratei_risconti_passivi = ePassivo(['E) Ratei e risconti', 'Ratei e risconti passivi']);
   const totale_passivo = ePassivo(['Totale passivo']);
 
-  // Dettaglio debiti (dalla nota integrativa)
-  const debiti_banche_breve = e(sections.full, ['Debiti verso banche']);
+  // Dettaglio debiti (dalla nota integrativa). Le quote breve/lungo vengono
+  // separate solo se la scadenza è esplicitamente leggibile; la voce generica
+  // resta un fallback per il breve e non viene mai duplicata nel lungo.
+  const debiti_banche_breve_esplicito = extractBankDebtByMaturity(sections.full, 'breve');
+  const debiti_banche_lungo = extractBankDebtByMaturity(sections.full, 'lungo');
+  const debiti_banche_generico = e(sections.full, ['Debiti verso banche', 'Debiti bancari']);
+  const debiti_banche_breve = debiti_banche_breve_esplicito ?? (
+    debiti_banche_lungo === null ? debiti_banche_generico : null
+  );
   const debiti_altri_finanziatori = e(sections.full, ['Debiti verso altri finanziatori']);
   const debiti_fornitori = e(sections.full, ['Debiti verso fornitori']);
   const debiti_tributari = e(sections.full, ['Debiti tributari']);
@@ -185,7 +194,7 @@ function parseBilancio(text: string) {
   const isXbrl = text.includes('tassonomia itcc-ci') || text.includes('Conforme alla tassonomia');
   const voci_mancanti = Object.entries({
     debiti_banche_breve,
-    debiti_banche_lungo: null,
+    debiti_banche_lungo,
     debiti_altri_finanziatori,
     debiti_fornitori,
     debiti_tributari,
@@ -206,7 +215,7 @@ function parseBilancio(text: string) {
     totale_patrimonio_netto, capitale_sociale, utile_perdita_esercizio,
     fondi_rischi, tfr,
     totale_passivo,
-    debiti_banche_breve, debiti_banche_lungo: null,
+    debiti_banche_breve, debiti_banche_lungo,
     debiti_altri_finanziatori,
     debiti_fornitori, debiti_tributari,
     totale_debiti, passivita_correnti, ratei_risconti_passivi,
@@ -248,11 +257,17 @@ function fmtEur(v: number | null) {
 function fmtGiorni(v: number | null) { return v !== null ? Math.round(v) + ' gg' : 'N/D'; }
 
 interface FinRow {
-  rata: number;
-  debito_residuo: number;
-  durata_mesi: number;
+  rata: number | string | null;
+  debito_residuo: number | string | null;
+  durata_mesi: number | string | null;
   tipologia: string;
   fonte?: string;
+}
+
+function parseEdgeNumber(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  return parseItalianBalanceNumber(String(value));
 }
 
 function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = []) {
@@ -288,16 +303,22 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   const isHolding = (d.ricavi_vendite === 0 || d.ricavi_vendite === null) && (d.proventi_partecipazioni ?? 0) > 0;
 
   // ── Dati da scheda finanziamenti (se disponibili) ──────────────────────────
-  const activeFinancing = financing.filter(row => (Number(row.debito_residuo) || 0) > 0);
+  const normalizedFinancing = financing.map(row => ({
+    ...row,
+    rata: parseEdgeNumber(row.rata),
+    debito_residuo: parseEdgeNumber(row.debito_residuo),
+    durata_mesi: parseEdgeNumber(row.durata_mesi),
+  }));
+  const activeFinancing = normalizedFinancing.filter(row => (row.debito_residuo ?? 0) > 0);
   const hasFinancingDebt = activeFinancing.length > 0;
   const hasDebtService = hasFinancingDebt
-    && activeFinancing.every(row => (Number(row.rata) || 0) > 0);
+    && activeFinancing.every(row => (row.rata ?? 0) > 0);
   const totRataMensile = hasDebtService
-    ? activeFinancing.reduce((sum, row) => sum + Math.max(0, Number(row.rata) || 0), 0)
+    ? activeFinancing.reduce((sum, row) => sum + Math.max(0, row.rata ?? 0), 0)
     : 0;
   const servizioDebitoAnnuo = hasDebtService ? totRataMensile * 12 : null;
   const debitoResidualeTot = hasFinancingDebt
-    ? activeFinancing.reduce((sum, row) => sum + (Number(row.debito_residuo) || 0), 0)
+    ? activeFinancing.reduce((sum, row) => sum + (row.debito_residuo ?? 0), 0)
     : financialDebtFromBalance;
   const financingSources = new Set(activeFinancing.map(row => (row.fonte ?? '').toLowerCase()).filter(Boolean));
   const debtSource = hasFinancingDebt
@@ -418,8 +439,14 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
       efficienza: {
         dso: kpi('DSO (giorni crediti)', dso, fmtGiorni(dso),
           dso === null ? 'nd' : dso <= 60 ? 'verde' : dso <= 120 ? 'giallo' : 'rosso'),
-        dpo: kpi('DPO (giorni debiti)', dpo, fmtGiorni(dpo), 'nd'),
-        dsi: kpi('DSI (giorni magazzino)', dsi, fmtGiorni(dsi), 'nd'),
+        dpo: kpi('DPO (giorni debiti)', dpo, fmtGiorni(dpo),
+          dpo === null ? 'nd' : dpo <= 60 ? 'verde' : dpo <= 90 ? 'giallo' : 'rosso',
+          dpo === null ? 'Non disponibile' : 'Bilancio',
+          dpo === null ? 'Servono debiti verso fornitori e costi per materie' : undefined),
+        dsi: kpi('DSI (giorni magazzino)', dsi, fmtGiorni(dsi),
+          dsi === null ? 'nd' : dsi <= 60 ? 'verde' : dsi <= 90 ? 'giallo' : 'rosso',
+          dsi === null ? 'Non disponibile' : 'Bilancio',
+          dsi === null ? 'Servono rimanenze e costi per materie' : undefined),
       },
       copertura: {
         interest_coverage: kpi('Interest Coverage', intCov, fmtMult(intCov),

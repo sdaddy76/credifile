@@ -1,5 +1,6 @@
 import { analyzeBankStatement, type BankStatementTransaction } from '@/lib/bankStatementAnalysis';
 import type { KpiEntry, KpiResult } from '@/lib/bankabilityScoring';
+import { parseLocalizedNumber } from '@/lib/numberParsing';
 
 export interface CommercialBalanceData {
   totale_attivo?: number | null;
@@ -46,9 +47,7 @@ function finite(value: unknown): value is number {
 }
 
 function numeric(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = typeof value === 'number' ? value : Number(String(value).replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseLocalizedNumber(value);
 }
 
 function euro(value: number | null): string {

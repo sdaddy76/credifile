@@ -1,3 +1,5 @@
+import { parseLocalizedNumber } from '@/lib/numberParsing';
+
 export const COMMERCIAL_REPORT_SECTION_KEYS = {
   companySituation: '__company_situation',
   growthOpportunities: '__growth_opportunities',
@@ -102,9 +104,7 @@ const euro = (value: number | null) => value === null
     }).format(value);
 
 const numberValue = (value: number | string | null | undefined): number | null => {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseLocalizedNumber(value);
 };
 
 const firstNumber = (...values: Array<number | string | null | undefined>): number | null => {

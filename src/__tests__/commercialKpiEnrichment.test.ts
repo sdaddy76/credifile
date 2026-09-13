@@ -112,4 +112,22 @@ describe('commercialKpiEnrichment', () => {
     expect(result.kpi.liquidita.current_ratio.valore).toBeNull();
     expect(result.kpi.liquidita.current_ratio.source_note).toContain('totale debiti');
   });
+
+  it('usa l’estratto conto per il DSCR solo con mesi e rate ricorrenti affidabili', () => {
+    const result = enrichCommercialKpis({
+      totale_valore_produzione: 1_000_000,
+      totale_costi_produzione: 900_000,
+      ammortamenti: 20_000,
+      kpi: {},
+    }, [], [
+      { data_valuta: '2026-01-15', importo: '1.000,00', tipo: 'uscita', categoria: 'rata_finanziamento', descrizione: 'Rata mutuo Alfa', classification_confidence: 'alta', parse_confidence: 'alta' },
+      { data_valuta: '2026-02-15', importo: '1.000,00', tipo: 'uscita', categoria: 'rata_finanziamento', descrizione: 'Rata mutuo Alfa', classification_confidence: 'alta', parse_confidence: 'alta' },
+      { data_valuta: '2026-03-15', importo: '1.000,00', tipo: 'uscita', categoria: 'rata_finanziamento', descrizione: 'Rata mutuo Alfa', classification_confidence: 'alta', parse_confidence: 'alta' },
+    ]);
+
+    expect(result.dscrSource).toBe('estratto_conto');
+    expect(result.servizioDebitoAnnuo).toBe(12_000);
+    expect(result.kpi.copertura.dscr.valore).toBeCloseTo(10, 1);
+    expect(result.kpi.copertura.dscr.source).toBe('Estratto conto');
+  });
 });

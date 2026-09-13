@@ -35,6 +35,7 @@ import {
 import { pdfTextItemsToLines } from '@/lib/pdfTextLines';
 import { buildKpiBenchmarkComparisons } from '@/lib/kpiBenchmarkComments';
 import { COMMERCIAL_REPORT_SECTIONS } from '@/lib/commercialReportAnalysis';
+import { parseLocalizedNumber } from '@/lib/numberParsing';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -397,8 +398,8 @@ export default function NuovoReportWizard() {
       let recalculatedKpi = kpiResult;
       if (bilancioTestoRelazione) {
         const financingPayload = activeFinancing.map(finanziamento => ({
-          rata: finanziamento.rata_mensile ?? 0,
-          debito_residuo: finanziamento.importo_residuo,
+          rata: parseLocalizedNumber(finanziamento.rata_mensile) ?? 0,
+          debito_residuo: parseLocalizedNumber(finanziamento.importo_residuo) ?? 0,
           durata_mesi: 0,
           tipologia: finanziamento.tipo,
           fonte: finanziamento.fonte,
