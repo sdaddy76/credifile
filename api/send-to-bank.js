@@ -1308,6 +1308,44 @@ ${integrationAnswersHtml}
       }),
     }).catch(() => null); // Non blocca se il log fallisce
 
+    // Notifica centralizzata agli utenti che seguono la pratica. L'invio
+    // email resta riuscito anche se la notifica in-app non fosse disponibile.
+    try {
+      const adminRows = await fetch(
+        `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=eq.super_admin&select=id`,
+        { headers: H },
+      ).then(response => response.ok ? response.json() : []);
+      const recipientIds = new Set(
+        [
+          pratica.agent?.id,
+          ...(Array.isArray(adminRows) ? adminRows.map(row => row?.id) : []),
+        ].filter(Boolean),
+      );
+      if (recipientIds.size > 0) {
+        const notificationType = integrationMode ? 'integrazione_inviata_banca' : 'email_inviata';
+        const notificationTitle = integrationMode
+          ? `Approfondimenti inviati a ${pb.banks?.nome ?? 'banca'}`
+          : `Pratica inviata a ${pb.banks?.nome ?? 'banca'}`;
+        const notificationText = integrationMode
+          ? `${cliente}: nuovi documenti o risposte sono stati trasmessi alla banca.`
+          : `${cliente}: documenti e relazione sono stati trasmessi alla banca.`;
+        await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
+          method: 'POST',
+          headers: { ...H, Prefer: 'return=minimal' },
+          body: JSON.stringify([...recipientIds].map(userId => ({
+            user_id: userId,
+            tipo: notificationType,
+            titolo: notificationTitle,
+            testo: notificationText,
+            link: `/admin/pratiche/${practice_id}`,
+            practice_id,
+          }))),
+        });
+      }
+    } catch (notificationError) {
+      console.warn('Notifica invio banca non registrata:', notificationError);
+    }
+
     return res.status(200).json({
       success: true,
       sent_to: copyOnlyMode ? copyEmail : bankEmail,

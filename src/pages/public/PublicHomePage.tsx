@@ -102,6 +102,20 @@ export default function PublicHomePage() {
 
   return (
     <PublicSiteLayout>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'ProfessionalService',
+            name: 'Credifile',
+            url: 'https://credifile-eosin.vercel.app/',
+            description: 'Analisi documentale e finanziaria per la valutazione di bancabilità delle imprese.',
+            areaServed: 'IT',
+            serviceType: ['Analisi di bilancio', 'Valutazione di bancabilità', 'Coerenza documentale'],
+          }),
+        }}
+      />
       <main>
         <section className="relative isolate overflow-hidden border-b border-slate-200 bg-slate-50">
           <div className="absolute inset-x-0 top-0 -z-10 h-[520px] bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.13),transparent_42%),radial-gradient(circle_at_top_left,rgba(249,115,22,0.10),transparent_34%)]" />

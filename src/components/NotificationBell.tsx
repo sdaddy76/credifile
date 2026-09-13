@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Bell, Check, CheckCheck, Trash2, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 interface Notification {
   id: string;
@@ -22,6 +23,15 @@ const TIPO_ICON: Record<string, string> = {
   task_assegnato:       '✅',
   nota_aggiunta:        '💬',
   email_inviata:        '📧',
+  documento_caricato:   '📤',
+  documento_banca_aperto: '👁️',
+  documento_banca_scaricato: '⬇️',
+  integrazione_richiesta: '🧩',
+  integrazione_inviata_banca: '📨',
+  pratica_duplicata:     '⚠️',
+  ricerca_banca:         '🔎',
+  ricerca_banca_assegnata: '🔎',
+  segnalazione_assegnata: '📬',
 };
 
 export default function NotificationBell() {
@@ -34,22 +44,50 @@ export default function NotificationBell() {
 
   const load = async () => {
     if (!user?.id) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('notifications')
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(30);
+    if (error) {
+      console.error('Errore caricamento notifiche:', error);
+      // Non interrompere l'interfaccia se una policy o la rete è
+      // temporaneamente indisponibile.
+      return;
+    }
     const list = (data ?? []) as Notification[];
     setNotifications(list);
     setUnread(list.filter(n => !n.letto).length);
   };
 
   useEffect(() => {
+    if (!user?.id) return;
     load();
-    // Polling ogni 30 secondi
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
+    // Realtime per la consegna immediata; polling come fallback per ambienti
+    // in cui la pubblicazione Supabase Realtime non è ancora attiva.
+    const channel = supabase
+      .channel(`notifications:${user?.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => { load(); },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn('Realtime notifiche non disponibile: attivo il polling di fallback');
+        }
+      });
+    const interval = setInterval(load, 60000);
+    return () => {
+      clearInterval(interval);
+      void supabase.removeChannel(channel);
+    };
   }, [user?.id]);
 
   // Chiudi al click fuori
@@ -63,20 +101,32 @@ export default function NotificationBell() {
 
   const markAllRead = async () => {
     if (!user?.id) return;
-    await supabase.from('notifications').update({ letto: true }).eq('user_id', user.id).eq('letto', false);
+    const { error } = await supabase.from('notifications').update({ letto: true }).eq('user_id', user.id).eq('letto', false);
+    if (error) {
+      toast.error('Impossibile aggiornare le notifiche');
+      return;
+    }
     setNotifications(prev => prev.map(n => ({ ...n, letto: true })));
     setUnread(0);
   };
 
   const markRead = async (id: string) => {
-    await supabase.from('notifications').update({ letto: true }).eq('id', id);
+    const { error } = await supabase.from('notifications').update({ letto: true }).eq('id', id);
+    if (error) {
+      toast.error('Impossibile segnare la notifica come letta');
+      return;
+    }
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, letto: true } : n));
     setUnread(prev => Math.max(0, prev - 1));
   };
 
   const deleteNotif = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    await supabase.from('notifications').delete().eq('id', id);
+    const { error } = await supabase.from('notifications').delete().eq('id', id);
+    if (error) {
+      toast.error('Impossibile eliminare la notifica');
+      return;
+    }
     const notif = notifications.find(n => n.id === id);
     setNotifications(prev => prev.filter(n => n.id !== id));
     if (notif && !notif.letto) setUnread(prev => Math.max(0, prev - 1));

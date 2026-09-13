@@ -235,8 +235,24 @@ export default defineConfig(({ mode }) => {
       __ROUTE_MESSAGING_ENABLED__: JSON.stringify(
         mode === 'production' 
           ? process.env.VITE_ENABLE_ROUTE_MESSAGING === 'true'
-          : process.env.VITE_ENABLE_ROUTE_MESSAGING !== 'false'
+        : process.env.VITE_ENABLE_ROUTE_MESSAGING !== 'false'
       ),
+    },
+    build: {
+      // Mantiene i moduli pesanti fuori dal bundle iniziale. Le route che
+      // generano PDF o grafici li caricano solo quando vengono utilizzate.
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('pdfjs-dist')) return 'vendor-pdfjs';
+            if (id.includes('/jspdf')) return 'vendor-jspdf';
+            if (id.includes('html2canvas')) return 'vendor-html2canvas';
+            if (id.includes('recharts')) return 'vendor-charts';
+            return undefined;
+          },
+        },
+      },
     },
   }
 });

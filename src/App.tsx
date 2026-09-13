@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import AppErrorBoundary from "@/components/AppErrorBoundary";
 
 const PublicHomePage = lazy(() => import("@/pages/public/PublicHomePage"));
 const PublicPrivacyPage = lazy(() => import("@/pages/public/PublicPrivacyPage"));
@@ -95,12 +96,13 @@ function RouteFallback() {
 }
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster richColors position="top-right" />
-      <BrowserRouter>
-        <Suspense fallback={<RouteFallback />}>
-          <Routes>
+  <AppErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster richColors position="top-right" />
+        <BrowserRouter>
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
             {/* Sito e portali pubblici */}
             <Route path="/" element={<PublicHomePage />} />
             <Route path="/richiedi-valutazione" element={<SegnalazionePublicaPage />} />
@@ -157,11 +159,12 @@ const App = () => (
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </AppErrorBoundary>
 );
 
 export default App;

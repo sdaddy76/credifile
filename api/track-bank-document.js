@@ -70,6 +70,45 @@ export default async function handler(req, res) {
     }),
   }).catch(() => null);
 
+  // Una sola notifica per il primo accesso di ciascun link evita un flusso
+  // rumoroso, mantenendo comunque la visibilità dell'evento in-app.
+  if (Number(link.access_count ?? 0) === 0) {
+    try {
+      const practiceResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(link.practice_id)}&select=assigned_to`,
+        { headers },
+      );
+      const practiceRows = practiceResponse.ok ? await practiceResponse.json() : [];
+      const assignedTo = Array.isArray(practiceRows) ? practiceRows[0]?.assigned_to : null;
+      const adminsResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=eq.super_admin&select=id`,
+        { headers },
+      );
+      const adminRows = adminsResponse.ok ? await adminsResponse.json() : [];
+      const recipientIds = new Set([
+        assignedTo,
+        ...(Array.isArray(adminRows) ? adminRows.map(row => row?.id) : []),
+      ].filter(Boolean));
+      if (recipientIds.size > 0) {
+        const isDownload = link.event_type === 'downloaded';
+        await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
+          method: 'POST',
+          headers: { ...headers, Prefer: 'return=minimal' },
+          body: JSON.stringify([...recipientIds].map(userId => ({
+            user_id: userId,
+            tipo: isDownload ? 'documento_banca_scaricato' : 'documento_banca_aperto',
+            titolo: isDownload ? 'La banca ha scaricato un documento' : 'La banca ha aperto un documento',
+            testo: `È stato ${isDownload ? 'scaricato' : 'aperto'} un documento della pratica.`,
+            link: `/admin/pratiche/${link.practice_id}`,
+            practice_id: link.practice_id,
+          }))),
+        });
+      }
+    } catch (notificationError) {
+      console.warn('Notifica accesso documento non registrata:', notificationError);
+    }
+  }
+
   res.statusCode = 302;
   res.setHeader('Location', link.target_url);
   res.setHeader('Cache-Control', 'no-store, max-age=0');
