@@ -1218,6 +1218,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       .from('client_financing')
       .select('rata, debito_residuo, durata_mesi, tipologia, fonte')
       .eq('practice_id', practiceId);
+    const { data: statementData } = await supabase
+      .from('estratto_conto_transactions')
+      .select('data_valuta, data_contabile, importo, tipo, categoria, descrizione, beneficiario_ordinante, classification_confidence, parse_confidence')
+      .eq('practice_id', practiceId);
     const financing = (finData ?? []).map(f => ({
       rata: parseLocalizedNumber(f.rata) ?? 0,
       debito_residuo: parseLocalizedNumber(f.debito_residuo) ?? 0,
@@ -1227,7 +1231,13 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     }));
 
     const { data: result, error: fnErr } = await supabase.functions.invoke('analizza-bilancio', {
-      body: { practice_id: practiceId, pdf_text: pdfText, uploaded_file_id: uploadedFileId, financing },
+      body: {
+        practice_id: practiceId,
+        pdf_text: pdfText,
+        uploaded_file_id: uploadedFileId,
+        financing,
+        transactions: statementData ?? [],
+      },
     });
     if (fnErr || result?.error) {
       throw new Error(fnErr?.message ?? result?.error ?? 'Errore sconosciuto');

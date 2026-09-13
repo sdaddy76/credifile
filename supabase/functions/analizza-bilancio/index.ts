@@ -264,13 +264,61 @@ interface FinRow {
   fonte?: string;
 }
 
+interface StatementRow {
+  data_valuta?: string | null;
+  data_contabile?: string | null;
+  importo: number | string | null;
+  tipo?: string | null;
+  categoria?: string | null;
+  descrizione?: string | null;
+  beneficiario_ordinante?: string | null;
+  classification_confidence?: string | null;
+  parse_confidence?: string | null;
+}
+
 function parseEdgeNumber(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   return parseItalianBalanceNumber(String(value));
 }
 
-function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = []) {
+function statementDebtServiceAnnual(transactions: StatementRow[]): number | null {
+  if (transactions.length === 0) return null;
+  const reliable = transactions.filter(row =>
+    row.classification_confidence !== 'bassa' && row.parse_confidence !== 'bassa',
+  ).length;
+  if ((reliable / transactions.length) * 100 < 70) return null;
+
+  const groups = new Map<string, Array<{ amount: number; month: string }>>();
+  for (const row of transactions) {
+    if (row.tipo !== 'uscita' || row.categoria !== 'rata_finanziamento') continue;
+    const amount = parseEdgeNumber(row.importo);
+    const rawDate = row.data_valuta ?? row.data_contabile;
+    const date = rawDate ? new Date(rawDate) : null;
+    if (amount === null || amount <= 0 || !date || Number.isNaN(date.getTime())) continue;
+    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    const label = (row.beneficiario_ordinante ?? row.descrizione ?? '').toLowerCase().trim();
+    if (!label) continue;
+    const rows = groups.get(label) ?? [];
+    rows.push({ amount, month });
+    groups.set(label, rows);
+  }
+
+  const recurring = [...groups.values()].filter(rows =>
+    rows.length >= 2 && new Set(rows.map(row => row.month)).size >= 2,
+  );
+  if (recurring.length === 0) return null;
+  const monthlyAverage = recurring.reduce((sum, rows) =>
+    sum + rows.reduce((subtotal, row) => subtotal + row.amount, 0) / rows.length,
+  0);
+  return monthlyAverage > 0 ? monthlyAverage * 12 : null;
+}
+
+function calcolaKpi(
+  d: ReturnType<typeof parseBilancio>,
+  financing: FinRow[] = [],
+  statementTransactions: StatementRow[] = [],
+) {
   const pn = d.totale_patrimonio_netto;
   const ta = d.totale_attivo;
   const ac = d.totale_attivo_circolante;
@@ -336,10 +384,28 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
 
   // DSCR: si calcola solo con un servizio del debito completo e attendibile.
   // EBITDA / interessi passivi è Interest Coverage e non sostituisce il DSCR.
-  const dscr = hasDebtService && ebitda !== null && servizioDebitoAnnuo
-    ? ebitda / servizioDebitoAnnuo
+  const statementDebtService = !hasDebtService
+    ? statementDebtServiceAnnual(statementTransactions)
     : null;
-  const dscrLabel = hasDebtService ? 'DSCR (da finanziamenti)' : 'DSCR';
+  const effectiveDebtService = servizioDebitoAnnuo ?? statementDebtService;
+  const effectiveDscrSource: 'finanziamenti' | 'estratto_conto' | 'non_disponibile' = hasDebtService
+    ? 'finanziamenti'
+    : statementDebtService !== null
+      ? 'estratto_conto'
+      : 'non_disponibile';
+  const effectiveDscrLabel = effectiveDscrSource === 'finanziamenti'
+    ? debtSource
+    : effectiveDscrSource === 'estratto_conto'
+      ? 'Estratto conto'
+      : 'Non disponibile';
+  const dscr = effectiveDebtService !== null && effectiveDebtService > 0 && ebitda !== null
+    ? ebitda / effectiveDebtService
+    : null;
+  const dscrLabel = effectiveDscrSource === 'finanziamenti'
+    ? 'DSCR (da finanziamenti)'
+    : effectiveDscrSource === 'estratto_conto'
+      ? 'DSCR (da estratto conto)'
+      : 'DSCR';
 
   function kpi(
     label: string,
@@ -380,8 +446,8 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
   return {
     is_holding: isHolding,
     ebit, ebitda, pfn,
-    dscr_source: hasDebtService ? 'finanziamenti' : 'non_disponibile',
-    servizio_debito_annuo: servizioDebitoAnnuo,
+    dscr_source: effectiveDscrSource,
+    servizio_debito_annuo: effectiveDebtService,
     kpi: {
       liquidita: {
         current_ratio: kpi('Current Ratio', currentRatio, fmtRatio(currentRatio),
@@ -453,10 +519,10 @@ function calcolaKpi(d: ReturnType<typeof parseBilancio>, financing: FinRow[] = [
           intCov === null ? 'nd' : intCov >= 3 ? 'verde' : intCov >= 1.5 ? 'giallo' : 'rosso'),
         dscr: kpi(dscrLabel, dscr, fmtMult(dscr),
           dscr === null ? 'nd' : dscr >= 1.25 ? 'verde' : dscr >= 1.0 ? 'giallo' : 'rosso',
-          dscr === null ? 'Non disponibile' : debtSource,
+          dscr === null ? 'Non disponibile' : effectiveDscrLabel,
           dscr === null
-            ? 'Rate mensili complete non disponibili; EBITDA/interessi resta classificato come Interest Coverage'
-            : `Servizio annuo del debito ${fmtEur(servizioDebitoAnnuo)}`),
+            ? 'Rate finanziarie complete non disponibili; EBITDA/interessi resta classificato come Interest Coverage'
+            : `Servizio annuo del debito ${fmtEur(effectiveDebtService)}`),
       },
     },
   };
@@ -467,7 +533,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const body = await req.json();
-  const { practice_id, pdf_text, uploaded_file_id, financing } = body;
+  const { practice_id, pdf_text, uploaded_file_id, financing, transactions } = body;
 
   // ── Branch consulente: bilancio_testo senza practice_id ──────────────────
   // Usato dal NuovoReportWizard quando carica un bilancio PDF o XBRL direttamente.
@@ -476,7 +542,11 @@ Deno.serve(async (req) => {
   if (bilancio_testo) {
     if (bilancio_testo.trim().length < 50) return fail('Contenuto bilancio troppo breve o non leggibile');
     const bilData = parseBilancio(bilancio_testo);
-    const { is_holding, kpi, dscr_source, servizio_debito_annuo } = calcolaKpi(bilData, financing ?? []);
+    const { is_holding, kpi, dscr_source, servizio_debito_annuo } = calcolaKpi(
+      bilData,
+      financing ?? [],
+      transactions ?? [],
+    );
     const codiceAteco: string | null = body.codice_ateco ?? bilData.codice_ateco ?? null;
     const sector = await getSectorContext(codiceAteco);
     const anomalyAnalysis = analyzeBalanceAnomalies({
@@ -511,7 +581,7 @@ Deno.serve(async (req) => {
     kpi,
     dscr_source,
     servizio_debito_annuo,
-  } = calcolaKpi(bilData, financing ?? []);
+  } = calcolaKpi(bilData, financing ?? [], transactions ?? []);
 
   const codiceAteco = await getPracticeAteco(practice_id) ?? bilData.codice_ateco ?? null;
   const sector = await getSectorContext(codiceAteco);

@@ -196,7 +196,7 @@ export default function NuovoReportWizard() {
   } | null>(null);
   const [ratingBancabile, setRatingBancabile] = useState<'bancabile' | 'attenzione' | 'non_bancabile' | null>(null);
   const [motiviRating,    setMotiviRating]    = useState<string[]>([]);
-  const [dscrMetodo, setDscrMetodo] = useState<'finanziamenti' | 'non_disponibile'>('non_disponibile');
+  const [dscrMetodo, setDscrMetodo] = useState<'finanziamenti' | 'estratto_conto' | 'non_disponibile'>('non_disponibile');
   const [servizioDebitoAnnuo, setServizioDebitoAnnuo] = useState(0);
 
   // Step 4: AI suggestions
@@ -417,7 +417,13 @@ export default function NuovoReportWizard() {
         recalculatedKpi = data.kpi as KpiResult;
         setKpiResult(recalculatedKpi);
         setAnomalyAnalysis((data.anomaly_analysis as BalanceAnomalyAnalysis | undefined) ?? null);
-        setDscrMetodo(data.dscr_source === 'finanziamenti' ? 'finanziamenti' : 'non_disponibile');
+        setDscrMetodo(
+          data.dscr_source === 'finanziamenti'
+            ? 'finanziamenti'
+            : data.dscr_source === 'estratto_conto'
+              ? 'estratto_conto'
+              : 'non_disponibile',
+        );
         setServizioDebitoAnnuo(Number(data.servizio_debito_annuo) || 0);
       }
 
@@ -1113,7 +1119,9 @@ export default function NuovoReportWizard() {
                 <strong>DSCR:</strong>{' '}
                 {dscrMetodo === 'finanziamenti'
                   ? `calcolato includendo € ${servizioDebitoAnnuo.toLocaleString('it-IT', { maximumFractionDigits: 0 })} di rate annue complessive.`
-                  : 'non disponibile perché non risultano rate complete o un servizio annuo del debito attendibile.'}
+                  : dscrMetodo === 'estratto_conto'
+                    ? `stimato sulle rate ricorrenti riconosciute nell’estratto conto (€ ${servizioDebitoAnnuo.toLocaleString('it-IT', { maximumFractionDigits: 0 })} annui).`
+                    : 'non disponibile perché non risultano rate complete o un servizio annuo del debito attendibile.'}
               </div>
             )}
 
