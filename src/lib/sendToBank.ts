@@ -9,6 +9,8 @@ export async function invokeSendToBank(body: {
   bank_id: string;
   note?: string | null;
   integration_request_id?: string | null;
+  copy_to?: string | null;
+  copy_only?: boolean;
 }): Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> {
   try {
     const { data: sessionData } = await supabase.auth.getSession();

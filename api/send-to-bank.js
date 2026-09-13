@@ -295,11 +295,26 @@ export default async function handler(req, res) {
     }
     const actorUser = await authResponse.json();
 
-    const { practice_id, bank_id, note, integration_request_id } = req.body;
+    const {
+      practice_id,
+      bank_id,
+      note,
+      integration_request_id,
+      copy_to,
+      copy_only = false,
+    } = req.body;
     if (!practice_id || !bank_id) {
       return res.status(400).json({ success: false, error: 'practice_id e bank_id obbligatori' });
     }
+    const copyEmail = typeof copy_to === 'string' ? copy_to.trim().toLowerCase() : '';
+    if (copyEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(copyEmail)) {
+      return res.status(400).json({ success: false, error: 'Indirizzo email copia non valido' });
+    }
+    if (copy_only && !copyEmail) {
+      return res.status(400).json({ success: false, error: 'copy_to obbligatorio per inviare una copia separata' });
+    }
     const integrationMode = Boolean(integration_request_id);
+    const copyOnlyMode = Boolean(copy_only);
 
     const H = {
       'apikey': SUPABASE_KEY,
@@ -1190,13 +1205,13 @@ ${integrationAnswersHtml}
     // 8. Invia via Resend
     const emailPayload = {
       from: FROM,
-      to: [bankEmail],
-      subject: emailSubject,
+      to: copyOnlyMode ? [copyEmail] : [bankEmail],
+      subject: copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject,
       html: integrationMode ? integrationHtmlBody : standardHtmlBody,
     };
     if (agentEmail) emailPayload.reply_to = agentEmail;
-    if (ccList.length  > 0) emailPayload.cc  = ccList;
-    if (bccList.length > 0) emailPayload.bcc = bccList;
+    if (!copyOnlyMode && ccList.length > 0) emailPayload.cc = ccList;
+    if (!copyOnlyMode && bccList.length > 0) emailPayload.bcc = bccList;
 
     const emailRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -1209,7 +1224,10 @@ ${integrationAnswersHtml}
     }
 
     const sentAt = new Date().toISOString();
-    if (integrationMode) {
+    if (copyOnlyMode) {
+      // Una copia separata è solo una comunicazione di archivio: non modifica
+      // né lo stato della banca né il ciclo di approfondimento.
+    } else if (integrationMode) {
       // Un approfondimento non deve riportare indietro lo stato della banca:
       // può essere richiesto durante istruttoria o delibera.
       await fetch(
@@ -1266,34 +1284,35 @@ ${integrationAnswersHtml}
         practice_id,
         bank_id,
         bank_nome: pb.banks?.nome ?? null,
-        destinatari: [bankEmail],
-        cc: ccList.length > 0 ? ccList : null,
-        bcc: bccList.length > 0 ? bccList : null,
-        oggetto: emailSubject,
+        destinatari: copyOnlyMode ? [copyEmail] : [bankEmail],
+        cc: !copyOnlyMode && ccList.length > 0 ? ccList : null,
+        bcc: !copyOnlyMode && bccList.length > 0 ? bccList : null,
+        oggetto: copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject,
         stato: 'inviata',
         sent_by: actorProfile.id,
         sent_by_nome: actorProfile.nome ?? actorProfile.email ?? null,
         resend_id: emailBody?.id ?? null,
         integration_request_id: integrationMode ? integration_request_id : null,
-        delivery_type: integrationMode ? 'approfondimento' : 'pratica',
+        delivery_type: copyOnlyMode ? 'copia' : integrationMode ? 'approfondimento' : 'pratica',
         uploaded_file_ids: docLinks.map(document => document.uploadedFileId).filter(Boolean),
       }),
     }).catch(() => null); // Non blocca se il log fallisce
 
     return res.status(200).json({
       success: true,
-      sent_to: bankEmail,
-      cc: ccList,
-      bcc: bccList,
+      sent_to: copyOnlyMode ? copyEmail : bankEmail,
+      cc: copyOnlyMode ? [] : ccList,
+      bcc: copyOnlyMode ? [] : bccList,
       reply_to: agentEmail ?? null,
       docs_sent: docLinks.length,
       relation_attached: false,
       relation_linked: !integrationMode && Boolean(commercialRelation?.pdf_url),
       answers_sent: answeredQuestions.length,
-      delivery_type: integrationMode ? 'approfondimento' : 'pratica',
-      bank_status_changed: !integrationMode,
-      kpi_rows: integrationMode ? 0 : kpiRows.length,
-      has_rep: integrationMode ? false : !!rep,
+      delivery_type: copyOnlyMode ? 'copia' : integrationMode ? 'approfondimento' : 'pratica',
+      bank_status_changed: !integrationMode && !copyOnlyMode,
+      kpi_rows: integrationMode || copyOnlyMode ? 0 : kpiRows.length,
+      has_rep: integrationMode || copyOnlyMode ? false : !!rep,
+      copy_only: copyOnlyMode,
     });
 
   } catch (e) {
