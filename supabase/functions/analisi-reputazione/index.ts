@@ -236,9 +236,18 @@ interface SubjectResult {
 }
 interface AddressResult {
   indirizzo: string;
+  tipo: 'sede_legale' | 'sede_collegata';
+  data_inizio?: string | null;
   signals: Signal[];
   news: NewsItem[];
   score_delta: number;
+  totalNewsFetched: number;
+  relevantNews: number;
+  coverage: number;
+  confidence: 'alta' | 'media' | 'bassa';
+  manualReviewRequired: boolean;
+  associationReason: string;
+  queryAudit: QueryAudit[];
 }
 
 function canonicalText(value: string): string {
@@ -250,6 +259,115 @@ function canonicalText(value: string): string {
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/**
+ * Normalizza un indirizzo per confronti e deduplicazione senza perdere i numeri
+ * civici/CAP. Le visure possono riportare lo stesso indirizzo con punteggiatura,
+ * maiuscole o abbreviazioni diverse.
+ */
+function canonicalAddress(value: string): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.,;:/\\-]+/g, ' ')
+    .replace(/\b(s\.?\s*p\.?\s*a\.?|s\.?\s*r\.?\s*l\.?|societa)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function addressTokens(value: string): string[] {
+  return canonicalAddress(value)
+    .split(' ')
+    .filter(token => token.length >= 2)
+}
+
+function extractAddressParts(indirizzo: string): { comune: string; cap: string; via: string } {
+  const raw = String(indirizzo ?? '').trim()
+  const cap = raw.match(/\b\d{5}\b/)?.[0] ?? ''
+  const provinceMatch = raw.match(/\(([A-Z]{2})\)/i)
+  const beforeProvince = provinceMatch ? raw.slice(0, provinceMatch.index) : raw
+  const afterProvince = provinceMatch
+    ? raw.slice((provinceMatch.index ?? 0) + provinceMatch[0].length)
+    : raw
+  const withoutCap = raw.replace(/\b\d{5}\b/g, ' ').replace(/\s+/g, ' ').trim()
+  const commaParts = withoutCap.split(',').map(part => part.trim()).filter(Boolean)
+  const streetPattern = /\b(via|viale|corso|piazza|piazzale|strada|contrada|localita|lungomare|vicolo|borgo)\b/i
+  const afterProvinceClean = afterProvince.replace(/\b\d{5}\b/g, ' ').replace(/\s+/g, ' ').trim()
+  const afterProvinceViaIndex = afterProvinceClean.search(streetPattern)
+  const explicitVia = commaParts.find(part => streetPattern.test(part))
+    ?? (afterProvinceViaIndex >= 0 ? afterProvinceClean.slice(afterProvinceViaIndex).trim() : undefined)
+  const viaMatchIndex = withoutCap.search(streetPattern)
+  const via = explicitVia
+    ?? (viaMatchIndex >= 0 ? withoutCap.slice(viaMatchIndex).trim() : withoutCap)
+  const comune = (() => {
+    const cityPrefix = beforeProvince.replace(/\b\d{5}\b/g, ' ').replace(/[,;]\s*$/, '').trim()
+    if (cityPrefix && !streetPattern.test(cityPrefix)) {
+      return cityPrefix
+    }
+    const capCity = (beforeProvince.split(',').pop() ?? '')
+      .replace(/\b\d{5}\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (capCity && !streetPattern.test(capCity)) {
+      return capCity
+    }
+    if (commaParts.length > 1) {
+      const candidate = commaParts.find(part => !streetPattern.test(part) && !/\d/.test(part))
+      if (candidate) return candidate
+    }
+    const leading = withoutCap.split(/\b(via|viale|corso|piazza|piazzale|strada|contrada|localita|lungomare|vicolo|borgo)\b/i)[0]
+    return leading.trim()
+  })()
+  return { comune, cap, via }
+}
+
+function addressRelevance(
+  item: NewsItem,
+  indirizzo: string,
+  name: string,
+  piva?: string,
+  codiceFiscale?: string,
+): { relevance: number; identityEvidence: 'forte' | 'media' | 'debole'; discriminatorMatched: boolean } {
+  const text = canonicalAddress(`${item.title} ${item.snippet}`)
+  const fullAddress = canonicalAddress(indirizzo)
+  const { cap, via } = extractAddressParts(indirizzo)
+  const cleanVia = canonicalAddress(via)
+  const viaTokens = addressTokens(via)
+  const matchingViaTokens = viaTokens.filter(token => text.includes(token)).length
+  const addressMatched = Boolean(
+    (fullAddress && text.includes(fullAddress))
+    || (cleanVia.length >= 6 && text.includes(cleanVia))
+    || (matchingViaTokens >= Math.min(2, viaTokens.length))
+    || (cap && text.includes(cap)),
+  )
+  const identityText = canonicalText(`${item.title} ${item.snippet}`)
+  const cleanName = canonicalText(name)
+  const nameTokens = cleanName.split(' ').filter(token => token.length >= 3)
+  const nameMatched = Boolean(cleanName && identityText.includes(cleanName))
+    || (nameTokens.length >= 2 && nameTokens.filter(token => identityText.includes(token)).length >= Math.min(2, nameTokens.length))
+  const cleanPiva = canonicalText(piva ?? '')
+  const cleanCf = canonicalText(codiceFiscale ?? '')
+  const discriminatorMatched = Boolean(
+    (cleanPiva && identityText.includes(cleanPiva))
+    || (cleanCf && identityText.includes(cleanCf)),
+  )
+
+  if (!addressMatched) {
+    return { relevance: 0, identityEvidence: 'debole', discriminatorMatched: false }
+  }
+  if (discriminatorMatched || (nameMatched && cleanVia && text.includes(cleanVia))) {
+    return { relevance: 0.95, identityEvidence: 'forte', discriminatorMatched }
+  }
+  if (nameMatched) {
+    return { relevance: 0.78, identityEvidence: 'media', discriminatorMatched: false }
+  }
+  return {
+    relevance: Math.min(0.7, 0.45 + (cleanVia && text.includes(cleanVia) ? 0.15 : 0) + (cap && text.includes(cap) ? 0.1 : 0)),
+    identityEvidence: 'debole',
+    discriminatorMatched: false,
+  }
 }
 
 function canonicalNewsKey(item: NewsItem): string {
@@ -699,38 +817,121 @@ async function analyzeSubject(
 }
 
 // ─── Analisi indirizzo/sede ───────────────────────────────────────────────────
-async function analyzeAddress(indirizzo: string): Promise<AddressResult> {
+async function analyzeAddress(
+  indirizzo: string,
+  name: string,
+  piva?: string,
+  codiceFiscale?: string,
+  tipo: 'sede_legale' | 'sede_collegata' = 'sede_collegata',
+  dataInizio?: string | null,
+): Promise<AddressResult> {
   if (!indirizzo || indirizzo.trim().length < 5) {
-    return { indirizzo, signals: [], news: [], score_delta: 0 }
+    return {
+      indirizzo, tipo, data_inizio: dataInizio, signals: [], news: [], score_delta: 0,
+      totalNewsFetched: 0, relevantNews: 0, coverage: 0, confidence: 'bassa',
+      manualReviewRequired: false,
+      associationReason: 'Indirizzo non sufficientemente completo per una ricerca affidabile',
+      queryAudit: [],
+    }
   }
 
-  // Estrai il comune dall'indirizzo per query più mirata
-  const communeMatch = indirizzo.match(/\b(\d{5})\s+([A-ZÀÈÉÌÒÙ][A-Z\s\']{2,30})(?:\s*\([A-Z]{2}\))?/i)
-  const comune = communeMatch?.[2]?.trim() ?? ''
+  const { comune, cap, via } = extractAddressParts(indirizzo)
   const indirizzoQ = `"${indirizzo}"`
+  const nameQ = `"${name}"`
+  const discriminator = codiceFiscale || piva
+    ? `"${codiceFiscale || piva}"`
+    : ''
+  const riskTerms = 'sequestro abusivo illecito blitz operazione fallimento pignoramento spaccio sanzione'
 
-  const queries = [
-    // Query mirata sull'indirizzo con parole chiave di allerta
-    fetchGoogleNews(`${indirizzoQ} sequestro abusivo illecito blitz operazione`),
-    fetchDuckDuckGo(`${indirizzoQ} fallimento sequestro abusivo illecito spaccio`),
-    // Query sul comune + indirizzo breve (per attività commerciali)
-    ...(comune ? [
-      fetchGoogleNews(`${comune} "${indirizzo.split(',')[0]}" sequestro illecito abusivo`),
-    ] : []),
+  const queryConfigs: Array<{
+    label: string;
+    provider: 'Google News' | 'DuckDuckGo';
+    run: () => Promise<NewsItem[]>;
+  }> = [
+    {
+      label: 'Indirizzo e società',
+      provider: 'Google News',
+      run: () => fetchGoogleNews(`${indirizzoQ} ${nameQ} ${riskTerms}`),
+    },
+    ...(discriminator ? [{
+      label: 'Indirizzo e CF/P.IVA',
+      provider: 'Google News' as const,
+      run: () => fetchGoogleNews(`${indirizzoQ} ${discriminator} ${riskTerms}`),
+    }] : []),
+    {
+      label: 'Eventi associati alla sede',
+      provider: 'Google News',
+      run: () => fetchGoogleNews(`${indirizzoQ} ${riskTerms}`),
+    },
+    {
+      label: 'Riscontro web indirizzo',
+      provider: 'DuckDuckGo',
+      run: () => fetchDuckDuckGo(`${indirizzoQ} ${nameQ} ${riskTerms}`),
+    },
+    ...(via && comune ? [{
+      label: 'Via, comune e società',
+      provider: 'DuckDuckGo' as const,
+      run: () => fetchDuckDuckGo(`"${via}" "${comune}" ${nameQ} ${riskTerms}`),
+    }] : []),
+    ...(cap && comune ? [{
+      label: 'CAP e comune',
+      provider: 'DuckDuckGo' as const,
+      run: () => fetchDuckDuckGo(`"${cap}" "${comune}" ${nameQ} ${riskTerms}`),
+    }] : []),
   ]
 
-  const results = await Promise.allSettled(queries)
+  const results = await Promise.allSettled(queryConfigs.map(config => config.run()))
   const allNewsRaw: NewsItem[] = []
-  for (const r of results) {
-    if (r.status === 'fulfilled') allNewsRaw.push(...r.value)
+  const queryAudit: QueryAudit[] = []
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index]
+    const config = queryConfigs[index]
+    if (result.status === 'fulfilled') {
+      allNewsRaw.push(...result.value)
+      queryAudit.push({
+        label: config.label,
+        provider: config.provider,
+        status: result.value.length > 0 ? 'risultati' : 'nessun_risultato',
+        resultCount: result.value.length,
+      })
+    } else {
+      queryAudit.push({
+        label: config.label,
+        provider: config.provider,
+        status: 'non_disponibile',
+        resultCount: 0,
+      })
+    }
   }
 
-  // Deduplica
-  const seenLinks = new Set<string>()
+  // Mantiene solo risultati in cui il testo contiene almeno un riferimento
+  // riconoscibile alla sede. La sola query non è sufficiente a provare la
+  // pertinenza: il provider può restituire notizie di soggetti omonimi.
+  const relevantRaw = allNewsRaw
+    .map(item => {
+      const association = addressRelevance(item, indirizzo, name, piva, codiceFiscale)
+      return {
+        ...item,
+        relevance: association.relevance,
+        identityEvidence: association.identityEvidence,
+        discriminatorMatched: association.discriminatorMatched,
+        sourceQuality: item.sourceQuality ?? getSourceQuality(item.source, item.link),
+        sourceTier: item.sourceTier ?? getSourceTier(item.source, item.link),
+      }
+    })
+    .filter(item => (item.relevance ?? 0) >= 0.42)
+
+  // Deduplica anche gli articoli ripubblicati con URL diversi.
+  const seenKeys = new Set<string>()
   const allNews: NewsItem[] = []
-  for (const item of allNewsRaw) {
-    const key = item.link || item.title
-    if (!seenLinks.has(key)) { seenLinks.add(key); allNews.push(item) }
+  for (const item of relevantRaw.sort((a, b) =>
+    ((b.relevance ?? 0) * (b.sourceQuality ?? 0)) - ((a.relevance ?? 0) * (a.sourceQuality ?? 0))
+  )) {
+    const key = canonicalNewsKey(item) || item.link
+    if (key && !seenKeys.has(key)) {
+      seenKeys.add(key)
+      allNews.push(item)
+    }
   }
 
   const { signals, scoreDelta } = analyzeTextWithNews(allNews, ADDRESS_RISK_KW)
@@ -740,11 +941,41 @@ async function analyzeAddress(indirizzo: string): Promise<AddressResult> {
     signals.some(sig => sig.articleTitle && n.title.startsWith(sig.articleTitle.substring(0, 40)))
   ).slice(0, 4)
 
+  const strongMatches = allNews.filter(item => item.identityEvidence === 'forte').length
+  const mediaMatches = allNews.filter(item => item.identityEvidence === 'media').length
+  const weakMatches = allNews.filter(item => item.identityEvidence === 'debole').length
+  const availableQueries = queryAudit.filter(query => query.status !== 'non_disponibile').length
+  const coverage = queryAudit.length > 0 ? Math.round((availableQueries / queryAudit.length) * 100) : 0
+  const avgRelevance = allNews.length > 0
+    ? allNews.reduce((sum, item) => sum + (item.relevance ?? 0), 0) / allNews.length
+    : 0
+  const confidenceValue = Math.round(coverage * 0.4 + avgRelevance * 100 * 0.6)
+  const confidence: 'alta' | 'media' | 'bassa' =
+    confidenceValue >= 75 && strongMatches > 0 ? 'alta'
+      : confidenceValue >= 45 ? 'media' : 'bassa'
+  const manualReviewRequired = signals.length > 0 && strongMatches === 0
+  const associationReason = strongMatches > 0
+    ? `${strongMatches} risultato/i collegato/i a denominazione e sede o a CF/P.IVA`
+    : mediaMatches > 0
+      ? `${mediaMatches} risultato/i associano denominazione e indirizzo, ma senza CF/P.IVA: verifica manuale`
+      : weakMatches > 0
+        ? 'Risultati riferiti alla sede come segnale contestuale: non sono prova diretta sulla società'
+        : 'Nessun risultato contiene un riferimento verificabile alla sede'
+
   return {
     indirizzo,
+    tipo,
+    data_inizio: dataInizio,
     signals,
     news: relevantNews,
     score_delta: scoreDelta,
+    totalNewsFetched: allNewsRaw.length,
+    relevantNews: allNews.length,
+    coverage,
+    confidence,
+    manualReviewRequired,
+    associationReason,
+    queryAudit,
   }
 }
 
@@ -787,7 +1018,7 @@ Deno.serve(async (req) => {
 
     // 1. Dati cliente — incluso visura_json per storico cessati
     const clientRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/clients?id=eq.${client_id}&select=ragione_sociale,piva,indirizzo,soci,amministratori,visura_json`,
+      `${SUPABASE_URL}/rest/v1/clients?id=eq.${client_id}&select=ragione_sociale,piva,codice_fiscale,indirizzo,soci,amministratori,visura_json`,
       { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
     )
     const clients = await clientRes.json()
@@ -800,18 +1031,24 @@ Deno.serve(async (req) => {
     const soci: { nome: string; codice_fiscale?: string }[] = client.soci ?? []
     const amm:  { nome: string; codice_fiscale?: string }[] = client.amministratori ?? []
     const piva: string | undefined = client.piva ?? undefined
+    const codiceFiscaleSocieta: string | undefined = client.codice_fiscale ?? undefined
 
     // visura_json per storico
     type VisuraJsonType = {
       storico_amministratori?: Array<{ carica: string; nome: string; data_inizio?: string | null; data_fine?: string | null; cessato?: boolean; codice_fiscale?: string }>;
       storico_soci?: Array<{ nome: string; percentuale?: number | null; data_variazione?: string | null; codice_fiscale?: string; cessato?: boolean }>;
-      storico_sedi?: Array<{ indirizzo: string; data_inizio?: string | null; tipo?: string }>;
+      storico_sedi?: Array<{ indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string }>;
+      sedi_secondarie?: Array<{ indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string }> | { indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string };
+      sedi_collegate?: Array<{ indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string }> | { indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string };
+      sede_secondaria?: Array<{ indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string }> | { indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string };
     }
     const visuraJson: VisuraJsonType = (client.visura_json as VisuraJsonType) ?? {}
 
-    // Estrai la città dall'indirizzo
-    const cityMatch = (client.indirizzo ?? '').match(/\b(\d{5})\s+([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\']{2,40?})(?:\s*\([A-Z]{2}\))?\s*$/i)
-    const city: string | undefined = cityMatch?.[2]?.trim() ?? undefined
+    // Estrai la città dall'indirizzo con la stessa normalizzazione usata per le
+    // sedi, così le query per CF/P.IVA non dipendono dal formato della visura.
+    const city: string | undefined = client.indirizzo
+      ? extractAddressParts(client.indirizzo).comune || undefined
+      : undefined
 
     // 2. Estrai soggetti cessati dalla visura_json (max 3 per tipo)
     const ammCessatiRaw = (visuraJson.storico_amministratori ?? [])
@@ -825,15 +1062,42 @@ Deno.serve(async (req) => {
       .filter(s => !soci.some(cur => cur.nome?.toLowerCase() === s.nome?.toLowerCase()))
       .slice(0, 3)
 
-    // 3. Indirizzi da analizzare (attuale + storiche, max 4)
-    const indirizziDaAnalizzare: string[] = []
-    if (client.indirizzo) indirizziDaAnalizzare.push(client.indirizzo)
-    for (const sede of (visuraJson.storico_sedi ?? []).slice(0, 3)) {
-      if (sede.indirizzo && !indirizziDaAnalizzare.some(i => i.toLowerCase() === sede.indirizzo.toLowerCase())) {
-        indirizziDaAnalizzare.push(sede.indirizzo)
-      }
+    // 3. Indirizzi da analizzare: sede legale, sedi storiche e sedi secondarie.
+    // Il limite evita tempi eccessivi su visure con molti trasferimenti, ma non
+    // tronca più le sedi alle prime tre: conserva fino a 12 indirizzi distinti.
+    type AddressCandidate = {
+      indirizzo: string;
+      tipo: 'sede_legale' | 'sede_collegata';
+      data_inizio?: string | null;
     }
-    const indirizziSlice = indirizziDaAnalizzare.slice(0, 4)
+    const addressCandidates: AddressCandidate[] = []
+    const addAddress = (
+      indirizzo: unknown,
+      tipo: 'sede_legale' | 'sede_collegata',
+      dataInizio?: string | null,
+    ) => {
+      if (typeof indirizzo !== 'string' || indirizzo.trim().length < 5) return
+      const normalized = canonicalAddress(indirizzo)
+      if (!normalized || addressCandidates.some(candidate => canonicalAddress(candidate.indirizzo) === normalized)) return
+      addressCandidates.push({ indirizzo: indirizzo.trim(), tipo, data_inizio: dataInizio })
+    }
+    addAddress(client.indirizzo, 'sede_legale')
+    const asAddressList = (value: unknown): Array<{ indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string }> => {
+      if (Array.isArray(value)) return value as Array<{ indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string }>
+      return value && typeof value === 'object'
+        ? [value as { indirizzo: string; data_inizio?: string | null; data_fine?: string | null; tipo?: string }]
+        : []
+    }
+    const linkedAddressLists = [
+      ...asAddressList(visuraJson.storico_sedi),
+      ...asAddressList(visuraJson.sedi_secondarie),
+      ...asAddressList(visuraJson.sedi_collegate),
+      ...asAddressList(visuraJson.sede_secondaria),
+    ]
+    for (const sede of linkedAddressLists) {
+      addAddress(sede?.indirizzo, 'sede_collegata', sede?.data_inizio)
+    }
+    const indirizziSlice = addressCandidates.slice(0, 12)
 
     // 4. Analisi PARALLELA di tutti i soggetti + cessati + indirizzi
     const [
@@ -863,7 +1127,14 @@ Deno.serve(async (req) => {
         return analyzeSubject(s.nome, 'socio', undefined, city, cf, true)
       }),
       // Analisi indirizzi
-      ...indirizziSlice.map(ind => analyzeAddress(ind)),
+      ...indirizziSlice.map(ind => analyzeAddress(
+        ind.indirizzo,
+        client.ragione_sociale,
+        piva,
+        codiceFiscaleSocieta,
+        ind.tipo,
+        ind.data_inizio,
+      )),
     ])
 
     const ammCount     = amm.slice(0, 3).length

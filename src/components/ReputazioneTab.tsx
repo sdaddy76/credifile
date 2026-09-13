@@ -75,9 +75,23 @@ interface SubjectResult {
 }
 interface AddressResult {
   indirizzo: string;
+  tipo?: 'sede_legale' | 'sede_collegata';
+  data_inizio?: string | null;
   signals: Signal[];
   news: NewsItem[];
   score_delta: number;
+  totalNewsFetched?: number;
+  relevantNews?: number;
+  coverage?: number;
+  confidence?: 'alta' | 'media' | 'bassa';
+  manualReviewRequired?: boolean;
+  associationReason?: string;
+  queryAudit?: Array<{
+    label: string;
+    provider: 'Google News' | 'DuckDuckGo';
+    status: 'risultati' | 'nessun_risultato' | 'non_disponibile';
+    resultCount: number;
+  }>;
 }
 interface Risultati {
   societa: SubjectResult;
@@ -612,13 +626,44 @@ function SubjectCardCessato({ result }: { result: SubjectResult }) {
 function AddressCard({ result }: { result: AddressResult }) {
   const [expanded, setExpanded] = useState(false);
   const hasSignals = result.signals.length > 0;
+  const isLegal = result.tipo === 'sede_legale';
+  const confidenceLabel = result.confidence
+    ? `affidabilità ${result.confidence} · copertura ${result.coverage ?? 0}%`
+    : null;
 
   return (
     <div className={`rounded-lg border p-3 ${hasSignals ? 'border-amber-300 bg-amber-50/40' : 'border-border bg-muted/20'}`}>
       <div className="flex items-start gap-2">
         <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${hasSignals ? 'text-amber-600' : 'text-muted-foreground'}`} />
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-foreground truncate">{result.indirizzo}</p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <p className="text-xs font-medium text-foreground truncate">{result.indirizzo}</p>
+            <span className={`text-[10px] rounded border px-1.5 py-0.5 ${
+              isLegal ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-slate-50 text-slate-600'
+            }`}>
+              {isLegal ? 'Sede legale' : 'Sede collegata / storica'}
+            </span>
+            {result.data_inizio && (
+              <span className="text-[10px] text-muted-foreground">
+                dal {new Date(result.data_inizio).toLocaleDateString('it-IT')}
+              </span>
+            )}
+          </div>
+          {confidenceLabel && (
+            <p className={`text-[10px] mt-1 ${
+              result.confidence === 'alta' ? 'text-green-700' : result.confidence === 'media' ? 'text-blue-700' : 'text-amber-700'
+            }`}>
+              {confidenceLabel}
+            </p>
+          )}
+          {result.associationReason && (
+            <p className="text-[10px] text-muted-foreground mt-1">{result.associationReason}</p>
+          )}
+          {result.manualReviewRequired && (
+            <p className="text-[10px] text-amber-700 mt-1 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3 shrink-0" /> Verifica manuale richiesta: il collegamento non è confermato da CF/P.IVA
+            </p>
+          )}
           {hasSignals ? (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {result.signals.map((s, i) => (
@@ -637,7 +682,7 @@ function AddressCard({ result }: { result: AddressResult }) {
           {result.news.length > 0 && (
             <div className="mt-1.5">
               <button className="text-xs text-primary underline" onClick={() => setExpanded(e => !e)}>
-                {expanded ? 'Nascondi fonti' : `${result.news.length} fonte${result.news.length > 1 ? 'i' : ''} trovata`}
+                {expanded ? 'Nascondi fonti' : `${result.news.length} fonte${result.news.length > 1 ? 'i' : ''} trovata${result.news.length > 1 ? 'e' : ''}`}
               </button>
               {expanded && (
                 <div className="mt-1.5 space-y-1.5">
@@ -649,8 +694,30 @@ function AddressCard({ result }: { result: AddressResult }) {
                         <ExternalLink className="w-3 h-3 shrink-0 mt-0.5" />
                       </a>
                       {n.snippet && <p className="text-muted-foreground mt-0.5 line-clamp-2">{n.snippet.substring(0, 150)}</p>}
+                      <div className="flex flex-wrap gap-1 mt-1 text-[10px] text-muted-foreground">
+                        {n.identityEvidence && <span>pertinenza identità: {n.identityEvidence}</span>}
+                        {n.relevance !== undefined && <span>· {Math.round(n.relevance * 100)}%</span>}
+                      </div>
                     </div>
                   ))}
+                  {(result.queryAudit?.length ?? 0) > 0 && (
+                    <div className="rounded border bg-white p-2">
+                      <p className="text-[10px] font-semibold uppercase text-muted-foreground">Ricerche eseguite</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {result.queryAudit?.map(query => (
+                          <span key={`${query.provider}-${query.label}`} className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                            query.status === 'risultati'
+                              ? 'border-green-200 bg-green-50 text-green-700'
+                              : query.status === 'non_disponibile'
+                                ? 'border-red-200 bg-red-50 text-red-700'
+                                : 'border-slate-200 bg-slate-50 text-slate-600'
+                          }`}>
+                            {query.label}: {query.status === 'risultati' ? `${query.resultCount} risultati` : query.status.replace(/_/g, ' ')}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -740,6 +807,8 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
     storico_amministratori?: Array<{ carica: string; nome: string; data_inizio?: string | null; data_fine?: string | null; cessato?: boolean }>;
     storico_soci?: Array<{ nome: string; percentuale?: number | null; data_variazione?: string | null }>;
     storico_sedi?: Array<{ indirizzo: string; data_inizio?: string | null; tipo?: string }>;
+    sedi_secondarie?: Array<{ indirizzo: string; data_inizio?: string | null; tipo?: string }>;
+    sedi_collegate?: Array<{ indirizzo: string; data_inizio?: string | null; tipo?: string }>;
     trasferimenti_sede?: number;
     passaggi_rami?: Array<{ descrizione: string; data?: string | null }>;
     segnali_strutturali?: StructuralSignal[];
@@ -994,7 +1063,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
             <ShieldAlert className="w-4 h-4 text-primary" /> Analisi Reputazionale
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Ricerca su Google News + DuckDuckGo · CF/PIVA come discriminatore · Soggetti cessati · Analisi indirizzi · 9 categorie di rischio
+            Google News + DuckDuckGo · denominazione, CF/P.IVA, sede legale e sedi collegate · 9 categorie di rischio
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -1361,7 +1430,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
                   <AddressCard key={i} result={ind} />
                 ))}
                 <p className="text-[10px] text-muted-foreground/50 pt-1">
-                  Ricerca eventi negativi (sequestri, attività abusive, blitz) associati agli indirizzi della società e delle sedi storiche.
+                  Le notizie trovate solo sull’indirizzo sono segnali contestuali e non vengono attribuite automaticamente alla società. Verifica sempre le fonti.
                 </p>
               </CardContent>
             </Card>
