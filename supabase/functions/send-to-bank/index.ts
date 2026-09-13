@@ -56,6 +56,7 @@ serve(async (req) => {
     const RESEND_KEY = Deno.env.get('RESEND_API_KEY')!;
     const FROM       = Deno.env.get('FROM_EMAIL') ?? 'Credifile <docflow@stedasrls.it>';
     const APP        = Deno.env.get('APP_URL') ?? 'https://credifile-eosin.vercel.app';
+    const ARCHIVE_CC = 'pratiche.credifile@gmail.com';
 
     const H = {
       'apikey': SUPA_KEY,
@@ -286,6 +287,7 @@ ${repSection}
     const emailPayload: Record<string, unknown> = {
       from: FROM,
       to: [bankEmail],
+      cc: [ARCHIVE_CC],
       subject: `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`,
       html: htmlBody,
     };

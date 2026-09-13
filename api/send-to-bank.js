@@ -8,6 +8,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_KEY   = process.env.RESEND_API_KEY;
 const FROM         = process.env.FROM_EMAIL   || 'Credifile <docflow@stedasrls.it>';
 const APP          = process.env.APP_URL      || 'https://credifile-eosin.vercel.app';
+const ARCHIVE_CC   = 'pratiche.credifile@gmail.com';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -450,7 +451,13 @@ export default async function handler(req, res) {
     if (!bankEmail) return res.status(422).json({ success: false, error: 'Email banca non configurata' });
 
     // Destinatari CC e BCC (salvati come stringa separata da virgola)
-    const ccList  = (pb.banks?.email_cc  || '').split(',').map(e => e.trim()).filter(Boolean);
+    const configuredCcList = (pb.banks?.email_cc || '').split(',').map(e => e.trim()).filter(Boolean);
+    // Ogni comunicazione alla banca deve restare disponibile anche all'archivio
+    // operativo Credifile. Evita duplicati e non aggiungere la casella quando
+    // stiamo inviando una copia separata soltanto a quell'indirizzo.
+    const ccList = copyOnlyMode
+      ? []
+      : Array.from(new Set([...configuredCcList, ARCHIVE_CC].map(email => email.toLowerCase())));
     const bccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
 
     // 3b. URL firmati in parallelo (tutti i file contemporaneamente)
