@@ -35,6 +35,7 @@ import {
   COMMERCIAL_REPORT_SECTIONS,
   type CommercialBalanceRecord,
 } from '@/lib/commercialReportAnalysis';
+import { parseLocalizedNumber } from '@/lib/numberParsing';
 
 /* @section: relazione-commerciale-types */
 type Domanda = {
@@ -224,6 +225,24 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
     }),
     [balanceRecords, hasProvisionalDocument, provisionalFileIds],
   );
+  const reportReadiness = useMemo(() => {
+    const latest = commercialAnalysis.latestAnnual;
+    if (!latest) {
+      return { canGenerate: false, reason: 'Analizza almeno un bilancio annuale prima di generare la relazione.' };
+    }
+    const hasAssets = parseLocalizedNumber(latest.totale_attivo) !== null;
+    const hasEquity = parseLocalizedNumber(latest.totale_patrimonio_netto) !== null;
+    const hasEconomicFlow = parseLocalizedNumber(latest.ricavi_vendite) !== null
+      || parseLocalizedNumber(latest.totale_valore_produzione) !== null;
+    const availableKpis = kpiComparisons.filter(comparison => comparison.value !== null).length;
+    if (!hasAssets || !hasEquity || !hasEconomicFlow || availableKpis === 0) {
+      return {
+        canGenerate: false,
+        reason: 'Dati fondamentali insufficienti: verifica Stato patrimoniale, patrimonio netto, ricavi/valore della produzione e KPI.',
+      };
+    }
+    return { canGenerate: true, reason: '' };
+  }, [commercialAnalysis.latestAnnual, kpiComparisons]);
 
   useEffect(() => {
     loadAll();
@@ -724,6 +743,10 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
 
   const generaDocumento = async () => {
     if (!activeRelazione || !activeTemplate) return;
+    if (!reportReadiness.canGenerate) {
+      toast.error(reportReadiness.reason);
+      return;
+    }
     setGenerating(true);
     try {
       const answersToGenerate = {
@@ -854,7 +877,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                         {compilingAi ? 'Analisi in corso...' : 'Compila con AI'}
                       </Button>
                     )}
-                    {canEdit && <Button size="sm" onClick={generaDocumento} disabled={generating}>{generating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileText className="w-4 h-4 mr-1" />}Genera DOCX + PDF</Button>}
+                    {canEdit && <Button size="sm" onClick={generaDocumento} disabled={generating || !reportReadiness.canGenerate} title={!reportReadiness.canGenerate ? reportReadiness.reason : undefined}>{generating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileText className="w-4 h-4 mr-1" />}Genera DOCX + PDF</Button>}
                   </div>
                 </div>
               </CardHeader>
@@ -870,6 +893,11 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
                     <div className="md:col-span-2"><span className="text-muted-foreground">Sede Legale:</span> <b>{autoData.indirizzo || 'N/D'}</b></div>
                   </div>
                 </div>
+                {!reportReadiness.canGenerate && (
+                  <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <strong>Generazione sospesa:</strong> {reportReadiness.reason}
+                  </div>
+                )}
 
                 <div className="mb-4 rounded-lg border bg-white">
                   <div className="border-b bg-indigo-50/70 p-4">

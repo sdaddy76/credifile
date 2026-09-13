@@ -139,6 +139,13 @@ export default function ClientPortalPage() {
   // ── Storico stati pratica ────────────────────────────────────────────────
   const [statusLogs, setStatusLogs] = useState<PracticeStatusLog[]>([]);
   const [integrationRequests, setIntegrationRequests] = useState<PracticeIntegrationRequest[]>([]);
+  interface ClientPracticeBank {
+    id: string;
+    bank_id: string;
+    status: string;
+    banks?: { nome?: string | null } | null;
+  }
+  const [practiceBanks, setPracticeBanks] = useState<ClientPracticeBank[]>([]);
 
   // ── Upload autonomo (free-form, non legato a un practice_document) ────────
   const [uploadingFreeDoc, setUploadingFreeDoc] = useState(false);
@@ -720,7 +727,7 @@ export default function ClientPortalPage() {
     const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes, accessRes, integrationsRes] = await Promise.all([
       supabase.from('practices').select('*, clients(*), banks(nome)').eq('id', practiceId).single(),
       supabase.from('practice_documents').select('*, uploaded_files(*)').eq('practice_id', practiceId).order('tipo').order('created_at'),
-      supabase.from('practice_banks').select('bank_id').eq('practice_id', practiceId),
+      supabase.from('practice_banks').select('id,bank_id,status,banks(nome)').eq('practice_id', practiceId).order('created_at'),
       supabase.from('practice_status_log').select('*').eq('practice_id', practiceId).order('created_at', { ascending: true }),
       supabase.from('practice_client_questions').select('*').eq('practice_id', practiceId).order('created_at'),
       supabase.from('practice_client_banks').select('*').eq('practice_id', practiceId).order('ordinamento'),
@@ -742,6 +749,7 @@ export default function ClientPortalPage() {
     setStatusLogs((logsRes.data ?? []) as PracticeStatusLog[]);
     setClientQuestions((questionsRes.data ?? []) as ClientQuestion[]);
     setIntegrationRequests((integrationsRes.data ?? []) as PracticeIntegrationRequest[]);
+    setPracticeBanks((pbRes.data ?? []) as ClientPracticeBank[]);
     setClientBanks((clientBanksRes.data ?? []).map(row => ({
       id: row.id,
       banca: row.banca ?? '',
@@ -965,6 +973,28 @@ export default function ClientPortalPage() {
     chiusa: 'Richiesta chiusa',
     annullata: 'Richiesta annullata',
   };
+  const bankStatusLabel: Record<string, string> = {
+    assegnata: 'Assegnata',
+    inviata: 'Inviata alla banca',
+    istruttoria: 'In istruttoria',
+    in_delibera: 'In delibera',
+    deliberata: 'Deliberata',
+    erogata: 'Erogata',
+    rifiutata: 'Rifiutata',
+  };
+  const bankStatusClass = (status: string) => (
+    status === 'erogata' || status === 'deliberata'
+      ? 'bg-green-100 text-green-700 border-green-200'
+      : status === 'rifiutata'
+        ? 'bg-red-100 text-red-700 border-red-200'
+        : status === 'in_delibera'
+          ? 'bg-amber-100 text-amber-700 border-amber-200'
+          : status === 'istruttoria'
+            ? 'bg-cyan-100 text-cyan-700 border-cyan-200'
+            : status === 'inviata'
+              ? 'bg-blue-100 text-blue-700 border-blue-200'
+              : 'bg-slate-100 text-slate-700 border-slate-200'
+  );
 
   const totalDocs = documents.length;
   const completedDocs = documents.filter(d => d.status === 'caricato' || d.status === 'approvato').length;
@@ -1084,6 +1114,36 @@ export default function ClientPortalPage() {
                 </div>
               )}
             </div>
+            {practiceBanks.length > 1 && (
+              <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50/60 p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  Stato presso ciascuna banca
+                </p>
+                <div className="space-y-2">
+                  {practiceBanks.map(assignedBank => {
+                    const bankName = assignedBank.banks?.nome ?? 'Banca assegnata';
+                    const bankIntegrationOpen = integrationRequests.some(request =>
+                      request.practice_bank_id === assignedBank.id && request.status === 'open'
+                    );
+                    return (
+                      <div key={assignedBank.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-blue-100 bg-white px-3 py-2">
+                        <span className="text-sm font-medium text-slate-800">{bankName}</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full border px-2 py-1 text-xs font-medium ${bankStatusClass(assignedBank.status)}`}>
+                            {bankStatusLabel[assignedBank.status] ?? assignedBank.status}
+                          </span>
+                          {bankIntegrationOpen && (
+                            <span className="rounded-full border border-amber-200 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+                              Integrazione richiesta
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className="mb-4 flex justify-end">
               <Button variant="outline" size="sm" className="gap-1.5" onClick={downloadClientSummary}>
                 <FileDown className="w-3.5 h-3.5" /> Scarica riepilogo
