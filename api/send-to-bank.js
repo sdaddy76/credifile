@@ -1293,7 +1293,10 @@ ${integrationAnswersHtml}
         sent_by_nome: actorProfile.nome ?? actorProfile.email ?? null,
         resend_id: emailBody?.id ?? null,
         integration_request_id: integrationMode ? integration_request_id : null,
-        delivery_type: copyOnlyMode ? 'copia' : integrationMode ? 'approfondimento' : 'pratica',
+        // Il vincolo DB corrente ammette solo 'pratica' e 'approfondimento'.
+        // L'oggetto con prefisso "Copia —" identifica comunque senza ambiguità
+        // l'invio separato nello storico, senza far fallire la registrazione.
+        delivery_type: integrationMode ? 'approfondimento' : 'pratica',
         uploaded_file_ids: docLinks.map(document => document.uploadedFileId).filter(Boolean),
       }),
     }).catch(() => null); // Non blocca se il log fallisce
@@ -1308,7 +1311,7 @@ ${integrationAnswersHtml}
       relation_attached: false,
       relation_linked: !integrationMode && Boolean(commercialRelation?.pdf_url),
       answers_sent: answeredQuestions.length,
-      delivery_type: copyOnlyMode ? 'copia' : integrationMode ? 'approfondimento' : 'pratica',
+      delivery_type: integrationMode ? 'approfondimento' : 'pratica',
       bank_status_changed: !integrationMode && !copyOnlyMode,
       kpi_rows: integrationMode || copyOnlyMode ? 0 : kpiRows.length,
       has_rep: integrationMode || copyOnlyMode ? false : !!rep,
