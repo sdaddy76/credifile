@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, XCircle, Clock, ShieldCheck } from 'lucide-react';
+import { formatRomeDate } from '@/lib/dateTime';
 
 const CONSENT_TEXT = `Autorizzo il trattamento dei miei dati personali della Centrale dei Rischi della Banca d'Italia (esposizioni creditizie, affidamenti, utilizzi e relativi andamentali), ai soli fini dell'elaborazione di un'analisi di bancabilità da parte del consulente indicato. Il trattamento avverrà in conformità al Regolamento UE 2016/679 (GDPR). Il consenso è revocabile in qualsiasi momento.`;
 
@@ -62,7 +63,7 @@ export default function ConsensoCrePage() {
         <CheckCircle className="w-14 h-14 text-emerald-500 mx-auto mb-3" />
         <h2 className="text-lg font-bold text-slate-700 mb-2">Autorizzazione confermata</h2>
         <p className="text-sm text-slate-500">Il consulente <strong>{consent?.consulente_nome}</strong> è ora autorizzato a trattare i Suoi dati della Centrale dei Rischi ai fini dell'analisi di bancabilità.</p>
-        <p className="text-xs text-slate-400 mt-4">Data: {new Date().toLocaleDateString('it-IT', { day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' })}</p>
+        <p className="text-xs text-slate-400 mt-4">Data: {formatRomeDate(new Date(), { day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' })}</p>
       </div>
     </div>
   );
@@ -82,7 +83,7 @@ export default function ConsensoCrePage() {
       <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
         <CheckCircle className="w-14 h-14 text-emerald-500 mx-auto mb-3" />
         <h2 className="text-lg font-bold text-slate-700 mb-2">Autorizzazione già confermata</h2>
-        <p className="text-sm text-slate-500">Il {new Date(consent.accepted_at!).toLocaleDateString('it-IT')} ha già autorizzato il trattamento.</p>
+        <p className="text-sm text-slate-500">Il {formatRomeDate(consent.accepted_at!)} ha già autorizzato il trattamento.</p>
       </div>
     </div>
   );
@@ -105,7 +106,7 @@ export default function ConsensoCrePage() {
           <p><span className="font-semibold text-slate-700">Intestatario dati:</span> {consent?.client_name}</p>
           {expired && (
             <div className="flex items-center gap-1.5 text-amber-600 mt-2 text-xs">
-              <Clock className="w-3.5 h-3.5" /> Richiesta scaduta il {new Date(consent!.expires_at).toLocaleDateString('it-IT')}
+              <Clock className="w-3.5 h-3.5" /> Richiesta scaduta il {formatRomeDate(consent!.expires_at)}
             </div>
           )}
         </div>

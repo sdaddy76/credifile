@@ -59,7 +59,7 @@ serve(async (req) => {
 
     const portalLink = `${APP_URL}/accesso?p=${practice_id}`;
     const nomeCliente = client.nome_referente || client.ragione_sociale || 'Gentile Cliente';
-    const now = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
+    const now = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Europe/Rome' });
 
     // Sezione documenti mancanti
     const mancantiHtml = mancanti.length > 0 ? `

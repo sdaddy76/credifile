@@ -10,6 +10,7 @@ import { STATUS_LABELS, STATUS_COLORS, type Practice } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Cell } from 'recharts';
+import { formatRomeDateTime } from '@/lib/dateTime';
 
 interface Stats {
   totalPractices: number;
@@ -184,7 +185,7 @@ export default function DashboardPage() {
                       <span className="text-sm text-slate-700 font-mono">Pratica #{req.practices?.numero_pratica}</span>
                     </div>
                     {req.note_banca && <p className="text-xs text-slate-500 mt-1 italic">"{req.note_banca}"</p>}
-                    <p className="text-xs text-slate-400 mt-1">{new Date(req.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                    <p className="text-xs text-slate-400 mt-1">{formatRomeDateTime(req.created_at, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
                   </div>
                   <div className="flex flex-col gap-1.5 shrink-0">
                     <Button size="sm" className="h-7 text-xs gap-1 bg-green-600 hover:bg-green-700" disabled={processingReq === req.id} onClick={() => handleApprove(req)}>

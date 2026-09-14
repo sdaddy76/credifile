@@ -22,7 +22,7 @@ export function generateClientSummaryPdf(data: ClientSummaryReportData): Blob {
   const light: [number, number, number] = [241, 245, 249];
   const green: [number, number, number] = [22, 101, 52];
   const amber: [number, number, number] = [146, 64, 14];
-  const date = (data.generato_il ?? new Date()).toLocaleDateString('it-IT');
+  const date = (data.generato_il ?? new Date()).toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' });
   const progress = data.documenti_totali > 0
     ? Math.round((data.documenti_caricati / data.documenti_totali) * 100)
     : 0;

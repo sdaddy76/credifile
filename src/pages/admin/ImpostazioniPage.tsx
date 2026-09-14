@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Download, Settings, RefreshCw, CloudUpload, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatRomeDateTime } from '@/lib/dateTime';
 
 const INTERVALLI = [
   { value: '1',  label: 'Ogni giorno' },
@@ -131,7 +132,7 @@ export default function ImpostazioniPage() {
           {lastBackup && (
             <div className="bg-muted/50 rounded-lg px-4 py-2 text-sm flex items-center gap-2">
               <RefreshCw className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span>Ultimo backup: <strong>{new Date(lastBackup).toLocaleString('it-IT')}</strong></span>
+              <span>Ultimo backup: <strong>{formatRomeDateTime(lastBackup)}</strong></span>
             </div>
           )}
 
@@ -202,7 +203,7 @@ export default function ImpostazioniPage() {
             {lastDropboxBackup && (
               <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2">
                 <CheckCircle className="w-4 h-4 shrink-0" />
-                Ultimo backup Dropbox: <strong>{new Date(lastDropboxBackup).toLocaleString('it-IT')}</strong>
+                Ultimo backup Dropbox: <strong>{formatRomeDateTime(lastDropboxBackup)}</strong>
               </div>
             )}
 

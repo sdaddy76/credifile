@@ -9,6 +9,7 @@ import {
   PieChart,
 } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS } from '@/lib/types';
+import { formatRomeDate } from '@/lib/dateTime';
 
 interface Practice {
   id: string; status: string; created_by: string; assigned_to: string | null;
@@ -608,7 +609,7 @@ export default function StatistichePage() {
                               : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
                         <td className="px-3 py-2.5 text-center text-muted-foreground">
-                          {new Date(p.created_at).toLocaleDateString('it-IT')}
+                          {formatRomeDate(p.created_at)}
                         </td>
                       </tr>
                     );

@@ -10,6 +10,7 @@ import {
   RefreshCw, Trash2, Upload, FileText, CheckCircle, AlertCircle, ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { formatRomeDate } from '@/lib/dateTime';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -610,7 +611,7 @@ export default function ConsulenteDashboard() {
                       <FileBarChart2 className="w-5 h-5 text-teal-600 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-slate-800 truncate">{r.client_name}</p>
-                        <p className="text-xs text-slate-500">Bilancio {r.anno_bilancio ?? 'N/D'} · {new Date(r.created_at).toLocaleDateString('it-IT')}</p>
+                        <p className="text-xs text-slate-500">Bilancio {r.anno_bilancio ?? 'N/D'} · {formatRomeDate(r.created_at)}</p>
                       </div>
                       {r.indice_bancabilita !== null && rating && (
                         <div className="text-right">

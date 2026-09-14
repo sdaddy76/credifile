@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { formatRomeDateTime } from '@/lib/dateTime';
 import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, AlertTriangle, Trash2 } from 'lucide-react';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
@@ -327,13 +328,13 @@ export default function SegnalazioniRicevutePage() {
                       {seg.disclaimer_pagamento_accettato_at && (
                         <p className="text-xs text-muted-foreground mt-1">
                           Disclaimer servizio a pagamento accettato il{' '}
-                          {new Date(seg.disclaimer_pagamento_accettato_at).toLocaleString('it-IT')}
+                          {formatRomeDateTime(seg.disclaimer_pagamento_accettato_at)}
                         </p>
                       )}
                       {seg.privacy_consent_accepted_at && (
                         <p className="text-xs text-muted-foreground mt-1">
                           Privacy e trasmissione documenti autorizzate il{' '}
-                          {new Date(seg.privacy_consent_accepted_at).toLocaleString('it-IT')}
+                          {formatRomeDateTime(seg.privacy_consent_accepted_at)}
                         </p>
                       )}
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
@@ -342,7 +343,7 @@ export default function SegnalazioniRicevutePage() {
                         {seg.email_referente && <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{seg.email_referente}</span>}
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />
-                          {new Date(seg.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          {formatRomeDateTime(seg.created_at, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
                       {seg.note && (

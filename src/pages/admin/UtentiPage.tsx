@@ -12,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, UserCog, Pencil, ShieldCheck, Link2, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Activity, Monitor, RefreshCw, ChevronDown, ChevronUp, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { Navigate } from 'react-router-dom';
+import { formatRomeDateTime } from '@/lib/dateTime';
 
 interface AdminProfile {
   id: string;
@@ -661,7 +662,7 @@ export default function UtentiPage() {
                           const device = ua.includes('Mobile') ? '📱 Mobile' : ua.includes('Windows') ? '🖥 Windows' : ua.includes('Mac') ? '🍎 Mac' : ua.includes('Linux') ? '🐧 Linux' : '💻 Desktop';
                           const browser = ua.includes('Chrome') ? 'Chrome' : ua.includes('Firefox') ? 'Firefox' : ua.includes('Safari') ? 'Safari' : ua.includes('Edge') ? 'Edge' : '';
                           const ts = new Date(log.created_at);
-                          const dateStr = ts.toLocaleDateString('it-IT') + ' ' + ts.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                          const dateStr = formatRomeDateTime(ts);
                           return (
                             <tr key={log.id} className={`border-t border-border/50 transition-colors ${log.is_new_ip ? 'bg-red-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-muted/20'}`}>
                               <td className="px-3 py-2">

@@ -14,6 +14,7 @@ import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send,
 import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
+import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
 
 export default function PratichePage() {
   const navigate = useNavigate();
@@ -462,7 +463,7 @@ export default function PratichePage() {
         STATUS_LABELS[p.status] ?? p.status,
         p.importo_richiesto != null ? String(p.importo_richiesto) : '',
         p.codice_ateco ?? '',
-        new Date(p.created_at).toLocaleDateString('it-IT'),
+        formatRomeDate(p.created_at),
         bankName,
       ];
     });
@@ -661,7 +662,7 @@ export default function PratichePage() {
                           </span>
                         )}
                         {p.importo_richiesto && <span className="flex items-center gap-1"><Euro className="w-3 h-3" />{p.importo_richiesto.toLocaleString('it-IT')}</span>}
-                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(p.created_at).toLocaleDateString('it-IT')}</span>
+                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatRomeDate(p.created_at)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -829,7 +830,7 @@ export default function PratichePage() {
                       </div>
                       {pb.status === 'inviata' && pb.data_invio && (
                         <p className="text-xs text-muted-foreground">
-                          Inviata il {new Date(pb.data_invio).toLocaleDateString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
+                          Inviata il {formatRomeDateTime(pb.data_invio, { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
                         </p>
                       )}
                       {/* Bottone invia + nota collassabile */}

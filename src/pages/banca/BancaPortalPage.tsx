@@ -19,6 +19,7 @@ import {
   SlidersHorizontal, GitCompare, X as XIcon, Settings, Save, Loader2, ShieldCheck,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
+import { formatRomeDate } from '@/lib/dateTime';
 
 /* ─── Layout ─── */
 function BancaLayout({ children }: { children: React.ReactNode }) {
@@ -560,7 +561,7 @@ export default function BancaPortalPage() {
     doc.text(`Pratica #${p.numero_pratica}`, 14, y); y += 7;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.text(`Data: ${new Date(p.created_at).toLocaleDateString('it-IT')}`, 14, y);
+    doc.text(`Data: ${formatRomeDate(p.created_at)}`, 14, y);
     doc.text(`Stato: ${STATUS_LABEL[p.status] ?? p.status}`, 80, y); y += 6;
 
     const city  = extractCity(p.clients?.indirizzo);
@@ -843,7 +844,7 @@ export default function BancaPortalPage() {
                               Pratica #{p.numero_pratica}
                             </CardTitle>
                             <p className="text-xs text-slate-400 mt-0.5">
-                              {new Date(p.created_at).toLocaleDateString('it-IT')}
+                              {formatRomeDate(p.created_at)}
                             </p>
                           </div>
                         </div>
@@ -1033,7 +1034,7 @@ export default function BancaPortalPage() {
                               Pratica #{p.numero_pratica}
                             </CardTitle>
                             <p className="text-xs text-slate-400 mt-0.5">
-                              {new Date(p.created_at).toLocaleDateString('it-IT')}
+                              {formatRomeDate(p.created_at)}
                             </p>
                           </div>
                         </div>
@@ -1160,7 +1161,7 @@ export default function BancaPortalPage() {
                         </div>
                       </div>
                       <p className="text-xs text-slate-400 mt-1">
-                        Ricevuta il {new Date(r.approvedDate).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' })}
+                        Ricevuta il {formatRomeDate(r.approvedDate, { day: '2-digit', month: 'long', year: 'numeric' })}
                       </p>
                     </CardHeader>
 
@@ -1186,7 +1187,7 @@ export default function BancaPortalPage() {
                           {c?.data_costituzione && (
                             <div>
                               <p className="text-xs text-slate-400">Data Costituzione</p>
-                              <p className="text-sm font-medium text-slate-700">{new Date(c.data_costituzione).toLocaleDateString('it-IT')}</p>
+                              <p className="text-sm font-medium text-slate-700">{formatRomeDate(c.data_costituzione)}</p>
                             </div>
                           )}
                         </div>
@@ -1235,7 +1236,7 @@ export default function BancaPortalPage() {
                           <div>
                             <p className="text-xs text-slate-400 flex items-center gap-1"><Calendar className="w-3 h-3" /> Creata il</p>
                             <p className="text-sm font-medium text-slate-700">
-                              {new Date(r.practice?.created_at).toLocaleDateString('it-IT')}
+                              {formatRomeDate(r.practice?.created_at)}
                             </p>
                           </div>
                           <div>
@@ -1359,7 +1360,7 @@ export default function BancaPortalPage() {
                   { label: 'ATECO',  render: (p: AnonymousPractice) => extractAteco(p.clients?.indirizzo, p.codice_ateco ?? undefined) ?? '—' },
                   { label: 'Importo', render: (p: AnonymousPractice) => p.importo_richiesto != null ? fmt(p.importo_richiesto) : '—' },
                   { label: 'Stato',  render: (p: AnonymousPractice) => STATUS_LABEL[p.status] ?? p.status },
-                  { label: 'Data',   render: (p: AnonymousPractice) => new Date(p.created_at).toLocaleDateString('it-IT') },
+                  { label: 'Data',   render: (p: AnonymousPractice) => formatRomeDate(p.created_at) },
                   { label: 'Fatturato', render: (p: AnonymousPractice) => p.kpi?.ricavi_vendite != null ? fmt(p.kpi.ricavi_vendite) : '—' },
                   { label: 'Patrimonio Netto', render: (p: AnonymousPractice) => p.kpi?.totale_patrimonio_netto != null ? fmt(p.kpi.totale_patrimonio_netto) : '—' },
                 ] as { label: string; render: (p: AnonymousPractice) => string }[]).map(row => (

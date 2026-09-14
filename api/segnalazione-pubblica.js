@@ -601,7 +601,7 @@ export default async function handler(req, res) {
       ${fileLinksHtml}
     </table>
     <div style="margin-top:16px;padding:12px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:6px;font-size:13px;color:#155e75">
-      Privacy e trasmissione documenti autorizzate il ${escapeHtml(new Date(consentAcceptedAt).toLocaleString('it-IT'))}.<br>
+      Privacy e trasmissione documenti autorizzate il ${escapeHtml(new Date(consentAcceptedAt).toLocaleString('it-IT', { timeZone: 'Europe/Rome' }))}.<br>
       Presa visione del servizio a pagamento registrata.
     </div>
     <div style="margin-top:20px;padding:12px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;font-size:13px;color:#9a3412">

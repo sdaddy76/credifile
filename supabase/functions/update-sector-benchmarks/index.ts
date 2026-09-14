@@ -145,7 +145,7 @@ async function fetchNewsComment(atecoMacro: string, atecoLabel: string): Promise
     }
 
     if (titles.length === 0) return null;
-    const month = new Date().toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+  const month = new Date().toLocaleDateString('it-IT', { month: 'long', year: 'numeric', timeZone: 'Europe/Rome' });
     return `Quadro congiunturale aggiornato a ${month}. Notizie monitorate: ${titles.slice(0, 4).join('; ')}. Fonte informativa: Google News Italia, titoli recenti; il commento non modifica i benchmark numerici.`;
   } catch {
     return null;

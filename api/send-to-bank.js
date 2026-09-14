@@ -45,6 +45,13 @@ function safeFmt(n) {
   return Number.isFinite(num) && !Number.isNaN(num) ? num.toLocaleString('it-IT') : '—';
 }
 
+function formatRomeDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' });
+}
+
 function safeSection(content) {
   if (content == null) return '';
   const str = String(content).trim();
@@ -459,6 +466,9 @@ export default async function handler(req, res) {
       ? []
       : Array.from(new Set([...configuredCcList, ARCHIVE_CC].map(email => email.toLowerCase())));
     const bccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
+    if (!copyOnlyMode && !ccList.includes(ARCHIVE_CC)) {
+      return res.status(500).json({ success: false, error: 'Copia archivio non configurata' });
+    }
 
     // 3b. URL firmati in parallelo (tutti i file contemporaneamente)
     const files = integrationMode
@@ -918,7 +928,7 @@ export default async function handler(req, res) {
           dataCostituzioneFmt = `${mISO[3]}/${mISO[2]}/${mISO[1]}`;
         } else {
           const d = new Date(raw);
-          dataCostituzioneFmt = isNaN(d.getTime()) ? '' : d.toLocaleDateString('it-IT');
+          dataCostituzioneFmt = isNaN(d.getTime()) ? '' : formatRomeDate(d);
         }
       }
       const showDataCostituzione = !!dataCostituzioneFmt && dataCostituzioneFmt !== 'Invalid Date';
@@ -1032,7 +1042,7 @@ ${[...warnings, ...attenzione, ...positivi].map(s => {
   <p style="margin:4px 0 0;font-size:12px;color:#374151;">${s.descrizione}</p>
 </div>`;
 }).join('')}
-${vj.data_analisi ? (() => { const d = new Date(vj.data_analisi); return isNaN(d.getTime()) ? '' : `<p style="font-size:10px;color:#94a3b8;margin-top:8px;text-align:right;">Visura analizzata il ${d.toLocaleDateString('it-IT')}</p>`; })() : ''}`;
+${vj.data_analisi ? (() => { const d = new Date(vj.data_analisi); return isNaN(d.getTime()) ? '' : `<p style="font-size:10px;color:#94a3b8;margin-top:8px;text-align:right;">Visura analizzata il ${formatRomeDate(d)}</p>`; })() : ''}`;
     })());
 
     const structuredRequirementsSection = structuredRequirements.length > 0
@@ -1360,6 +1370,7 @@ ${integrationAnswersHtml}
       bank_status_changed: !integrationMode && !copyOnlyMode,
       kpi_rows: integrationMode || copyOnlyMode ? 0 : kpiRows.length,
       has_rep: integrationMode || copyOnlyMode ? false : !!rep,
+      archive_copy: !copyOnlyMode && ccList.includes(ARCHIVE_CC),
       copy_only: copyOnlyMode,
     });
 

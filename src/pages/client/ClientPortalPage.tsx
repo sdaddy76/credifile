@@ -15,6 +15,7 @@ import {
   Check, MessageSquare, Building2, ShieldCheck, LockKeyhole, Phone,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
 import {
   STATUS_LABELS, STATUS_COLORS,
   type Practice, type PracticeDocument, type PracticeStatusLog,
@@ -1209,7 +1210,7 @@ export default function ClientPortalPage() {
                 <div className="rounded-lg border border-teal-200 bg-white p-3 space-y-2 text-sm text-teal-900">
                   <p>
                     La richiesta è stata registrata il{' '}
-                    <strong>{new Date(bankSearchRequest.created_at).toLocaleString('it-IT')}</strong>.
+                    <strong>{formatRomeDateTime(bankSearchRequest.created_at)}</strong>.
                   </p>
                   {bankSearchRequest.numero_pratica && (
                     <p>Pratica: <strong>{bankSearchRequest.numero_pratica}</strong></p>
@@ -1366,7 +1367,7 @@ export default function ClientPortalPage() {
                           </p>
                           {displayedAt && (
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              {new Date(displayedAt).toLocaleString('it-IT', {
+                              {formatRomeDateTime(displayedAt, {
                                 day: '2-digit', month: '2-digit', year: 'numeric',
                                 hour: '2-digit', minute: '2-digit',
                               })}
@@ -1440,7 +1441,7 @@ export default function ClientPortalPage() {
                         {request.status === 'open' ? 'Da completare' : request.status === 'completed' ? 'Completata' : 'Annullata'}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {new Date(request.requested_at).toLocaleDateString('it-IT')}
+                        {formatRomeDate(request.requested_at)}
                       </span>
                     </div>
                     {request.note && (
@@ -1478,7 +1479,7 @@ export default function ClientPortalPage() {
                 <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
                 <p>
                   Autorizzazione registrata il{' '}
-                  <strong>{new Date(privacyConsentAcceptedAt).toLocaleString('it-IT')}</strong>.
+                  <strong>{formatRomeDateTime(privacyConsentAcceptedAt)}</strong>.
                   Puoi procedere con il caricamento e la compilazione dei documenti.
                 </p>
               </div>
@@ -1560,7 +1561,7 @@ export default function ClientPortalPage() {
                         {mComp.map(c => (
                           <p key={c.id} className="text-xs text-green-700 flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" />
-                            Caricato il {new Date(c.uploaded_at).toLocaleDateString('it-IT')}
+                            Caricato il {formatRomeDate(c.uploaded_at)}
                           </p>
                         ))}
                       </div>

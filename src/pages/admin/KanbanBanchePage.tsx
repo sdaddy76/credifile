@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Badge } from '@/components/ui/badge';
 import { Building2, Clock, RefreshCw, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { formatRomeTime } from '@/lib/dateTime';
 
 // ─── Tipi ──────────────────────────────────────────────────────────────────────
 interface BancaColonna { id: string; nome: string; }
@@ -205,7 +206,7 @@ export default function KanbanBanchePage() {
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
             {ruoloLabel} · {banche.length} banche · {pratiche.length} assegnazioni ·
-            aggiornato {lastRefresh.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+            aggiornato {formatRomeTime(lastRefresh)}
           </p>
         </div>
         <div className="flex items-center gap-3">

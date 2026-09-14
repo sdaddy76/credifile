@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
 import { parseCentraleRischi, categoriaToTipologia, type CRRiga } from '@/lib/parseCentraleRischi';
 import { jsPDF } from 'jspdf';
+import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -2270,7 +2271,7 @@ export default function PraticaDetailPage() {
             <Badge className={STATUS_COLORS[practice.status]}>{STATUS_LABELS[practice.status]}</Badge>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Creata il {new Date(practice.created_at).toLocaleDateString('it-IT')}
+            Creata il {formatRomeDate(practice.created_at)}
             {bank && ` · ${bank.nome}`}{assignedAgent && ` · 👤 ${assignedAgent.nome || assignedAgent.email}`}
           </p>
           {isSuperAdmin && (assignedAgent || segreteriaDiCompetenza) && (
@@ -2566,7 +2567,7 @@ export default function PraticaDetailPage() {
                     </div>
                     <code className="text-lg font-bold font-mono text-foreground tracking-widest">{accessCode.codice}</code>
                     <p className="text-xs text-muted-foreground">Email: {accessCode.email_cliente}</p>
-                    {accessCode.last_access && <p className="text-xs text-muted-foreground">Ultimo accesso: {new Date(accessCode.last_access).toLocaleDateString('it-IT')}</p>}
+                    {accessCode.last_access && <p className="text-xs text-muted-foreground">Ultimo accesso: {formatRomeDate(accessCode.last_access)}</p>}
                   </div>
                   <div className={`rounded-lg border p-3 ${
                     accessCode.privacy_consent_accepted_at
@@ -2588,7 +2589,7 @@ export default function PraticaDetailPage() {
                         {accessCode.privacy_consent_accepted_at && (
                           <>
                             <p className="text-xs mt-0.5">
-                              {new Date(accessCode.privacy_consent_accepted_at).toLocaleString('it-IT')}
+                              {formatRomeDateTime(accessCode.privacy_consent_accepted_at)}
                             </p>
                             {accessCode.privacy_consent_version && (
                               <p className="text-[11px] mt-0.5 opacity-80">
@@ -2725,7 +2726,7 @@ export default function PraticaDetailPage() {
                                 </Badge>
                                 {cycle.bank_sent_at && (
                                   <Badge className="text-xs bg-green-100 text-green-700 border-green-200">
-                                    Inviato {new Date(cycle.bank_sent_at).toLocaleDateString('it-IT')}
+                                    Inviato {formatRomeDate(cycle.bank_sent_at)}
                                     {(cycle.bank_delivery_count ?? 0) > 1 ? ` · ${cycle.bank_delivery_count} invii` : ''}
                                   </Badge>
                                 )}
@@ -3105,13 +3106,13 @@ export default function PraticaDetailPage() {
                                                 <span>◷ Nessun accesso della banca registrato</span>
                                               )}
                                               {opened && (
-                                                <span title={`Ultima apertura registrata: ${new Date(opened.occurred_at).toLocaleString('it-IT')}`}>
-                                                  👁 Aperto dalla banca ({bankName(opened.bank_id)}) {new Date(opened.occurred_at).toLocaleString('it-IT')}
+                                                <span title={`Ultima apertura registrata: ${formatRomeDateTime(opened.occurred_at)}`}>
+                                                  👁 Aperto dalla banca ({bankName(opened.bank_id)}) {formatRomeDateTime(opened.occurred_at)}
                                                 </span>
                                               )}
                                               {downloaded && (
-                                                <span title={`Ultimo download registrato: ${new Date(downloaded.occurred_at).toLocaleString('it-IT')}`}>
-                                                  ↓ Scaricato dalla banca ({bankName(downloaded.bank_id)}) {new Date(downloaded.occurred_at).toLocaleString('it-IT')}
+                                                <span title={`Ultimo download registrato: ${formatRomeDateTime(downloaded.occurred_at)}`}>
+                                                  ↓ Scaricato dalla banca ({bankName(downloaded.bank_id)}) {formatRomeDateTime(downloaded.occurred_at)}
                                                 </span>
                                               )}
                                             </div>
@@ -3870,7 +3871,7 @@ export default function PraticaDetailPage() {
                       </div>
                       {log.note && <p className="text-xs text-muted-foreground mt-0.5">{log.note}</p>}
                       <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                        <Clock className="w-3 h-3" />{new Date(log.created_at).toLocaleString('it-IT')}
+                        <Clock className="w-3 h-3" />{formatRomeDateTime(log.created_at)}
                       </p>
                     </div>
                   </div>
@@ -4115,7 +4116,7 @@ export default function PraticaDetailPage() {
                               </div>
                               <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
                                 <Calendar className="w-3 h-3" />
-                                {new Date(dl.data_scadenza).toLocaleDateString('it-IT')}
+                                {formatRomeDate(dl.data_scadenza)}
                               </p>
                               {dl.note && (
                                 <p className="text-xs text-muted-foreground mt-0.5">{dl.note}</p>
@@ -4316,7 +4317,7 @@ export default function PraticaDetailPage() {
                             )}
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
                               <Clock className="w-3 h-3" />
-                              {new Date(log.created_at).toLocaleString('it-IT')}
+                              {formatRomeDateTime(log.created_at)}
                             </span>
                           </div>
                         </div>
@@ -4355,7 +4356,7 @@ export default function PraticaDetailPage() {
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       {note.autore_nome && <span>👤 {note.autore_nome}</span>}
                       {note.autore_ruolo && <span className="capitalize bg-muted px-1.5 py-0.5 rounded-full">{note.autore_ruolo}</span>}
-                      <span>{new Date(note.created_at).toLocaleString('it-IT', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                      <span>{formatRomeDateTime(note.created_at, {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
                     </div>
                     <div className="flex gap-1">
                       <button onClick={() => togglePinNote(note.id, note.pinned)} className="p-1 hover:bg-accent rounded" title={note.pinned ? 'Rimuovi pin' : 'Appunta'}>
@@ -4414,7 +4415,7 @@ export default function PraticaDetailPage() {
                       <p className={`text-sm font-medium ${task.stato === 'completata' ? 'line-through text-muted-foreground' : ''}`}>{task.titolo}</p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap text-xs text-muted-foreground">
                         <span className={`px-1.5 py-0.5 rounded-full font-medium ${task.priorita === 'alta' ? 'bg-red-100 text-red-700' : task.priorita === 'media' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>{task.priorita}</span>
-                        {task.scadenza && <span className={isScaduto ? 'text-red-600 font-semibold' : ''}><Clock className="w-3 h-3 inline mr-0.5"/>{new Date(task.scadenza+'T00:00:00').toLocaleDateString('it-IT')}{isScaduto && ' ⚠'}</span>}
+                        {task.scadenza && <span className={isScaduto ? 'text-red-600 font-semibold' : ''}><Clock className="w-3 h-3 inline mr-0.5"/>{formatRomeDate(task.scadenza+'T00:00:00')}{isScaduto && ' ⚠'}</span>}
                         {task.assegnato_nome && <span>👤 {task.assegnato_nome}</span>}
                       </div>
                     </div>
@@ -4460,7 +4461,7 @@ export default function PraticaDetailPage() {
                         return (
                           <tr key={log.id} className="align-top">
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                              {new Date(log.created_at).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
+                              {formatRomeDateTime(log.created_at, { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
                             </td>
                             <td className="px-3 py-2 min-w-[150px]">
                               <div className="font-medium text-foreground">{log.bank_nome ?? 'Banca'}</div>
@@ -4477,10 +4478,10 @@ export default function PraticaDetailPage() {
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap">
                               <Badge className={`text-[10px] ${statusClass}`}>{log.stato}</Badge>
-                              {log.delivered_at && <div className="mt-1 text-[11px] text-emerald-700">Consegnata: {new Date(log.delivered_at).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</div>}
+                              {log.delivered_at && <div className="mt-1 text-[11px] text-emerald-700">Consegnata: {formatRomeDateTime(log.delivered_at, { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</div>}
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                              {log.opened_at ? new Date(log.opened_at).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}
+                              {log.opened_at ? formatRomeDateTime(log.opened_at, { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}
                             </td>
                           </tr>
                         );

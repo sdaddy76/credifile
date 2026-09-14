@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { User, Phone, Mail, Upload, Trash2, Save, Lock, Eye, EyeOff, Shield, Monitor, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatRomeDateTime } from '@/lib/dateTime';
 
 export default function ProfiloPage() {
   const { user, profileNome } = useAuth();
@@ -266,7 +267,7 @@ export default function ProfiloPage() {
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5 truncate">{log.user_agent || 'Dispositivo sconosciuto'}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {new Date(log.created_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}
+                      {formatRomeDateTime(log.created_at, { dateStyle: 'short', timeStyle: 'short' })}
                     </p>
                   </div>
                 </div>

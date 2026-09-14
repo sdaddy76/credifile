@@ -185,7 +185,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
   doc.setFontSize(11); doc.setFont('helvetica', 'normal');
   doc.text(data.ragione_sociale, W / 2, 28, { align: 'center' });
   doc.setFontSize(8.5);
-  doc.text(`Bilancio ${data.anno_bilancio}  ·  ${new Date().toLocaleDateString('it-IT')}`, W / 2, 35, { align: 'center' });
+  doc.text(`Bilancio ${data.anno_bilancio}  ·  ${new Date().toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' })}`, W / 2, 35, { align: 'center' });
 
   // Logo consulente a destra
   if (consulenteLogo) {
@@ -299,8 +299,8 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
 
   const settLabel = data.settore_label ?? data.settore ?? 'Media PMI Italiane';
   const benchDate = data.benchmark_aggiornato_il
-    ? new Date(data.benchmark_aggiornato_il).toLocaleDateString('it-IT')
-    : new Date().toLocaleDateString('it-IT');
+    ? new Date(data.benchmark_aggiornato_il).toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' })
+    : new Date().toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' });
 
   sectionTitle(`Confronto KPI — ${settLabel}`, '📊');
 

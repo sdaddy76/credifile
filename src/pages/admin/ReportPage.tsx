@@ -14,6 +14,7 @@ import {
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────
 interface KpiEntry { valore: number | null; formatted: string; semaforo: 'verde' | 'giallo' | 'rosso' | 'nd'; label: string }
@@ -188,7 +189,7 @@ function generateReportPdf(bilanci: BilancioRecord[], practiceLabel: string) {
   const BLUE: [number, number, number]  = [30, 58, 138];
   const LGRAY: [number, number, number] = [248, 250, 252];
   const DGRAY: [number, number, number] = [71, 85, 105];
-  const now = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const now = formatRomeDate(new Date(), { day: '2-digit', month: '2-digit', year: 'numeric' });
   let y = 0;
 
   // Intestazione
@@ -419,7 +420,7 @@ export default function ReportPage() {
     }
   };
 
-  const fmtFull = (d: string) => new Date(d).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const fmtFull = (d: string) => formatRomeDateTime(d, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   // ── Preview KPI inline ────────────────────────────────────────────────────
   const AREA_ORDER = ['liquidita','solidita','redditivita','indebitamento','efficienza','copertura'];
