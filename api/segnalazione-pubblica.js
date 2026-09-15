@@ -43,6 +43,38 @@ const ALLOWED_PUBLIC_EXTENSIONS = new Set([
   'pdf', 'csv', 'xls', 'xlsx', 'ods', 'doc', 'docx', 'jpg', 'jpeg', 'png',
 ]);
 
+/**
+ * Chiamata REST autenticata a Supabase.
+ *
+ * Questo endpoint è eseguito in Vercel e non può usare il client Supabase
+ * del browser. Manteniamo qui un piccolo wrapper che normalizza sempre la
+ * risposta, così gli errori del database possono essere gestiti senza
+ * eccezioni non catturate.
+ */
+async function rest(path, options = {}) {
+  if (!SUPABASE_KEY) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY non configurata');
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      ...(options.headers ?? {}),
+    },
+  });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  return { ok: response.ok, status: response.status, data };
+}
+
 function getClientIp(req) {
   const forwarded = req.headers?.['x-forwarded-for'] || req.headers?.['x-real-ip'] || 'unknown';
   return String(forwarded).split(',')[0].trim().slice(0, 120) || 'unknown';
@@ -354,13 +386,16 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (req.body?.action === 'prepare_uploads') {
-    return prepareDirectUploads(req, res);
-  }
 
-  const {
+  try {
+    if (req.body?.action === 'prepare_uploads') {
+      return await prepareDirectUploads(req, res);
+    }
+
+    const {
     ragione_sociale,
     piva,
     nome_referente,
@@ -377,7 +412,7 @@ export default async function handler(req, res) {
     payment_disclaimer_version,
     uploaded_files,
     submission_token,
-  } = req.body ?? {};
+    } = req.body ?? {};
 
   // Protezioni anti-bot: honeypot, tempo minimo di compilazione e limite per IP.
   const elapsed = Date.now() - Number(form_started_at);
@@ -612,5 +647,12 @@ export default async function handler(req, res) {
 
   await sendEmail(SUPER_ADMIN_EMAIL, `Nuova segnalazione: ${ragione_sociale}`, emailHtml);
 
-  return res.status(200).json({ success: true, id: segnalazione?.id ?? null });
+    return res.status(200).json({ success: true, id: segnalazione?.id ?? null });
+  } catch (error) {
+    console.error('Errore inatteso endpoint segnalazione-pubblica:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Errore interno durante la registrazione della richiesta. Riprova tra qualche minuto.',
+    });
+  }
 }

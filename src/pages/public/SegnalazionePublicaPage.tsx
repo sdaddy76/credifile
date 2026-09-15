@@ -30,6 +30,43 @@ const MAX_FILE_BYTES = 30 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 const MAX_FILES = 12;
 
+type ApiResponse = Record<string, unknown>;
+
+/**
+ * Legge le API pubbliche in modo tollerante: Vercel può restituire una
+ * pagina/testo d'errore prima che l'handler riesca a serializzare il JSON.
+ * In quel caso evitiamo il SyntaxError generico del browser e mostriamo un
+ * messaggio comprensibile all'utente.
+ */
+async function readApiResponse(response: Response): Promise<ApiResponse> {
+  const raw = await response.text();
+  if (!raw.trim()) {
+    throw new Error(`Risposta vuota del server (HTTP ${response.status}). Riprova tra qualche minuto.`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      response.status >= 500
+        ? 'Il server non è riuscito a completare la richiesta. Riprova tra qualche minuto.'
+        : `Risposta non valida del server (HTTP ${response.status}). Riprova.`
+    );
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Risposta non valida del server (HTTP ${response.status}). Riprova.`);
+  }
+
+  const json = parsed as ApiResponse;
+  if (!response.ok || json.success === false) {
+    const serverError = typeof json.error === 'string' ? json.error : '';
+    throw new Error(serverError || `Errore server (HTTP ${response.status}).`);
+  }
+  return json;
+}
+
 export default function SegnalazionePublicaPage() {
   usePageMeta({
     title: 'Richiedi una valutazione di bancabilità — Credifile',
@@ -180,9 +217,13 @@ export default function SegnalazionePublicaPage() {
           payment_disclaimer_version: PAYMENT_DISCLAIMER_VERSION,
         }),
       });
-      const prepareJson = await prepareResponse.json();
-      if (!prepareResponse.ok || !prepareJson.success) {
-        throw new Error(prepareJson.error ?? 'Impossibile preparare il caricamento');
+      const prepareJson = await readApiResponse(prepareResponse);
+      if (prepareJson.success !== true) {
+        throw new Error(
+          typeof prepareJson.error === 'string'
+            ? prepareJson.error
+            : 'Impossibile preparare il caricamento'
+        );
       }
 
       const localFiles = new Map<string, File>([
@@ -229,8 +270,10 @@ export default function SegnalazionePublicaPage() {
         }),
       });
 
-      const json = await r.json();
-      if (!r.ok || !json.success) throw new Error(json.error ?? 'Errore invio');
+      const json = await readApiResponse(r);
+      if (json.success !== true) {
+        throw new Error(typeof json.error === 'string' ? json.error : 'Errore invio');
+      }
       if (json.already_in_progress && json.existing_practice) {
         setPraticaEsistente(json.existing_practice);
       }
