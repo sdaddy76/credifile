@@ -64,6 +64,7 @@ const NAV_AGENTE = [
   { to: '/admin/clienti',            icon: Users,           label: 'Clienti' },
   { to: '/admin/rubrica-lead',       icon: BookUser,        label: 'Rubrica Lead' },
   { to: '/admin/kanban-banche',      icon: Columns2,        label: 'Kanban Banche' },
+  { to: '/admin/segnalazioni-ricevute', icon: Inbox,         label: 'Segnalazioni Ricevute' },
   { to: '/admin/tasks',              icon: CheckSquare,     label: 'Task' },
   { to: '/admin/calendario',         icon: Calendar,        label: 'Calendario' },
   { to: '/admin/miei-segnalatori',   icon: UsersRound,      label: 'Miei Segnalatori' },

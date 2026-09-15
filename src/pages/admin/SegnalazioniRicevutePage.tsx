@@ -52,10 +52,11 @@ const STATO_COLOR: Record<string, string> = {
 };
 
 export default function SegnalazioniRicevutePage() {
-  const { isSuperAdmin, isSegreteria } = useAuth();
+  const { isSuperAdmin, isSegreteria, isAgente, user } = useAuth();
   const [segnalazioni, setSegnalazioni] = useState<Segnalazione[]>([]);
   const [agenti, setAgenti]             = useState<Agente[]>([]);
   const [loading, setLoading]           = useState(true);
+  const [loadError, setLoadError]       = useState('');
   const [duplicateCount, setDuplicateCount] = useState(0);
   const [filtroStato, setFiltroStato]   = useState('nuova');
   const [assigning, setAssigning]       = useState<string | null>(null);
@@ -93,14 +94,36 @@ export default function SegnalazioniRicevutePage() {
   // Carica segnalazioni
   const load = async () => {
     setLoading(true);
+    setLoadError('');
+    // Non incorporare la relazione agente nella query principale: in alcuni
+    // ambienti PostgREST il nome della FK non viene esposto come relazione e
+    // la query fallisce interamente, nascondendo anche le segnalazioni senza
+    // agente (come una nuova valutazione pubblica).
     let q = supabase
       .from('segnalazioni_pubbliche')
-      .select('*, agente:agente_id(nome, nome_cognome)')
+      .select('*')
       .order('created_at', { ascending: false });
     if (filtroStato && filtroStato !== 'tutte') q = q.eq('stato', filtroStato);
+    if (isAgente && user?.id) q = q.eq('agente_id', user.id);
     const { data, error } = await q.limit(100);
-    if (error) { toast.error('Errore caricamento: ' + error.message); }
+    if (error) {
+      setLoadError(error.message);
+      toast.error('Errore caricamento segnalazioni: ' + error.message);
+    }
     const rows = (data ?? []) as Segnalazione[];
+    const agentIds = [...new Set(rows.map(row => row.agente_id).filter(Boolean))] as string[];
+    if (agentIds.length > 0) {
+      const { data: agentRows, error: agentsError } = await supabase
+        .from('admin_profiles')
+        .select('id,nome,nome_cognome,ruolo')
+        .in('id', agentIds);
+      if (!agentsError) {
+        const agentById = new Map((agentRows ?? []).map(agent => [agent.id, agent]));
+        rows.forEach(row => {
+          if (row.agente_id) row.agente = agentById.get(row.agente_id) as Segnalazione['agente'] ?? null;
+        });
+      }
+    }
     const practiceIds = [...new Set(rows.map(row => row.practice_id).filter(Boolean))] as string[];
     if (practiceIds.length > 0) {
       const { data: practices } = await supabase
@@ -125,7 +148,7 @@ export default function SegnalazioniRicevutePage() {
   };
 
   useEffect(() => { loadAgenti(); }, []);
-  useEffect(() => { load(); }, [filtroStato]);
+  useEffect(() => { load(); }, [filtroStato, isAgente, user?.id]);
 
   // Assegna segnalazione a un agente
   const assegna = async (seg: Segnalazione) => {
@@ -187,7 +210,7 @@ export default function SegnalazioniRicevutePage() {
     setSegnalazioni(prev => prev.filter(s => s.id !== id));
   };
 
-  if (!isSuperAdmin && !isSegreteria) {
+  if (!isSuperAdmin && !isSegreteria && !isAgente) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
         <AlertCircle className="w-10 h-10 mb-3 opacity-30" />
@@ -240,6 +263,17 @@ export default function SegnalazioniRicevutePage() {
           >
             Vedi elenco
           </Button>
+        </div>
+      )}
+
+      {loadError && (
+        <div className="flex items-start gap-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+          <div>
+            <p className="font-semibold">Le segnalazioni non possono essere caricate</p>
+            <p className="mt-0.5 break-words">{loadError}</p>
+            <p className="mt-1 text-xs">Controlla la sessione e riprova con “Aggiorna”.</p>
+          </div>
         </div>
       )}
 
