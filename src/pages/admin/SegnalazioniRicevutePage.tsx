@@ -3,7 +3,9 @@
 // Permette di assegnare ogni segnalazione a un agente.
 
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { buildAppUrl } from '@/lib/appUrl';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { formatRomeDateTime } from '@/lib/dateTime';
-import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, AlertTriangle, Trash2 } from 'lucide-react';
+import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, AlertTriangle, Trash2, Link2, Loader2 } from 'lucide-react';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
 interface Segnalazione {
@@ -26,7 +28,7 @@ interface Segnalazione {
   agente_id?: string | null;
   note_interne?: string | null;
   created_at: string;
-  file_urls?: { nome: string; url?: string; path?: string }[] | null;
+  file_urls?: { nome: string; url?: string; path?: string; mime_type?: string | null; dimensione?: number | null }[] | null;
   practice_id?: string | null;
   numero_pratica?: string | null;
   piva?: string | null;
@@ -53,6 +55,7 @@ const STATO_COLOR: Record<string, string> = {
 };
 
 export default function SegnalazioniRicevutePage() {
+  const navigate = useNavigate();
   const { isSuperAdmin, isSegreteria, isAgente, user } = useAuth();
   const [segnalazioni, setSegnalazioni] = useState<Segnalazione[]>([]);
   const [agenti, setAgenti]             = useState<Agente[]>([]);
@@ -61,6 +64,7 @@ export default function SegnalazioniRicevutePage() {
   const [duplicateCount, setDuplicateCount] = useState(0);
   const [filtroStato, setFiltroStato]   = useState('nuova');
   const [assigning, setAssigning]       = useState<string | null>(null);
+  const [startingEvaluation, setStartingEvaluation] = useState<string | null>(null);
   const [noteInterne, setNoteInterne]   = useState<Record<string, string>>({});
   const [selectedAgente, setSelectedAgente] = useState<Record<string, string>>({});
 
@@ -200,6 +204,274 @@ export default function SegnalazioniRicevutePage() {
   const cambiaStato = async (id: string, stato: string) => {
     await supabase.from('segnalazioni_pubbliche').update({ stato, updated_at: new Date().toISOString() }).eq('id', id);
     setSegnalazioni(prev => prev.map(s => s.id === id ? { ...s, stato } : s));
+  };
+
+  // Trasforma una richiesta pubblica di valutazione in una pratica operativa.
+  // La visura già ricevuta resta nello stesso bucket e viene collegata alla
+  // nuova pratica senza duplicare il file.
+  const avviaValutazione = async (seg: Segnalazione) => {
+    if (seg.practice_id) {
+      navigate(`/admin/pratiche/${seg.practice_id}`);
+      return;
+    }
+    const email = seg.email_referente?.trim().toLowerCase();
+    if (!email) {
+      toast.error('La richiesta non contiene un email: inserisci prima il recapito del cliente.');
+      return;
+    }
+
+    setStartingEvaluation(seg.id);
+    let createdClientId: string | null = null;
+    try {
+      const piva = seg.piva?.replace(/\D/g, '') || null;
+      let client: { id: string; ragione_sociale: string; email: string; telefono?: string | null } | null = null;
+
+      if (piva) {
+        const { data: existingClients, error: clientLookupError } = await supabase
+          .from('clients')
+          .select('id,ragione_sociale,email,telefono')
+          .eq('piva', piva)
+          .order('created_at', { ascending: true })
+          .limit(1);
+        if (clientLookupError) throw clientLookupError;
+        client = (existingClients?.[0] ?? null) as typeof client;
+      }
+
+      if (!client) {
+        const { data: insertedClient, error: clientError } = await supabase
+          .from('clients')
+          .insert({
+            ragione_sociale: seg.ragione_sociale.trim(),
+            piva,
+            email,
+            telefono: seg.telefono?.trim() || null,
+          })
+          .select('id,ragione_sociale,email,telefono')
+          .single();
+        if (clientError) throw clientError;
+        client = insertedClient as typeof client;
+        createdClientId = insertedClient.id;
+      }
+
+      const activeStatuses = [
+        'bozza',
+        'raccolta_documenti',
+        'inviata_banca',
+        'integrazioni_richieste',
+        'istruttoria',
+        'in_delibera',
+        'deliberata',
+        'completata',
+      ];
+      const { data: activePractices, error: activePracticeError } = await supabase
+        .from('practices')
+        .select('id,numero_pratica,status')
+        .eq('client_id', client.id)
+        .in('status', activeStatuses)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (activePracticeError) throw activePracticeError;
+
+      if (activePractices?.[0]) {
+        const existing = activePractices[0];
+        await supabase.from('segnalazioni_pubbliche').update({
+          practice_id: existing.id,
+          stato: 'lavorazione',
+          updated_at: new Date().toISOString(),
+        }).eq('id', seg.id);
+        toast.info(`La P.IVA è già collegata alla pratica ${existing.numero_pratica}.`);
+        navigate(`/admin/pratiche/${existing.id}`);
+        return;
+      }
+
+      const year = new Date().getFullYear();
+      const numeroPratica = `PRA-${year}-${Date.now().toString(36).slice(-6).toUpperCase()}`;
+      const consultantNameResult = await supabase
+        .from('admin_profiles')
+        .select('nome,email')
+        .eq('id', user?.id ?? '')
+        .maybeSingle();
+      const consultantName = consultantNameResult.data?.nome || consultantNameResult.data?.email || user?.email || 'Credifile';
+
+      const { data: practice, error: practiceError } = await supabase
+        .from('practices')
+        .insert({
+          client_id: client.id,
+          numero_pratica: numeroPratica,
+          status: 'raccolta_documenti',
+          note_admin: `Valutazione autonoma avviata dalla richiesta pubblica ${seg.id}.`,
+          created_by: user?.id ?? null,
+          assigned_to: seg.agente_id ?? null,
+        })
+        .select('id,numero_pratica,status')
+        .single();
+      if (practiceError) throw practiceError;
+
+      const { data: templates, error: templatesError } = await supabase
+        .from('document_templates')
+        .select('id,nome,descrizione,obbligatorio,ordine')
+        .eq('obbligatorio', true)
+        .order('ordine');
+      if (templatesError) throw templatesError;
+
+      const templateRows = (templates ?? []).map(template => ({
+        practice_id: practice.id,
+        template_id: template.id,
+        nome: template.nome,
+        descrizione: template.descrizione,
+        tipo: 'standard',
+        obbligatorio: true,
+        status: 'richiesto',
+      }));
+      const { data: practiceDocuments, error: documentsError } = templateRows.length > 0
+        ? await supabase.from('practice_documents').insert(templateRows).select('id,nome,status')
+        : { data: [], error: null };
+      if (documentsError) throw documentsError;
+
+      const normalizeName = (value: string) => value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLocaleLowerCase('it-IT');
+      const visuraDocument = (practiceDocuments ?? []).find(document =>
+        normalizeName(document.nome).includes('visura')
+      );
+      const receivedFiles = (seg.file_urls ?? []).filter(file => Boolean(file.path));
+      if (visuraDocument && receivedFiles.length > 0) {
+        const visuraFile = receivedFiles.find(file => normalizeName(file.nome).includes('visura')) ?? receivedFiles[0];
+        const { error: visuraStatusError } = await supabase
+          .from('practice_documents')
+          .update({
+            status: 'caricato',
+            uploaded_at: new Date().toISOString(),
+            note_rifiuto: null,
+          })
+          .eq('id', visuraDocument.id);
+        if (visuraStatusError) throw visuraStatusError;
+
+        const { error: fileError } = await supabase.from('uploaded_files').insert({
+          practice_document_id: visuraDocument.id,
+          practice_id: practice.id,
+          nome_file: visuraFile.nome,
+          storage_path: visuraFile.path,
+          mime_type: visuraFile.mime_type ?? 'application/pdf',
+          dimensione: visuraFile.dimensione ?? null,
+          uploaded_by: 'cliente',
+        });
+        if (fileError) throw fileError;
+
+        // Gli eventuali allegati già ricevuti vengono conservati come
+        // documenti liberi già caricati, senza trasformarli in richieste.
+        const extraFiles = receivedFiles.filter(file => file !== visuraFile);
+        if (extraFiles.length > 0) {
+          const { data: extraDocs, error: extraDocsError } = await supabase
+            .from('practice_documents')
+            .insert(extraFiles.map(file => ({
+              practice_id: practice.id,
+              nome: file.nome,
+              descrizione: 'Documento ricevuto con la richiesta pubblica.',
+              tipo: 'integrazione',
+              obbligatorio: false,
+              status: 'caricato',
+              uploaded_at: new Date().toISOString(),
+            })))
+            .select('id,nome');
+          if (extraDocsError) throw extraDocsError;
+          const extraFileRows = extraFiles.map((file, index) => ({
+            practice_document_id: extraDocs?.[index]?.id ?? null,
+            practice_id: practice.id,
+            nome_file: file.nome,
+            storage_path: file.path,
+            mime_type: file.mime_type ?? null,
+            dimensione: file.dimensione ?? null,
+            uploaded_by: 'cliente',
+          }));
+          const { error: extraFilesError } = await supabase.from('uploaded_files').insert(extraFileRows);
+          if (extraFilesError) throw extraFilesError;
+        }
+      }
+
+      await supabase.from('practice_status_log').insert({
+        practice_id: practice.id,
+        new_status: 'raccolta_documenti',
+        note: 'Valutazione autonoma avviata dalla richiesta pubblica.',
+        created_by: user?.id ?? null,
+      });
+
+      const accessCode = `CF${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      const expiry = new Date();
+      expiry.setDate(expiry.getDate() + 30);
+      const { data: access, error: accessError } = await supabase
+        .from('practice_access_codes')
+        .insert({
+          practice_id: practice.id,
+          codice: accessCode,
+          email_cliente: email,
+          scadenza: expiry.toISOString(),
+        })
+        .select('id,codice')
+        .single();
+      if (accessError) throw accessError;
+
+      const pendingDocuments = (practiceDocuments ?? [])
+        .filter(document => document.id !== visuraDocument?.id)
+        .map(document => document.nome);
+      let agentEmail: string | null = null;
+      if (seg.agente_id) {
+        const { data: agent } = await supabase
+          .from('admin_profiles')
+          .select('email')
+          .eq('id', seg.agente_id)
+          .maybeSingle();
+        agentEmail = agent?.email ?? null;
+      }
+
+      const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
+        body: {
+          to: email,
+          consultant_name: consultantName,
+          documents: pendingDocuments,
+          questions: [],
+          link: buildAppUrl(`/accesso?p=${practice.id}`),
+          code: access?.codice ?? accessCode,
+          practice_number: practice.numero_pratica,
+          company_name: seg.ragione_sociale,
+          subject_override: `Valutazione di bancabilità avviata — ${seg.ragione_sociale}`,
+          cc: agentEmail,
+          reply_to: agentEmail,
+        },
+      });
+      if (emailError || emailData?.success === false) {
+        const message = emailData?.error
+          ? JSON.stringify(emailData.error)
+          : emailError?.message ?? 'email non inviata';
+        toast.warning(`Pratica ${practice.numero_pratica} creata, ma l'email non è stata inviata: ${message}`);
+      } else {
+        toast.success(`Valutazione avviata: ${practice.numero_pratica}. Link inviato a ${email}.`);
+      }
+
+      const { error: requestUpdateError } = await supabase
+        .from('segnalazioni_pubbliche')
+        .update({
+          practice_id: practice.id,
+          stato: 'lavorazione',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', seg.id);
+      if (requestUpdateError) throw requestUpdateError;
+
+      setSegnalazioni(prev => prev.map(item => item.id === seg.id
+        ? { ...item, practice_id: practice.id, numero_pratica: practice.numero_pratica, stato: 'lavorazione' }
+        : item
+      ));
+      navigate(`/admin/pratiche/${practice.id}`);
+    } catch (error) {
+      if (createdClientId) {
+        await supabase.from('clients').delete().eq('id', createdClientId);
+      }
+      toast.error(`Impossibile avviare la valutazione: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setStartingEvaluation(null);
+    }
   };
 
   // Elimina segnalazione (solo super admin)
@@ -406,6 +678,20 @@ export default function SegnalazioniRicevutePage() {
                     </div>
                     {/* Cambio stato rapido */}
                     <div className="flex items-center gap-1 shrink-0">
+                      {seg.tipo_richiesta === 'report_autonomo' && !seg.practice_id && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 border-teal-300 text-xs text-teal-700 hover:bg-teal-50"
+                          onClick={() => avviaValutazione(seg)}
+                          disabled={startingEvaluation === seg.id}
+                        >
+                          {startingEvaluation === seg.id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Link2 className="h-3.5 w-3.5" />}
+                          {startingEvaluation === seg.id ? 'Avvio…' : 'Avvia valutazione'}
+                        </Button>
+                      )}
                       {seg.stato !== 'lavorazione' && seg.stato !== 'chiusa' && (
                         <button onClick={() => cambiaStato(seg.id, 'lavorazione')} className="text-xs px-2 py-1 rounded border border-purple-200 text-purple-700 hover:bg-purple-50 transition-colors">
                           In lavorazione
