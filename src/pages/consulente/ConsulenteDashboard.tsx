@@ -39,7 +39,7 @@ function isolaSezione(text: string, start: RegExp, end: RegExp): string {
 }
 
 function cleanup(s: string): string {
-  return s.trim().replace(/\s{2,}/g, ' ').replace(/[,|\/\\]+$/, '').trim();
+  return s.trim().replace(/\s{2,}/g, ' ').replace(/[,|/\\]+$/, '').trim();
 }
 
 // ── Parser visura camerale (estratto da ClientiPage) ───────────────────────
@@ -79,13 +79,13 @@ function parseVisura(text: string): VisuraData {
   })();
 
   const piva = get([
-    /Partita\s*IVA\s*[:\-]?\s*(\d{11})/i,
-    /P\.?\s*IVA\s*[:\-]?\s*(\d{11})/i,
+    /Partita\s*IVA\s*[:-]?\s*(\d{11})/i,
+    /P\.?\s*IVA\s*[:-]?\s*(\d{11})/i,
   ]) ?? flat.match(/\b(\d{11})\b/)?.[1];
 
   const codice_fiscale_raw = get([
-    /Codice\s+[Ff]iscale\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
-    /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i,
+    /Codice\s+[Ff]iscale\s*[:-]?\s*([A-Z0-9]{11,16})/i,
+    /C\.?\s*F\.?\s*[:-]?\s*([A-Z0-9]{11,16})/i,
   ]);
   const codice_fiscale = codice_fiscale_raw === piva ? undefined : codice_fiscale_raw;
 
@@ -94,32 +94,32 @@ function parseVisura(text: string): VisuraData {
     const m = flat.match(new RegExp(String.raw`Sede\s+legale\s*[:\-]?\s*(.{5,})` + ADDR_B, 'i'));
     if (m?.[1]?.trim()) return cleanup(m[1]);
     return get([
-      /Sede\s+legale\s*[:\-]?\s*([^\:]{5,120})/i,
-      /Indirizzo\s*[:\-]?\s*([^\:]{5,120})/i,
+      /Sede\s+legale\s*[:-]?\s*([^:]{5,120})/i,
+      /Indirizzo\s*[:-]?\s*([^:]{5,120})/i,
     ]);
   })();
 
   const atecoMatch = flat.match(
-    /(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:\-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)/i
+    /(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)/i
   ) ?? flat.match(/\bATECO\b[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)/i);
   const codice_ateco = atecoMatch?.[1];
 
-  const email = flat.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/)?.[1];
+  const email = flat.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)?.[1];
 
   const telMatch = flat.match(
-    /\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s\-]?\d{5,10}|3\d{2}[\s\-]?\d{6,7}))\b/
+    /\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s-]?\d{5,10}|3\d{2}[\s-]?\d{6,7}))\b/
   );
   const telefono = telMatch?.[1]?.replace(/\s+/g, ' ').trim();
 
   const data_costituzione = get([
-    /Data\s+atto\s+di\s+costituzione\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i,
-    /Data\s+cost(?:ituzione)?\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i,
+    /Data\s+atto\s+di\s+costituzione\s*[:-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/i,
+    /Data\s+cost(?:ituzione)?\s*[:-]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/i,
   ]);
 
   const capitale_versato = get([
-    /[Cc]apitale\s+sociale\s+in\s+[Ee]uro\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
-    /[Cc]apitale\s+(?:sociale\s+)?(?:interamente\s+)?versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
-    /[Cc]apitale\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /[Cc]apitale\s+sociale\s+in\s+[Ee]uro\s+versato\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /[Cc]apitale\s+(?:sociale\s+)?(?:interamente\s+)?versato\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i,
+    /[Cc]apitale\s+versato\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i,
   ]);
 
   return { ragione_sociale, piva, codice_fiscale, indirizzo, email, telefono, codice_ateco, data_costituzione, capitale_versato };

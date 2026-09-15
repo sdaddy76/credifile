@@ -203,7 +203,7 @@ export function buildKpiBenchmarkComparison(
   const benchmark = sectorBenchmarks?.[benchmarkKey] ?? null;
   const value = kpi.valore;
   const delta = value !== null && benchmark !== null ? value - benchmark : null;
-  const deltaPercent = delta !== null && benchmark !== 0
+  const deltaPercent = delta !== null && benchmark !== null && benchmark !== 0
     ? (delta / Math.abs(benchmark)) * 100
     : null;
   const valueFormatted = value === null

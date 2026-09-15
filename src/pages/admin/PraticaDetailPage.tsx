@@ -28,7 +28,7 @@ import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
   PlusCircle, Save, BellRing, Loader2, Send, MessageSquare, Calendar, FileDown, ClipboardCopy, Layout,
-  CheckSquare, StickyNote, Pin, ListChecks, Phone, Pencil
+  CheckSquare, StickyNote, Pin, ListChecks, Phone, Pencil, Landmark
 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as pdfjs from 'pdfjs-dist';
@@ -2863,6 +2863,9 @@ export default function PraticaDetailPage() {
                             };
                           })
                         : [];
+                      const integrationCycle = doc.integration_request_id
+                        ? integrationCycleById.get(doc.integration_request_id)
+                        : undefined;
                       return (
                         <Card key={doc.id} className="border-border">
                           <CardContent className="py-3 px-4">
@@ -2876,14 +2879,14 @@ export default function PraticaDetailPage() {
                                       ? 'Risposta'
                                       : DOC_STATUS_LABELS[doc.status]}
                                   </Badge>
-                                  {doc.integration_request_id && integrationCycleById.get(doc.integration_request_id) && (
+                                  {integrationCycle && (
                                     <Badge variant="outline" className="text-xs border-amber-200 text-amber-700">
                                       Richiesta durante {STATUS_LABELS[
-                                        integrationCycleById.get(doc.integration_request_id)!.origin_status as PracticeStatus
-                                      ] ?? integrationCycleById.get(doc.integration_request_id)!.origin_status}
-                                      {integrationCycleById.get(doc.integration_request_id)!.practice_bank_id
+                                        integrationCycle.origin_status as PracticeStatus
+                                      ] ?? integrationCycle.origin_status}
+                                      {integrationCycle.practice_bank_id
                                         ? ` · ${practiceBanks.find(candidate => (
-                                            candidate.id === integrationCycleById.get(doc.integration_request_id)!.practice_bank_id
+                                            candidate.id === integrationCycle.practice_bank_id
                                           ))?.banks?.nome ?? 'Banca'}`
                                         : ''}
                                     </Badge>

@@ -469,7 +469,7 @@ export default function NuovoReportWizard() {
       } else {
         setBenchmarkData({
           settore_label: fallbackBenchmark.label,
-          kpi_data: fallbackBenchmark.kpi,
+          kpi_data: { ...fallbackBenchmark.kpi } as Record<string, number | null>,
           aggiornato_il: SECTOR_BENCHMARK_UPDATED_AT,
           commento_settore: null,
         });
@@ -477,7 +477,7 @@ export default function NuovoReportWizard() {
     } catch {
       setBenchmarkData({
         settore_label: fallbackBenchmark.label,
-        kpi_data: fallbackBenchmark.kpi,
+        kpi_data: { ...fallbackBenchmark.kpi } as Record<string, number | null>,
         aggiornato_il: SECTOR_BENCHMARK_UPDATED_AT,
         commento_settore: null,
       });

@@ -170,7 +170,7 @@ function righeToTransazioni(
 
     // Importo e tipo
     let importoAbs = 0;
-    let tipo: 'entrata' | 'uscita';
+    let tipo: 'entrata' | 'uscita' = 'entrata';
 
     if (col.dare !== undefined && col.avere !== undefined) {
       const dare = Math.abs(parseNum(row[col.dare] ?? ''));

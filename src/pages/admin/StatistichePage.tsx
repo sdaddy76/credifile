@@ -464,7 +464,7 @@ export default function StatistichePage() {
               <text x={60} y={72} textAnchor="middle" fontSize={9} fill="#9ca3af">approvate</text>
             </svg>
             <div className="text-center text-xs text-muted-foreground">
-              <p><span className="font-semibold text-emerald-600">{approvate}</span> approvate su <span className="font-semibold">{totalePassaggioBase}</span> pratiche avanzate</p>
+              <p><span className="font-semibold text-emerald-600">{deliberate}</span> approvate su <span className="font-semibold">{totalePassaggioBase}</span> pratiche avanzate</p>
             </div>
           </CardContent>
         </Card>
