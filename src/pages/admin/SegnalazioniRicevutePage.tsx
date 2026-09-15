@@ -39,7 +39,8 @@ interface Segnalazione {
 interface Agente {
   id: string;
   nome: string;
-  nome_cognome: string;
+  nome_cognome?: string | null;
+  email?: string | null;
   ruolo: string;
 }
 
@@ -85,9 +86,9 @@ export default function SegnalazioniRicevutePage() {
   const loadAgenti = async () => {
     const { data } = await supabase
       .from('admin_profiles')
-      .select('id, nome, nome_cognome, ruolo')
-      .in('ruolo', ['agente', 'super_admin'])
-      .order('nome_cognome');
+      .select('id, nome, nome_cognome, email, ruolo')
+      .eq('ruolo', 'agente')
+      .order('nome');
     setAgenti((data ?? []) as Agente[]);
   };
 
@@ -344,7 +345,7 @@ export default function SegnalazioniRicevutePage() {
                         </Badge>
                         {seg.agente && (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
-                            <User className="w-3 h-3" /> {seg.agente.nome_cognome}
+                            <User className="w-3 h-3" /> {seg.agente.nome_cognome || seg.agente.nome || 'Agente'}
                           </span>
                         )}
                       </div>
@@ -438,7 +439,8 @@ export default function SegnalazioniRicevutePage() {
                           <SelectContent>
                             {agenti.map(a => (
                               <SelectItem key={a.id} value={a.id} className="text-xs">
-                                {a.nome_cognome} ({a.ruolo})
+                                {a.nome_cognome || a.nome || a.email || 'Agente senza nome'}
+                                {a.email && a.email !== (a.nome_cognome || a.nome) ? ` · ${a.email}` : ''}
                               </SelectItem>
                             ))}
                           </SelectContent>
