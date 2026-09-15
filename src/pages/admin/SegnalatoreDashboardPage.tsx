@@ -250,7 +250,7 @@ export default function SegnalatoreDashboardPage() {
               },
               {
                 label: 'Approvate',
-                value: approvate,
+                value: concluse,
                 icon: CheckCircle2,
                 cls: 'text-emerald-600 bg-emerald-50',
               },

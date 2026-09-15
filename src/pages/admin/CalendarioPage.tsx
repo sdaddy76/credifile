@@ -51,7 +51,7 @@ function eventTitle(action: string, metadata?: Record<string, unknown>): string 
   };
   if (labels[action]) return labels[action];
   const bank = typeof metadata?.banca === 'string' ? ` · ${metadata.banca}` : '';
-  return `${action.replaceAll('_', ' ')}${bank}`;
+  return `${action.replace(/_/g, ' ')}${bank}`;
 }
 
 function eventIcon(tipo: CalEvent['tipo'], scaduto?: boolean) {
@@ -150,7 +150,7 @@ export default function CalendarioPage() {
         },
       ]));
 
-      const applyPracticeFilter = <T extends { in: (column: string, values: string[]) => T }>(query: T): T => (
+      const applyPracticeFilter = (query: any) => (
         allowedIds === null
           ? query
           : query.in('practice_id', allowedIds.length > 0 ? allowedIds : ['00000000-0000-0000-0000-000000000000'])

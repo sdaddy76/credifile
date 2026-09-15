@@ -275,7 +275,10 @@ export default function SegnalazionePublicaPage() {
         throw new Error(typeof json.error === 'string' ? json.error : 'Errore invio');
       }
       if (json.already_in_progress && json.existing_practice) {
-        setPraticaEsistente(json.existing_practice);
+        const existing = json.existing_practice as { numero_pratica?: unknown; status?: unknown };
+        if (typeof existing.numero_pratica === 'string' && typeof existing.status === 'string') {
+          setPraticaEsistente({ numero_pratica: existing.numero_pratica, status: existing.status });
+        }
       }
       setInviata(true);
 

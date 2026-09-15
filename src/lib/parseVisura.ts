@@ -39,12 +39,12 @@ export interface QualitaImportazione {
 const CF_PF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/g;
 
 function cleanup(s: string): string {
-  return s.trim().replace(/\s{2,}/g, ' ').replace(/[,|\/\\]+$/, '').trim();
+  return s.trim().replace(/\s{2,}/g, ' ').replace(/[,|/\\]+$/, '').trim();
 }
 
 function parseItalianNumber(value?: string): number | undefined {
   if (!value) return undefined;
-  const normalized = value.replace(/\./g, '').replace(',', '.').replace(/[^\d.\-]/g, '');
+  const normalized = value.replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '');
   const n = Number(normalized);
   return Number.isFinite(n) ? n : undefined;
 }
@@ -90,7 +90,7 @@ export function parseDataCostituzione(text: string): string | undefined {
     const m = flat.match(re);
     if (m?.[1]) return cleanup(m[1]);
   }
-  const anno = flat.match(/anno\s+di\s+costituzione\s*[:\-]?\s*(\d{4})/i)?.[1];
+  const anno = flat.match(/anno\s+di\s+costituzione\s*[:-]?\s*(\d{4})/i)?.[1];
   return anno ? `01/01/${anno}` : undefined;
 }
 
@@ -104,7 +104,7 @@ export function parseSoci(raw: string): SocioResult[] {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n')
     .trim();
-  const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*(?:Amministrat|Organ|Organi)|organi\s+sociali|organi\s+amministrativi|rappresentanza|persone\s+che\s+esercitano|cariche\s+sociali)/i;
+  const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s.)]\s*(?:Amministrat|Organ|Organi)|organi\s+sociali|organi\s+amministrativi|rappresentanza|persone\s+che\s+esercitano|cariche\s+sociali)/i;
   const sectionStarts = [
     /(?:^|\n)\s*(?:sezione\s+)?(?:IV|4)[\s.\-)]*soci\s+e\s+titolari/gi,
     /(?:^|\n)\s*elenco\s+dei\s+soci\s+e\s+degli\s+altri\s+titolari/gi,
@@ -145,7 +145,7 @@ export function parseSoci(raw: string): SocioResult[] {
       /titolari\s+(?:di\s+)?(?:quote|diritti)/i,
     ], END_S5)
     || isolaSezione(normalized, [
-      /(?:sezione\s+(?:IV|4)\b|\b4[\s\.\)]\s*Soci|quote\s+sociali|partecipazioni\s+sociali)/i,
+      /(?:sezione\s+(?:IV|4)\b|\b4[\s.)]\s*Soci|quote\s+sociali|partecipazioni\s+sociali)/i,
     ], END_S5)
     || normalized;
 
@@ -248,9 +248,9 @@ export function parseSoci(raw: string): SocioResult[] {
     const idPos = source.indexOf(id);
     const before = idPos >= 0 ? source.slice(0, idPos) : source;
     const after = idPos >= 0 ? source.slice(idPos + id.length) : '';
-    const labeledName = context.match(/(?:socio|titolare|quotista|partecipante)\s*[:\-]?\s*([^|;]+)/i)?.[1] ?? '';
+    const labeledName = context.match(/(?:socio|titolare|quotista|partecipante)\s*[:-]?\s*([^|;]+)/i)?.[1] ?? '';
     const nome = nameFrom(before) || nameFrom(labeledName) || nameFrom(after);
-    const valueMatch = source.match(/(?:valore|quota|capitale|importo|€|eur)\s*[:\-]?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)
+    const valueMatch = source.match(/(?:valore|quota|capitale|importo|€|eur)\s*[:-]?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)
       ?? source.match(VALUE_RE)
       ?? context.match(VALUE_RE);
     const pctMatch = source.match(PCT_RE) ?? context.match(PCT_RE);
@@ -272,7 +272,7 @@ export function parseSoci(raw: string): SocioResult[] {
   // Fallback per testi ancora appiattiti: copre il formato più comune
   // "NOME COGNOME CF VALORE PERCENTUALE" senza reintrodurre gli amministratori.
   const flat = s4.replace(/\n/g, ' ');
-  const direct = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}){1,4})\s+(?:C(?:odice)?\s*F(?:iscale)?\s*[:\-]?\s*)?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gi;
+  const direct = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}){1,4})\s+(?:C(?:odice)?\s*F(?:iscale)?\s*[:-]?\s*)?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gi;
   for (const match of flat.matchAll(direct)) {
     const after = flat.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 180);
     const pct = after.match(PCT_RE)?.[1] ?? '';
@@ -304,7 +304,7 @@ function isPersonName(s: string): boolean {
   for (const w of words) {
     if (w.length < 2 || w.length > 25) return false;
     if (LEGAL_WORDS_AMM.has(w.toUpperCase())) return false;
-    if (!/^[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙa-zàèéìòùA-Z\'\-]*$/i.test(w)) return false;
+    if (!/^[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙa-zàèéìòùA-Z'-]*$/i.test(w)) return false;
   }
   return true;
 }
@@ -313,8 +313,8 @@ const CARICA_PATTERN = String.raw`(Amministratore\s+(?:Unico|[Dd]elegato)|AMM(?:
 
 export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set()): AmministratoreResult[] {
   const s5 = isolaSezione(raw,
-    [/(?:sezione\s+(?:V|5)\b|\b5[\s\.\)]\s*Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i],
-    /(?:sezione\s+(?:VI|6)\b|\b6[\s\.\)]\s*Sindac|$)/i,
+    [/(?:sezione\s+(?:V|5)\b|\b5[\s.)]\s*Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i],
+    /(?:sezione\s+(?:VI|6)\b|\b6[\s.)]\s*Sindac|$)/i,
   ) || raw;
 
   const results: AmministratoreResult[] = [];
@@ -335,7 +335,7 @@ export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set
     seenCFs.add(cf);
     const carica = caricaMatch[1].trim();
     const beforeCF = s5.substring(Math.max(0, cfm.index - 250), cfm.index);
-    const nameRe = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\'\-]{1,24}){1,3})\b/g;
+    const nameRe = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'-]{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'-]{1,24}){1,3})\b/g;
     const nameMatches = Array.from(beforeCF.matchAll(nameRe));
     let nome = '';
     for (let k = nameMatches.length - 1; k >= 0; k--) {
@@ -345,7 +345,7 @@ export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set
 
     if (!isPersonName(nome)) {
       const afterCF = s5.substring(cfm.index + cf.length, cfm.index + cf.length + 250);
-      nome = afterCF.match(/^\s*[,\-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{4,50}?)(?=\s+(?:nato|nata|\d{2}[\/\-]|\bdi\b|Rap|Carica|Cod))/i)?.[1]?.trim() ?? '';
+      nome = afterCF.match(/^\s*[,-]?\s*([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s'-]{4,50}?)(?=\s+(?:nato|nata|\d{2}[/-]|\bdi\b|Rap|Carica|Cod))/i)?.[1]?.trim() ?? '';
     }
 
     nome = nome.replace(/\b(?:CODICE|FISCALE|NATO|NATA|DEL|DELLA|CARICA|RAPPRESENTANTE|UNICO|DELEGATO|CF)\b/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -366,9 +366,9 @@ export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set
       if (cf && seenCFs.has(cf)) continue;
       if (cf) seenCFs.add(cf);
 
-      let rawNome = after.slice(0, 300).match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s\'\-]{1,50}?)(?=\s+(?:[A-Z]{6}\d{2}|Nato\s+[aA]|Codice|domicilio|\d{1,2}[\/\-]\d{1,2}))/)?.[1]?.trim() ?? '';
+      let rawNome = after.slice(0, 300).match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\s'-]{1,50}?)(?=\s+(?:[A-Z]{6}\d{2}|Nato\s+[aA]|Codice|domicilio|\d{1,2}[/-]\d{1,2}))/)?.[1]?.trim() ?? '';
       if (!isPersonName(rawNome)) {
-        rawNome = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,20}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,20}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ\']{1,20})?)\s*$/)?.[1]?.trim() ?? '';
+        rawNome = before.match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ']{1,20}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ']{1,20}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ']{1,20})?)\s*$/)?.[1]?.trim() ?? '';
       }
       if (!isPersonName(rawNome)) continue;
       const nome = rawNome.replace(/\b(?:CODICE|FISCALE|NATO|NATA|DEL|DELLA|CARICA|RAPPRESENTANTE|UNICO|DELEGATO)\b/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -401,28 +401,28 @@ export function parseVisuraCompleta(text: string): VisuraResult {
     return undefined;
   })();
 
-  const piva = get([/Partita\s*IVA\s*[:\-]?\s*(\d{11})/i, /P\.?\s*IVA\s*[:\-]?\s*(\d{11})/i]) ?? flat.match(/\b(\d{11})\b/)?.[1];
-  const codice_fiscale_raw = get([/Codice\s+[Ff]iscale\s*[:\-]?\s*([A-Z0-9]{11,16})/i, /C\.?\s*F\.?\s*[:\-]?\s*([A-Z0-9]{11,16})/i, /\bCF\b\s*[:\-]?\s*([A-Z0-9]{11,16})/i]);
+  const piva = get([/Partita\s*IVA\s*[:-]?\s*(\d{11})/i, /P\.?\s*IVA\s*[:-]?\s*(\d{11})/i]) ?? flat.match(/\b(\d{11})\b/)?.[1];
+  const codice_fiscale_raw = get([/Codice\s+[Ff]iscale\s*[:-]?\s*([A-Z0-9]{11,16})/i, /C\.?\s*F\.?\s*[:-]?\s*([A-Z0-9]{11,16})/i, /\bCF\b\s*[:-]?\s*([A-Z0-9]{11,16})/i]);
   const codice_fiscale = codice_fiscale_raw && codice_fiscale_raw !== piva ? codice_fiscale_raw : piva;
 
-  const forma_giuridica = get([/Forma\s+giuridica\s*[:\-]?\s*([^:]{3,80}?)(?=\s+(?:Capitale|Sede|Data|Codice|Partita|Registro|REA|Attivit))/i, /Natura\s+giuridica\s*[:\-]?\s*([^:]{3,80}?)(?=\s+(?:Capitale|Sede|Data|Codice|Partita|Registro|REA|Attivit))/i]);
+  const forma_giuridica = get([/Forma\s+giuridica\s*[:-]?\s*([^:]{3,80}?)(?=\s+(?:Capitale|Sede|Data|Codice|Partita|Registro|REA|Attivit))/i, /Natura\s+giuridica\s*[:-]?\s*([^:]{3,80}?)(?=\s+(?:Capitale|Sede|Data|Codice|Partita|Registro|REA|Attivit))/i]);
   const ADDR_B = String.raw`(?=\s+(?:Partita\s+IVA|P\.?\s*IVA|Codice\s+[Ff]iscale|Pec\b|PEC\b|REA\s|Registro|Telefono|Tel\b|Email|Attivit|Stato\s+dell))`;
   const indirizzo = (() => {
     const m = flat.match(new RegExp(String.raw`Sede\s+legale\s*[:\-]?\s*(.{5,})` + ADDR_B, 'i'));
     if (m?.[1]?.trim()) return cleanup(m[1]);
-    return get([/Sede\s+legale\s*[:\-]?\s*([^\:]{5,120})/i, /Indirizzo\s*[:\-]?\s*([^\:]{5,120})/i]);
+    return get([/Sede\s+legale\s*[:-]?\s*([^:]{5,120})/i, /Indirizzo\s*[:-]?\s*([^:]{5,120})/i]);
   })();
 
-  const atecoMatch = flat.match(/(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:\-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i) ?? flat.match(/\bATECO\b[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i);
+  const atecoMatch = flat.match(/(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i) ?? flat.match(/\bATECO\b[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i);
   const codice_ateco = atecoMatch?.[1];
   const ateco_descrizione = atecoMatch?.[2] ? cleanup(atecoMatch[2]) : undefined;
-  const email = flat.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/)?.[1];
-  const telMatch = flat.match(/\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s\-]?\d{5,10}|3\d{2}[\s\-]?\d{6,7}))\b/);
+  const email = flat.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)?.[1];
+  const telMatch = flat.match(/\b((?:\+39\s?|0039\s?)?(?:0\d{1,4}[\s-]?\d{5,10}|3\d{2}[\s-]?\d{6,7}))\b/);
   const telefonoRaw = telMatch?.[1]?.replace(/\s+/g, ' ').trim();
-  const telefono = (telefonoRaw && piva && telefonoRaw.replace(/[\s\-]/g, '') === piva) ? undefined : telefonoRaw;
+  const telefono = (telefonoRaw && piva && telefonoRaw.replace(/[\s-]/g, '') === piva) ? undefined : telefonoRaw;
   const data_costituzione = parseDataCostituzione(flat);
-  const capitale_versato = get([/[Cc]apitale\s+sociale\s+in\s+[Ee]uro\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i, /[Cc]apitale\s+(?:sociale\s+)?(?:interamente\s+)?versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i, /[Cc]apitale\s+versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i, /versato\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i]);
-  const capitaleSocialeRaw = get([/[Cc]apitale\s+sociale\s*[:\-]?\s*(?:€\s*)?([\d.,]+)/i]);
+  const capitale_versato = get([/[Cc]apitale\s+sociale\s+in\s+[Ee]uro\s+versato\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i, /[Cc]apitale\s+(?:sociale\s+)?(?:interamente\s+)?versato\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i, /[Cc]apitale\s+versato\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i, /versato\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i]);
+  const capitaleSocialeRaw = get([/[Cc]apitale\s+sociale\s*[:-]?\s*(?:€\s*)?([\d.,]+)/i]);
   // Il parser soci usa le righe per ricostruire correttamente le colonne del
   // PDF; non passare il testo appiattito, altrimenti due righe adiacenti
   // possono essere deduplicate come se fossero lo stesso socio.

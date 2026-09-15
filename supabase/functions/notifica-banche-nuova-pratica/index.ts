@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     const indirizzo = p.clients?.indirizzo ?? ''
     const cityMatch = indirizzo.match(/^([A-ZÀ-Ù][A-ZÀ-Ùa-zà-ù\s'-]+?)\s*\([A-Z]{2}\)/i)
     const city = cityMatch ? cityMatch[1].trim() : ''
-    const atecoMatch = indirizzo.match(/(?:ATECO|attivit[àa])[^\d]*(\d{2}[.\-]\d{2})/i)
+    const atecoMatch = indirizzo.match(/(?:ATECO|attivit[àa])[^\d]*(\d{2}[.-]\d{2})/i)
     const ateco = atecoMatch ? atecoMatch[1] : ''
 
     // 4. Banche con notifiche attive
