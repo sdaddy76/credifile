@@ -575,11 +575,13 @@ export default function PraticaDetailPage() {
 
   const sendWhatsApp = async (telefono: string) => {
     if (!telefono) { toast.error('Numero di telefono non disponibile'); return; }
-    const msg = prompt('Messaggio WhatsApp da inviare al cliente:', `Gentile cliente, la sua pratica n° ${practice.numero_pratica} è in stato: ${practice.status}. Per informazioni contatti il suo consulente.`);
+    const currentPractice = practice;
+    if (!currentPractice) { toast.error('Dati pratica non ancora disponibili'); return; }
+    const msg = prompt('Messaggio WhatsApp da inviare al cliente:', `Gentile cliente, la sua pratica n° ${currentPractice.numero_pratica} è in stato: ${currentPractice.status}. Per informazioni contatti il suo consulente.`);
     if (!msg) return;
     setSendingWA(true);
     try {
-      const res = await fetch('/api/send-whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: telefono, message: msg, practice_numero: practice.numero_pratica, cliente: client?.ragione_sociale }) });
+      const res = await fetch('/api/send-whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: telefono, message: msg, practice_numero: currentPractice.numero_pratica, cliente: client?.ragione_sociale }) });
       const data = await res.json();
       if (data.success) toast.success('WhatsApp inviato ✓');
       else toast.error('Errore WhatsApp: ' + (data.error ?? 'sconosciuto'));
