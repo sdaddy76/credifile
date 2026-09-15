@@ -31,6 +31,12 @@ export default class AppErrorBoundary extends Component<Props, State> {
   }
 
   handleRetry = () => {
+    if (/dynamically imported module|failed to fetch dynamically imported module|importing a module script failed/i.test(this.state.message ?? '')) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('_asset_refresh', Date.now().toString());
+      window.location.replace(url.toString());
+      return;
+    }
     this.setState({ hasError: false, message: undefined });
   };
 
