@@ -12,4 +12,15 @@ describe('dateTime Credifile', () => {
     expect(formatRomeDate('not-a-date')).toBe('—');
     expect(formatRomeDateTime(null)).toBe('—');
   });
+
+  it('gestisce componenti personalizzati senza combinazioni Intl non valide', () => {
+    expect(
+      formatRomeDateTime('2026-09-13T22:30:00.000Z', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    ).toMatch(/14.*set.*00:30/i);
+  });
 });

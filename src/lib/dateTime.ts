@@ -35,9 +35,25 @@ export function formatRomeDateTime(
 ): string {
   const date = toDate(value);
   if (!date) return '—';
+  // Intl.DateTimeFormat non consente di combinare dateStyle/timeStyle con
+  // componenti singoli (day, month, hour, ...). Le pagine chiamano spesso
+  // questo helper con componenti personalizzati, quindi applichiamo gli
+  // stili predefiniti solo quando non è stata fornita alcuna componente.
+  const componentOptions: Array<keyof Intl.DateTimeFormatOptions> = [
+    'weekday',
+    'era',
+    'year',
+    'month',
+    'day',
+    'dayPeriod',
+    'hour',
+    'minute',
+    'second',
+    'timeZoneName',
+  ];
+  const hasIndividualComponents = componentOptions.some(key => options[key] !== undefined);
   return new Intl.DateTimeFormat('it-IT', {
-    dateStyle: 'short',
-    timeStyle: 'short',
+    ...(hasIndividualComponents ? {} : { dateStyle: 'short', timeStyle: 'short' }),
     ...options,
     timeZone: APP_TIME_ZONE,
   }).format(date);
