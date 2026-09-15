@@ -263,6 +263,8 @@ export default function PraticaDetailPage() {
   }[]>([]);
   const [savingBankRequestId, setSavingBankRequestId] = useState<string | null>(null);
   const [updatingBankStatusId, setUpdatingBankStatusId] = useState<string | null>(null);
+  const [bankCollaboratorEmails, setBankCollaboratorEmails] = useState<Record<string, string>>({});
+  const [sendingBankCopyId, setSendingBankCopyId] = useState<string | null>(null);
   const [addingBank, setAddingBank] = useState('');
   const [addingBankRequirements, setAddingBankRequirements] = useState<BankDocumentRequirement[]>([]);
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
@@ -1710,6 +1712,36 @@ export default function PraticaDetailPage() {
       toast.error('Errore salvataggio dati banca: ' + (error?.message ?? error));
     } finally {
       setSavingBankRequestId(null);
+    }
+  };
+
+  const sendBankCollaboratorCopy = async (
+    practiceBank: (typeof practiceBanks)[number],
+  ) => {
+    if (!practice) return;
+    const email = (bankCollaboratorEmails[practiceBank.id] ?? '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast.error('Inserisci un indirizzo email valido per il collaboratore della banca.');
+      return;
+    }
+
+    setSendingBankCopyId(practiceBank.id);
+    try {
+      const { data, error } = await invokeSendToBank({
+        practice_id: practice.id,
+        bank_id: practiceBank.bank_id,
+        copy_to: email,
+        copy_only: true,
+      });
+      if (error || !data?.success) {
+        throw new Error(error?.message ?? String(data?.error ?? 'Errore invio copia'));
+      }
+      const docsSent = typeof data.docs_sent === 'number' ? data.docs_sent : 0;
+      toast.success(`Copia inviata a ${email}: ${docsSent} documenti della banca`);
+    } catch (error) {
+      toast.error(`Errore invio copia al collaboratore: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSendingBankCopyId(null);
     }
   };
 
@@ -3428,9 +3460,9 @@ export default function PraticaDetailPage() {
                                   }}
                                 />
                               </div>
-                              {(canEdit || canApprove) && (
-                                <Button
-                                  type="button"
+                            {(canEdit || canApprove) && (
+                              <Button
+                                type="button"
                                   size="sm"
                                   variant="outline"
                                   className="gap-1.5"
@@ -3445,9 +3477,49 @@ export default function PraticaDetailPage() {
                                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                     : <Save className="w-3.5 h-3.5" />}
                                   Salva dati banca
+                              </Button>
+                            )}
+                          </div>
+                            {(canEdit || canApprove) && (
+                              <div className="w-full grid gap-2 sm:grid-cols-[1fr_auto] items-end rounded-lg border border-emerald-100 bg-emerald-50/50 p-3">
+                                <div>
+                                  <Label className="text-xs text-emerald-900">
+                                    Email collaboratore della banca
+                                  </Label>
+                                  <Input
+                                    type="email"
+                                    inputMode="email"
+                                    placeholder="collaboratore@banca.it"
+                                    value={bankCollaboratorEmails[pb.id] ?? ''}
+                                    onChange={event => setBankCollaboratorEmails(prev => ({
+                                      ...prev,
+                                      [pb.id]: event.target.value,
+                                    }))}
+                                    onKeyDown={event => {
+                                      if (event.key === 'Enter') {
+                                        event.preventDefault();
+                                        void sendBankCollaboratorCopy(pb);
+                                      }
+                                    }}
+                                  />
+                                  <p className="mt-1 text-[11px] text-emerald-800">
+                                    Invia una copia dei soli documenti già associati a {pb.banks?.nome}.
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1.5 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                                  disabled={sendingBankCopyId === pb.id || !(bankCollaboratorEmails[pb.id] ?? '').trim()}
+                                  onClick={() => void sendBankCollaboratorCopy(pb)}
+                                >
+                                  {sendingBankCopyId === pb.id
+                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Invio...</>
+                                    : <><Mail className="w-3.5 h-3.5" /> Invia copia documenti</>}
                                 </Button>
-                              )}
-                            </div>
+                              </div>
+                            )}
                             <div className="flex gap-2 items-center">
                               {canApprove ? (
                                 <div className="flex items-center gap-2">

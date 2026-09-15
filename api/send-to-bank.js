@@ -455,7 +455,12 @@ export default async function handler(req, res) {
     }
 
     const bankEmail = pb.banks?.email_invio_banca || pb.banks?.email;
-    if (!bankEmail) return res.status(422).json({ success: false, error: 'Email banca non configurata' });
+    // Per una copia separata al collaboratore non è necessario che la
+    // casella principale della banca sia valorizzata: il destinatario è
+    // esclusivamente copy_to. L'invio ordinario continua invece a richiederla.
+    if (!bankEmail && !copyOnlyMode) {
+      return res.status(422).json({ success: false, error: 'Email banca non configurata' });
+    }
 
     // Destinatari CC e BCC (salvati come stringa separata da virgola)
     const configuredCcList = (pb.banks?.email_cc || '').split(',').map(e => e.trim()).filter(Boolean);

@@ -27,9 +27,30 @@ export async function invokeSendToBank(body: {
       },
       body: JSON.stringify(body),
     });
-    const json = await res.json();
+    const raw = await res.text();
+    let json: Record<string, unknown> = {};
+    try {
+      const parsed = raw ? JSON.parse(raw) : {};
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        json = parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {
+        data: null,
+        error: {
+          message: res.status >= 500
+            ? 'Il server non è riuscito a completare l’invio. Riprova tra qualche minuto.'
+            : `Risposta non valida del server (HTTP ${res.status}).`,
+        },
+      };
+    }
     if (!res.ok || !json.success) {
-      return { data: null, error: { message: json.error ?? 'Errore invio email' } };
+      return {
+        data: null,
+        error: {
+          message: typeof json.error === 'string' ? json.error : 'Errore invio email',
+        },
+      };
     }
     return { data: json, error: null };
   } catch (e) {
