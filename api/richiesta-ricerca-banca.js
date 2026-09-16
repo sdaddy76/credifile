@@ -8,7 +8,7 @@ const RESEND_KEY = process.env.RESEND_API_KEY;
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || 'stefano@daddino.com';
 const DISCLAIMER_VERSION = '2026-09-05-v1';
 
-const PAYMENT_DISCLAIMER = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. L’eventuale attività di mediazione creditizia sarà svolta esclusivamente previa stipula di un apposito contratto di mediazione, con compenso regolato secondo il modello success fee e subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
+const PAYMENT_DISCLAIMER = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. Qualora, a seguito dell’analisi, venga richiesta assistenza per l’ottenimento di un finanziamento, l’eventuale attività di mediazione creditizia costituirà un servizio ulteriore e separato, svolto esclusivamente previa stipula di un apposito contratto di mediazione. Il relativo compenso potrà essere regolato secondo il modello success fee e sarà subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
 
 function escapeHtml(value) {
   return String(value ?? '')

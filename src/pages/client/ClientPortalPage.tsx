@@ -106,7 +106,7 @@ const notifyAgentDocumentUpload = async ({
 const PRIVACY_CONSENT_VERSION = '2026-09-03-v1';
 const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell'informativa privacy relativa alla pratica e, in qualità di interessato e/o legale rappresentante della società, autorizzo il consulente o intermediario incaricato a raccogliere, trattare e trasmettere alle banche e agli intermediari finanziari coinvolti nella valutazione della pratica i documenti e le informazioni personali, societarie, economiche e finanziarie da me caricati, esclusivamente per l'istruttoria, la valutazione e l'eventuale perfezionamento della richiesta di finanziamento. Dichiaro inoltre di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti. Sono informato che l'autorizzazione può essere revocata per i trattamenti basati sul consenso, senza pregiudicare la liceità dei trattamenti già effettuati, contattando il consulente che gestisce la pratica.`;
 const PAYMENT_DISCLAIMER_VERSION = '2026-09-05-v1';
-const PAYMENT_DISCLAIMER_TEXT = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. L’eventuale attività di mediazione creditizia sarà svolta esclusivamente previa stipula di un apposito contratto di mediazione, con compenso regolato secondo il modello success fee e subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
+const PAYMENT_DISCLAIMER_TEXT = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. Qualora, a seguito dell’analisi, venga richiesta assistenza per l’ottenimento di un finanziamento, l’eventuale attività di mediazione creditizia costituirà un servizio ulteriore e separato, svolto esclusivamente previa stipula di un apposito contratto di mediazione. Il relativo compenso potrà essere regolato secondo il modello success fee e sarà subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
 
 const isFinancingRequestDocument = (doc: PracticeDocument) => {
   const normalizedName = doc.nome
@@ -1321,8 +1321,9 @@ export default function ClientPortalPage() {
                       disabled={!privacyConsentAcceptedAt || submittingBankSearch}
                     />
                     <span className="text-sm font-medium leading-relaxed">
-                      Ho letto e accetto il disclaimer del servizio a pagamento e prendo atto
-                      che l’eventuale mediazione sarà regolata da un contratto a success fee.
+                      Ho letto il disclaimer del servizio a pagamento e prendo atto che un’eventuale
+                      richiesta di finanziamento richiederà un separato contratto di mediazione,
+                      con eventuale compenso regolato dalle relative condizioni.
                     </span>
                   </label>
                   <Button

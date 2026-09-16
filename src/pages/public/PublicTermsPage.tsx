@@ -38,7 +38,7 @@ export default function PublicTermsPage() {
             <section>
               <h2 className="text-lg font-bold text-slate-950">Servizio a pagamento e mediazione</h2>
               <p className="mt-2">
-                Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. L’eventuale attività di mediazione creditizia viene avviata esclusivamente dopo la sottoscrizione della documentazione contrattuale prevista, che disciplina incarico, compensi e condizioni applicabili.
+                Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. Qualora, a seguito dell’analisi, venga richiesta assistenza per l’ottenimento di un finanziamento, l’eventuale attività di mediazione creditizia costituisce un servizio ulteriore e separato, avviato esclusivamente dopo la sottoscrizione di un apposito contratto di mediazione. L’eventuale compenso è disciplinato dalle condizioni contrattuali sottoscritte e può essere regolato secondo il modello success fee, subordinato al buon esito dell’operazione.
               </p>
             </section>
             <section>

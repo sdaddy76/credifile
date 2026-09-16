@@ -18,7 +18,7 @@ import { usePageMeta } from '@/lib/pageMeta';
 const PRIVACY_CONSENT_VERSION = '2026-09-05-v1';
 const PRIVACY_CONSENT_TEXT = `Dichiaro di aver preso visione dell’informativa privacy e, in qualità di interessato e/o legale rappresentante della società, autorizzo Credifile e il consulente o intermediario incaricato a raccogliere e trattare i dati e i documenti trasmessi con questa richiesta. Autorizzo inoltre la successiva trasmissione alle banche e agli intermediari finanziari coinvolti, esclusivamente per la valutazione della bancabilità, l’istruttoria e l’eventuale perfezionamento di una richiesta di finanziamento. Dichiaro di essere autorizzato a comunicare eventuali dati di terzi contenuti nei documenti.`;
 const PAYMENT_DISCLAIMER_VERSION = '2026-09-05-v1';
-const PAYMENT_DISCLAIMER_TEXT = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. L’eventuale attività di mediazione creditizia sarà svolta esclusivamente previa stipula di un apposito contratto di mediazione, con compenso regolato secondo il modello success fee e subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
+const PAYMENT_DISCLAIMER_TEXT = `Il servizio di analisi e ricerca di soluzioni finanziarie è a pagamento. Qualora, a seguito dell’analisi, venga richiesta assistenza per l’ottenimento di un finanziamento, l’eventuale attività di mediazione creditizia costituirà un servizio ulteriore e separato, svolto esclusivamente previa stipula di un apposito contratto di mediazione. Il relativo compenso potrà essere regolato secondo il modello success fee e sarà subordinato al buon esito dell’operazione, secondo le condizioni contrattuali sottoscritte.`;
 
 interface FileItem {
   id: string;
