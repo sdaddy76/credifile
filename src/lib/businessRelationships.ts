@@ -8,6 +8,7 @@ export type BusinessRelationshipRow = {
 
 export type BusinessRelationshipsResponse = {
   rows: BusinessRelationshipRow[];
+  business_relationship_kind?: BusinessRelationshipKind;
 };
 
 export const emptyBusinessRelationshipRow = (): BusinessRelationshipRow => ({
@@ -33,6 +34,21 @@ export const readBusinessRelationships = (
   return rows.length > 0 ? rows : [emptyBusinessRelationshipRow()];
 };
 
+export const getBusinessRelationshipKind = (
+  inputType?: string | null,
+  response?: Record<string, unknown> | null,
+): BusinessRelationshipKind | null => {
+  if (inputType === 'customers' || inputType === 'suppliers') return inputType;
+  if (
+    inputType === 'contacts'
+    && (response?.business_relationship_kind === 'customers'
+      || response?.business_relationship_kind === 'suppliers')
+  ) {
+    return response.business_relationship_kind;
+  }
+  return null;
+};
+
 export const hasBusinessRelationshipValue = (row: BusinessRelationshipRow): boolean =>
   Boolean(row.partita_iva.trim() || row.denominazione_sociale.trim() || row.percentuale.trim());
 
@@ -45,7 +61,9 @@ export const isBusinessRelationshipComplete = (row: BusinessRelationshipRow): bo
 
 export const buildBusinessRelationshipsResponse = (
   rows: BusinessRelationshipRow[],
+  kind?: BusinessRelationshipKind,
 ): BusinessRelationshipsResponse => ({
+  ...(kind ? { business_relationship_kind: kind } : {}),
   rows: rows
     .filter(hasBusinessRelationshipValue)
     .map(row => ({

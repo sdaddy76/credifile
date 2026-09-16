@@ -37,6 +37,7 @@ import {
 import {
   buildBusinessRelationshipsResponse,
   emptyBusinessRelationshipRow,
+  getBusinessRelationshipKind,
   hasBusinessRelationshipValue,
   isBusinessRelationshipComplete,
   readBusinessRelationships,
@@ -437,6 +438,10 @@ export default function ClientPortalPage() {
       return;
     }
 
+    const relationshipKind = getBusinessRelationshipKind(
+      document.input_type,
+      document.client_response,
+    );
     let response: Record<string, unknown>;
     if (document.input_type === 'text') {
       const text = String(document.client_response?.text ?? '').trim();
@@ -445,7 +450,7 @@ export default function ClientPortalPage() {
         return;
       }
       response = { text };
-    } else if (document.input_type === 'customers' || document.input_type === 'suppliers') {
+    } else if (relationshipKind) {
       const rows = readBusinessRelationships(document.client_response)
         .filter(hasBusinessRelationshipValue);
       if (rows.length === 0) {
@@ -456,7 +461,10 @@ export default function ClientPortalPage() {
         toast.error('Completa tutte le colonne e usa percentuali tra 0 e 100');
         return;
       }
-      response = buildBusinessRelationshipsResponse(rows) as unknown as Record<string, unknown>;
+      response = buildBusinessRelationshipsResponse(
+        rows,
+        relationshipKind,
+      ) as unknown as Record<string, unknown>;
     } else {
       const subjects = getContactSubjects(document.client_response).filter(subject => subject.roles.length > 0);
       if (subjects.length === 0) {
@@ -507,9 +515,9 @@ export default function ClientPortalPage() {
       toast.success(
         document.input_type === 'text'
           ? 'Relazione salvata'
-          : document.input_type === 'customers'
+          : relationshipKind === 'customers'
             ? 'Clienti principali salvati'
-            : document.input_type === 'suppliers'
+            : relationshipKind === 'suppliers'
               ? 'Fornitori principali salvati'
               : 'Contatti salvati'
       );
@@ -2011,8 +2019,12 @@ export default function ClientPortalPage() {
         {structuredRequirements.map(document => {
           const isSaved = document.status === 'caricato' || document.status === 'approvato';
           const isSaving = uploadingDoc === document.id;
-          if (document.input_type === 'customers' || document.input_type === 'suppliers') {
-            const kind: BusinessRelationshipKind = document.input_type;
+          const relationshipKind = getBusinessRelationshipKind(
+            document.input_type,
+            document.client_response,
+          );
+          if (relationshipKind) {
+            const kind: BusinessRelationshipKind = relationshipKind;
             const rows = readBusinessRelationships(document.client_response);
             const isCustomer = kind === 'customers';
             return (

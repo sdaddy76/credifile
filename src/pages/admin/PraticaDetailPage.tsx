@@ -82,10 +82,10 @@ import {
 import {
   buildBusinessRelationshipsResponse,
   emptyBusinessRelationshipRow,
+  getBusinessRelationshipKind,
   hasBusinessRelationshipValue,
   isBusinessRelationshipComplete,
   readBusinessRelationships,
-  type BusinessRelationshipKind,
   type BusinessRelationshipRow,
 } from '@/lib/businessRelationships';
 
@@ -1918,6 +1918,10 @@ export default function PraticaDetailPage() {
 
   const saveStructuredDocument = async (document: PracticeDocument) => {
     if (!id || !canEdit) return;
+    const relationshipKind = getBusinessRelationshipKind(
+      document.input_type,
+      document.client_response,
+    );
     let response: Record<string, unknown>;
     if (document.input_type === 'text') {
       const text = String(document.client_response?.text ?? '').trim();
@@ -1926,6 +1930,21 @@ export default function PraticaDetailPage() {
         return;
       }
       response = { text };
+    } else if (relationshipKind) {
+      const rows = readBusinessRelationships(document.client_response)
+        .filter(hasBusinessRelationshipValue);
+      if (rows.length === 0) {
+        toast.error('Inserisci almeno un cliente o fornitore');
+        return;
+      }
+      if (rows.some(row => !isBusinessRelationshipComplete(row))) {
+        toast.error('Completa tutte le colonne e usa percentuali tra 0 e 100');
+        return;
+      }
+      response = buildBusinessRelationshipsResponse(
+        rows,
+        relationshipKind,
+      ) as unknown as Record<string, unknown>;
     } else if (document.input_type === 'contacts') {
       const subjects = getStructuredSubjects(document.client_response).filter(subject => subject.roles.length > 0);
       if (subjects.length === 0) {
@@ -1937,18 +1956,6 @@ export default function PraticaDetailPage() {
         return;
       }
       response = buildStructuredContactsResponse(subjects) as unknown as Record<string, unknown>;
-    } else if (document.input_type === 'customers' || document.input_type === 'suppliers') {
-      const rows = readBusinessRelationships(document.client_response)
-        .filter(hasBusinessRelationshipValue);
-      if (rows.length === 0) {
-        toast.error('Inserisci almeno un cliente o fornitore');
-        return;
-      }
-      if (rows.some(row => !isBusinessRelationshipComplete(row))) {
-        toast.error('Completa tutte le colonne e usa percentuali tra 0 e 100');
-        return;
-      }
-      response = buildBusinessRelationshipsResponse(rows) as unknown as Record<string, unknown>;
     } else {
       return;
     }
@@ -1977,7 +1984,7 @@ export default function PraticaDetailPage() {
         metadata: {
           practice_document_id: document.id,
           campo: document.nome,
-          input_type: document.input_type,
+          input_type: relationshipKind ?? document.input_type,
         },
       });
       toast.success('Campo salvato nella pratica');
@@ -2024,11 +2031,33 @@ export default function PraticaDetailPage() {
   const handleAddDoc = async () => {
     if (!newDocName.trim()) { toast.error('Inserisci il nome del documento'); return; }
     setSaving(true);
-    const { error } = await supabase.from('practice_documents').insert({
+    const relationshipKind = newDocInputType === 'customers' || newDocInputType === 'suppliers'
+      ? newDocInputType
+      : null;
+    const payload = {
       practice_id: id, nome: newDocName, descrizione: newDocDesc, tipo: 'standard',
       input_type: newDocInputType,
       obbligatorio: true, status: 'richiesto',
-    });
+    };
+    let { error } = await supabase.from('practice_documents').insert(payload);
+    if (
+      error
+      && relationshipKind
+      && (
+        error.code === '23514'
+        || error.message.includes('practice_documents_input_type_check')
+      )
+    ) {
+      const fallbackPayload = {
+        ...payload,
+        input_type: 'contacts',
+        client_response: {
+          business_relationship_kind: relationshipKind,
+          rows: [emptyBusinessRelationshipRow()],
+        },
+      };
+      ({ error } = await supabase.from('practice_documents').insert(fallbackPayload));
+    }
     if (error) {
       toast.error('Errore aggiunta campo: ' + error.message);
       setSaving(false);
@@ -2901,7 +2930,12 @@ export default function PraticaDetailPage() {
                       const textResponse = inputType === 'text'
                         ? String(doc.client_response?.text ?? '').trim()
                         : '';
+                      const relationshipKind = getBusinessRelationshipKind(
+                        inputType,
+                        doc.client_response,
+                      );
                       const contactsResponse = inputType === 'contacts'
+                        && !relationshipKind
                         && doc.client_response
                         && typeof doc.client_response === 'object'
                         ? doc.client_response
@@ -2920,11 +2954,9 @@ export default function PraticaDetailPage() {
                           };
                           })
                         : [];
-                      const relationshipRows = inputType === 'customers' || inputType === 'suppliers'
+                      const relationshipRows = relationshipKind
                         ? readBusinessRelationships(doc.client_response)
                         : [];
-                      const relationshipKind: BusinessRelationshipKind | null =
-                        inputType === 'customers' || inputType === 'suppliers' ? inputType : null;
                       const integrationCycle = doc.integration_request_id
                         ? integrationCycleById.get(doc.integration_request_id)
                         : undefined;
