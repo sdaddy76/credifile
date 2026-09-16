@@ -990,8 +990,19 @@ export default function PraticaDetailPage() {
       if (docsError) throw docsError;
       if (questionsError) throw questionsError;
 
-      const docNames = (docs ?? []).map((document: { nome: string }) => document.nome);
-      const questionTexts = (questions ?? []).map((question: { domanda: string }) => question.domanda);
+      // Se esiste una richiesta di integrazione, l'email deve contenere
+      // esclusivamente gli elementi collegati a quel ciclo, non i documenti
+      // standard ancora mancanti della pratica.
+      const hasIntegrationItems = (docs ?? []).some(document => Boolean(document.integration_request_id))
+        || (questions ?? []).some(question => Boolean(question.integration_request_id));
+      const requestedDocs = hasIntegrationItems
+        ? (docs ?? []).filter(document => Boolean(document.integration_request_id))
+        : (docs ?? []);
+      const requestedQuestions = hasIntegrationItems
+        ? (questions ?? []).filter(question => Boolean(question.integration_request_id))
+        : (questions ?? []);
+      const docNames = requestedDocs.map((document: { nome: string }) => document.nome);
+      const questionTexts = requestedQuestions.map((question: { domanda: string }) => question.domanda);
       if (docNames.length === 0 && questionTexts.length === 0) {
         toast.info('Non ci sono documenti mancanti o domande senza risposta da inviare');
         return;
@@ -1021,7 +1032,7 @@ export default function PraticaDetailPage() {
       }
 
       const integrationRequestIds = Array.from(new Set(
-        [...(docs ?? []), ...(questions ?? [])]
+        [...requestedDocs, ...requestedQuestions]
           .map(item => item.integration_request_id as string | null)
           .filter((requestId): requestId is string => Boolean(requestId))
       ));
