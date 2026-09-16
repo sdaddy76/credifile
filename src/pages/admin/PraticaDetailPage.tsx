@@ -24,6 +24,7 @@ import RelazioneTab from '@/components/RelazioneTab';
 import { EstrattoConto } from '@/components/EstrattoConto';
 import AmlReportTab from '@/components/AmlReportTab';
 import DocumentCoherenceTab from '@/components/DocumentCoherenceTab';
+import PracticeTimelineCalendar from '@/components/PracticeTimelineCalendar';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
@@ -4493,67 +4494,35 @@ export default function PraticaDetailPage() {
 
             {/* ── Tab Timeline Attività ── */}
             <TabsContent value="timeline" className="mt-3">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold">Timeline Attività</h3>
-                <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={loadActivityLogs} disabled={loadingActivity}>
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">Timeline attività</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Vista mensile delle fasi e cronologia completa degli eventi.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-xs"
+                  onClick={() => void Promise.all([load(), loadActivityLogs()])}
+                  disabled={loadingActivity}
+                >
                   <RefreshCw className={`w-3 h-3 ${loadingActivity ? 'animate-spin' : ''}`} /> Aggiorna
                 </Button>
               </div>
 
-              {loadingActivity && (
+              {loadingActivity ? (
                 <div className="flex justify-center py-10">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                 </div>
-              )}
-
-              {!loadingActivity && activityLogs.length === 0 && (
-                <div className="text-center py-10 text-muted-foreground text-sm">
-                  <Clock className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  Nessuna attività registrata per questa pratica
-                </div>
-              )}
-
-              {!loadingActivity && activityLogs.length > 0 && (
-                <div className="space-y-0">
-                  {activityLogs.map((log, idx) => {
-                    // Icona per tipo azione
-                    const isStato = log.action.toLowerCase().includes('stato');
-                    const isDoc = log.action.toLowerCase().includes('document') || log.action.toLowerCase().includes('caric');
-                    const isNota = log.action.toLowerCase().includes('nota') || log.action.toLowerCase().includes('note');
-                    const isBanca = log.action.toLowerCase().includes('banca');
-                    const iconColor = isStato ? 'text-blue-600 bg-blue-100' : isDoc ? 'text-green-600 bg-green-100' : isNota ? 'text-purple-600 bg-purple-100' : isBanca ? 'text-amber-600 bg-amber-100' : 'text-muted-foreground bg-muted';
-                    const Icon = isStato ? RefreshCw : isDoc ? FileText : isNota ? MessageSquare : isBanca ? Building2 : Clock;
-
-                    return (
-                      <div key={log.id} className="flex gap-3 relative">
-                        {/* Linea verticale */}
-                        {idx < activityLogs.length - 1 && (
-                          <div className="absolute left-[18px] top-8 bottom-0 w-px bg-border" />
-                        )}
-                        {/* Icona */}
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 z-10 ${iconColor}`}>
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        {/* Contenuto */}
-                        <div className="flex-1 pb-4 min-w-0">
-                          <p className="text-sm font-medium text-foreground">{log.action}</p>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            {log.actor_nome && (
-                              <span className="text-xs text-muted-foreground">{log.actor_nome}</span>
-                            )}
-                            {log.actor_ruolo && (
-                              <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded-full text-muted-foreground capitalize">{log.actor_ruolo}</span>
-                            )}
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {formatRomeDateTime(log.created_at)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+              ) : (
+                <PracticeTimelineCalendar
+                  currentStatus={practice.status}
+                  practiceCreatedAt={practice.created_at}
+                  statusLogs={logs}
+                  activityLogs={activityLogs}
+                />
               )}
             </TabsContent>
 
