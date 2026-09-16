@@ -3109,7 +3109,7 @@ export default function PraticaDetailPage() {
                                     )}
                                   </div>
                                 )}
-                                {inputType === 'contacts' && (
+                                {inputType === 'contacts' && !relationshipKind && (
                                   <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 space-y-2">
                                     <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
                                       Contatti inseriti
