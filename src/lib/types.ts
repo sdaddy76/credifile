@@ -14,7 +14,7 @@ export type PracticeStatus =
 
 export type DocumentStatus = 'richiesto' | 'caricato' | 'approvato' | 'rifiutato';
 export type DocumentType = 'standard' | 'banca' | 'integrazione';
-export type RequirementInputType = 'upload' | 'text' | 'contacts';
+export type RequirementInputType = 'upload' | 'text' | 'contacts' | 'customers' | 'suppliers';
 
 export interface Socio {
   nome:           string;

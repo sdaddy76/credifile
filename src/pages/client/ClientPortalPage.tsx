@@ -34,6 +34,15 @@ import {
   type StructuredSubject as FinPromoterSubject,
   type StructuredSubjectType,
 } from '@/lib/structuredContacts';
+import {
+  buildBusinessRelationshipsResponse,
+  emptyBusinessRelationshipRow,
+  hasBusinessRelationshipValue,
+  isBusinessRelationshipComplete,
+  readBusinessRelationships,
+  type BusinessRelationshipKind,
+  type BusinessRelationshipRow,
+} from '@/lib/businessRelationships';
 
 interface ClientSession {
   practiceId: string;
@@ -291,6 +300,41 @@ export default function ClientPortalPage() {
     )));
   };
 
+  const updateBusinessRelationshipRow = (
+    documentId: string,
+    rowIndex: number,
+    field: keyof BusinessRelationshipRow,
+    value: string,
+  ) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const rows = readBusinessRelationships(document.client_response);
+      rows[rowIndex] = { ...rows[rowIndex], [field]: value };
+      if (rowIndex === rows.length - 1 && hasBusinessRelationshipValue(rows[rowIndex])) {
+        rows.push(emptyBusinessRelationshipRow());
+      }
+      return {
+        ...document,
+        client_response: { ...(document.client_response ?? {}), rows } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const removeBusinessRelationshipRow = (documentId: string, rowIndex: number) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== documentId) return document;
+      const rows = readBusinessRelationships(document.client_response)
+        .filter((_, index) => index !== rowIndex);
+      return {
+        ...document,
+        client_response: {
+          ...(document.client_response ?? {}),
+          rows: rows.length > 0 ? rows : [emptyBusinessRelationshipRow()],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
   const updateContactRequirement = (
     documentId: string,
     role: 'legal_representative' | 'administrator' | 'beneficial_owners',
@@ -401,6 +445,18 @@ export default function ClientPortalPage() {
         return;
       }
       response = { text };
+    } else if (document.input_type === 'customers' || document.input_type === 'suppliers') {
+      const rows = readBusinessRelationships(document.client_response)
+        .filter(hasBusinessRelationshipValue);
+      if (rows.length === 0) {
+        toast.error('Inserisci almeno un cliente o fornitore');
+        return;
+      }
+      if (rows.some(row => !isBusinessRelationshipComplete(row))) {
+        toast.error('Completa tutte le colonne e usa percentuali tra 0 e 100');
+        return;
+      }
+      response = buildBusinessRelationshipsResponse(rows) as unknown as Record<string, unknown>;
     } else {
       const subjects = getContactSubjects(document.client_response).filter(subject => subject.roles.length > 0);
       if (subjects.length === 0) {
@@ -448,7 +504,15 @@ export default function ClientPortalPage() {
         session,
         practiceDocumentId: document.id,
       });
-      toast.success(document.input_type === 'text' ? 'Relazione salvata' : 'Contatti salvati');
+      toast.success(
+        document.input_type === 'text'
+          ? 'Relazione salvata'
+          : document.input_type === 'customers'
+            ? 'Clienti principali salvati'
+            : document.input_type === 'suppliers'
+              ? 'Fornitori principali salvati'
+              : 'Contatti salvati'
+      );
     } catch (error) {
       toast.error('Errore salvataggio: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
@@ -1010,7 +1074,10 @@ export default function ClientPortalPage() {
     && (doc.input_type ?? 'upload') === 'upload'
   ));
   const structuredRequirements = documents.filter(doc =>
-    doc.input_type === 'text' || doc.input_type === 'contacts'
+    doc.input_type === 'text'
+    || doc.input_type === 'contacts'
+    || doc.input_type === 'customers'
+    || doc.input_type === 'suppliers'
   );
   const showFinancingSection = financingRequestDocs.length > 0;
   const financingRequestCompleted = showFinancingSection
@@ -1944,6 +2011,115 @@ export default function ClientPortalPage() {
         {structuredRequirements.map(document => {
           const isSaved = document.status === 'caricato' || document.status === 'approvato';
           const isSaving = uploadingDoc === document.id;
+          if (document.input_type === 'customers' || document.input_type === 'suppliers') {
+            const kind: BusinessRelationshipKind = document.input_type;
+            const rows = readBusinessRelationships(document.client_response);
+            const isCustomer = kind === 'customers';
+            return (
+              <Card key={document.id} className="border-emerald-200 bg-emerald-50/20">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-emerald-600" />
+                        {document.nome}
+                      </CardTitle>
+                      {document.descrizione && (
+                        <p className="text-xs text-muted-foreground mt-1">{document.descrizione}</p>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Inserisci una riga per ogni {isCustomer ? 'cliente' : 'fornitore'} significativo.
+                      </p>
+                    </div>
+                    <Badge className={isSaved
+                      ? 'bg-green-100 text-green-700 border-green-200 text-xs shrink-0'
+                      : 'bg-amber-100 text-amber-700 border-amber-200 text-xs shrink-0'
+                    }>
+                      {isSaved ? 'Compilata' : 'Da compilare'}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="pb-4 space-y-3">
+                  <div className="overflow-x-auto rounded-lg border border-emerald-100 bg-white">
+                    <table className="w-full min-w-[680px] text-sm">
+                      <thead className="bg-emerald-50 text-xs text-emerald-900">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-semibold">P.IVA</th>
+                          <th className="px-3 py-2 text-left font-semibold">Denominazione sociale</th>
+                          <th className="px-3 py-2 text-left font-semibold">
+                            {isCustomer ? '% fatturato presso il cliente' : '% costi presso il fornitore'}
+                          </th>
+                          <th className="w-12 px-2 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row, index) => (
+                          <tr key={index} className="border-t border-emerald-100">
+                            <td className="p-2">
+                              <Input
+                                value={row.partita_iva}
+                                placeholder="P.IVA"
+                                onChange={event => updateBusinessRelationshipRow(document.id, index, 'partita_iva', event.target.value)}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <Input
+                                value={row.denominazione_sociale}
+                                placeholder="Denominazione"
+                                onChange={event => updateBusinessRelationshipRow(document.id, index, 'denominazione_sociale', event.target.value)}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="0.01"
+                                  value={row.percentuale}
+                                  placeholder="0–100"
+                                  onChange={event => updateBusinessRelationshipRow(document.id, index, 'percentuale', event.target.value)}
+                                />
+                                <span className="text-muted-foreground">%</span>
+                              </div>
+                            </td>
+                            <td className="p-2 text-right">
+                              {rows.length > 1 && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 w-8 p-0 text-red-600"
+                                  onClick={() => removeBusinessRelationshipRow(document.id, index)}
+                                  aria-label={`Rimuovi riga ${index + 1}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    La riga successiva viene aggiunta automaticamente quando inizi a compilare l’ultima.
+                  </p>
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={isSaving}
+                    onClick={() => saveStructuredRequirement(document)}
+                  >
+                    {isSaving
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                      : <><Save className="w-3.5 h-3.5" /> {isSaved ? 'Aggiorna dati' : 'Salva dati'}</>
+                    }
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          }
           if (document.input_type === 'text') {
             return (
               <Card key={document.id} className="border-violet-200 bg-violet-50/20">

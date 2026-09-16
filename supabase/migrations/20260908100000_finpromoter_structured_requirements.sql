@@ -20,7 +20,7 @@ BEGIN
   ) THEN
     ALTER TABLE public.bank_document_requirements
       ADD CONSTRAINT bank_document_requirements_input_type_check
-      CHECK (input_type IN ('upload', 'text', 'contacts'));
+      CHECK (input_type IN ('upload', 'text', 'contacts', 'customers', 'suppliers'));
   END IF;
 
   IF NOT EXISTS (
@@ -31,7 +31,7 @@ BEGIN
   ) THEN
     ALTER TABLE public.practice_documents
       ADD CONSTRAINT practice_documents_input_type_check
-      CHECK (input_type IN ('upload', 'text', 'contacts'));
+      CHECK (input_type IN ('upload', 'text', 'contacts', 'customers', 'suppliers'));
   END IF;
 END $$;
 

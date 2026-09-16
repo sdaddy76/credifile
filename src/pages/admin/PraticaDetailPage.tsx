@@ -78,6 +78,15 @@ import {
   type StructuredSubject,
   type StructuredSubjectType,
 } from '@/lib/structuredContacts';
+import {
+  buildBusinessRelationshipsResponse,
+  emptyBusinessRelationshipRow,
+  hasBusinessRelationshipValue,
+  isBusinessRelationshipComplete,
+  readBusinessRelationships,
+  type BusinessRelationshipKind,
+  type BusinessRelationshipRow,
+} from '@/lib/businessRelationships';
 
 type AssignedAgent = { id: string; nome?: string; email: string };
 type IntegrationRequestDraft = { nome: string; descrizione: string };
@@ -317,7 +326,7 @@ export default function PraticaDetailPage() {
   const [noteDeclino, setNoteDeclino] = useState('');
   const [newDocName, setNewDocName] = useState('');
   const [newDocDesc, setNewDocDesc] = useState('');
-  const [newDocInputType, setNewDocInputType] = useState<'upload' | 'text' | 'contacts'>('upload');
+  const [newDocInputType, setNewDocInputType] = useState<'upload' | 'text' | 'contacts' | 'customers' | 'suppliers'>('upload');
   const [rejectNote, setRejectNote] = useState('');
   const [integrationRequests, setIntegrationRequests] = useState<IntegrationRequestDraft[]>([
     { nome: '', descrizione: '' },
@@ -1771,6 +1780,41 @@ export default function PraticaDetailPage() {
     )));
   };
 
+  const updateBusinessRelationshipRow = (
+    docId: string,
+    rowIndex: number,
+    field: keyof BusinessRelationshipRow,
+    value: string,
+  ) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const rows = readBusinessRelationships(document.client_response);
+      rows[rowIndex] = { ...rows[rowIndex], [field]: value };
+      if (rowIndex === rows.length - 1 && hasBusinessRelationshipValue(rows[rowIndex])) {
+        rows.push(emptyBusinessRelationshipRow());
+      }
+      return {
+        ...document,
+        client_response: { ...(document.client_response ?? {}), rows } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
+  const removeBusinessRelationshipRow = (docId: string, rowIndex: number) => {
+    setDocuments(prev => prev.map(document => {
+      if (document.id !== docId) return document;
+      const rows = readBusinessRelationships(document.client_response)
+        .filter((_, index) => index !== rowIndex);
+      return {
+        ...document,
+        client_response: {
+          ...(document.client_response ?? {}),
+          rows: rows.length > 0 ? rows : [emptyBusinessRelationshipRow()],
+        } as unknown as Record<string, unknown>,
+      };
+    }));
+  };
+
   const updateStructuredContact = (
     docId: string,
     role: 'legal_representative' | 'administrator' | 'beneficial_owners',
@@ -1892,6 +1936,18 @@ export default function PraticaDetailPage() {
         return;
       }
       response = buildStructuredContactsResponse(subjects) as unknown as Record<string, unknown>;
+    } else if (document.input_type === 'customers' || document.input_type === 'suppliers') {
+      const rows = readBusinessRelationships(document.client_response)
+        .filter(hasBusinessRelationshipValue);
+      if (rows.length === 0) {
+        toast.error('Inserisci almeno un cliente o fornitore');
+        return;
+      }
+      if (rows.some(row => !isBusinessRelationshipComplete(row))) {
+        toast.error('Completa tutte le colonne e usa percentuali tra 0 e 100');
+        return;
+      }
+      response = buildBusinessRelationshipsResponse(rows) as unknown as Record<string, unknown>;
     } else {
       return;
     }
@@ -2860,9 +2916,14 @@ export default function PraticaDetailPage() {
                             return {
                               label: value.roles.map(role => labels[role]).join(', ') || `Soggetto ${index + 1}`,
                               value,
-                            };
+                          };
                           })
                         : [];
+                      const relationshipRows = inputType === 'customers' || inputType === 'suppliers'
+                        ? readBusinessRelationships(doc.client_response)
+                        : [];
+                      const relationshipKind: BusinessRelationshipKind | null =
+                        inputType === 'customers' || inputType === 'suppliers' ? inputType : null;
                       const integrationCycle = doc.integration_request_id
                         ? integrationCycleById.get(doc.integration_request_id)
                         : undefined;
@@ -2893,6 +2954,97 @@ export default function PraticaDetailPage() {
                                   )}
                                 </div>
                                 {doc.descrizione && <p className="text-xs text-muted-foreground mt-0.5">{doc.descrizione}</p>}
+                                {relationshipKind && (
+                                  <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 space-y-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                                      {relationshipKind === 'customers' ? 'Clienti principali' : 'Fornitori principali'}
+                                    </p>
+                                    {relationshipRows.every(row => !hasBusinessRelationshipValue(row)) ? (
+                                      <p className="text-sm">Non ancora compilati</p>
+                                    ) : (
+                                      <div className="overflow-x-auto rounded border border-emerald-100 bg-white">
+                                        <table className="w-full min-w-[620px] text-xs">
+                                          <thead className="bg-emerald-50 text-emerald-900">
+                                            <tr>
+                                              <th className="px-2 py-1.5 text-left">P.IVA</th>
+                                              <th className="px-2 py-1.5 text-left">Denominazione sociale</th>
+                                              <th className="px-2 py-1.5 text-left">
+                                                {relationshipKind === 'customers' ? '% fatturato' : '% costi'}
+                                              </th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {relationshipRows
+                                              .filter(hasBusinessRelationshipValue)
+                                              .map((row, index) => (
+                                                <tr key={index} className="border-t border-emerald-100">
+                                                  <td className="px-2 py-1.5">{row.partita_iva || '—'}</td>
+                                                  <td className="px-2 py-1.5">{row.denominazione_sociale || '—'}</td>
+                                                  <td className="px-2 py-1.5">{row.percentuale || '—'}%</td>
+                                                </tr>
+                                              ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
+                                    {canEdit && (
+                                      <div className="mt-3 space-y-2">
+                                        {relationshipRows.map((row, rowIndex) => (
+                                          <div key={rowIndex} className="grid gap-2 rounded border border-emerald-200 bg-white p-2 sm:grid-cols-[1fr_1.5fr_0.8fr_auto]">
+                                            <Input
+                                              placeholder="P.IVA"
+                                              value={row.partita_iva}
+                                              onChange={event => updateBusinessRelationshipRow(doc.id, rowIndex, 'partita_iva', event.target.value)}
+                                            />
+                                            <Input
+                                              placeholder="Denominazione sociale"
+                                              value={row.denominazione_sociale}
+                                              onChange={event => updateBusinessRelationshipRow(doc.id, rowIndex, 'denominazione_sociale', event.target.value)}
+                                            />
+                                            <div className="flex items-center gap-1">
+                                              <Input
+                                                type="number"
+                                                min="0"
+                                                max="100"
+                                                step="0.01"
+                                                placeholder="%"
+                                                value={row.percentuale}
+                                                onChange={event => updateBusinessRelationshipRow(doc.id, rowIndex, 'percentuale', event.target.value)}
+                                              />
+                                              <span className="text-xs text-muted-foreground">%</span>
+                                            </div>
+                                            {relationshipRows.length > 1 ? (
+                                              <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-9 w-9 p-0 text-red-600"
+                                                onClick={() => removeBusinessRelationshipRow(doc.id, rowIndex)}
+                                                aria-label={`Rimuovi riga ${rowIndex + 1}`}
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </Button>
+                                            ) : <span />}
+                                          </div>
+                                        ))}
+                                        <p className="text-[11px] text-muted-foreground">
+                                          La riga successiva viene aggiunta automaticamente compilando l’ultima.
+                                        </p>
+                                        <Button
+                                          size="sm"
+                                          className="gap-1.5"
+                                          disabled={saving}
+                                          onClick={() => saveStructuredDocument(doc)}
+                                        >
+                                          {saving
+                                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvataggio...</>
+                                            : <><Save className="w-3.5 h-3.5" /> Salva dati</>
+                                          }
+                                        </Button>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                                 {inputType === 'text' && (
                                   <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2">
                                     <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">
@@ -4970,6 +5122,8 @@ export default function PraticaDetailPage() {
                   <SelectItem value="upload">Upload documento</SelectItem>
                   <SelectItem value="text">Campo di testo / nota</SelectItem>
                   <SelectItem value="contacts">Contatti strutturati</SelectItem>
+                  <SelectItem value="customers">Clienti principali — P.IVA, denominazione e % fatturato</SelectItem>
+                  <SelectItem value="suppliers">Fornitori principali — P.IVA, denominazione e % costi</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">

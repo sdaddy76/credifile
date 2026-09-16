@@ -18,7 +18,7 @@ export type FinPromoterCompanyType =
   | 'cooperativa';
 
 export type RegimeContabile = 'ordinaria' | 'semplificata' | null;
-export type RequirementInputType = 'upload' | 'text' | 'contacts';
+export type RequirementInputType = 'upload' | 'text' | 'contacts' | 'customers' | 'suppliers';
 
 export interface FinPromoterProfile {
   tipo: FinPromoterCompanyType;
