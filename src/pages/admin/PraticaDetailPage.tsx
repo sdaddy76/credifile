@@ -417,12 +417,20 @@ export default function PraticaDetailPage() {
   const loadActivityLogs = async () => {
     if (!id) return;
     setLoadingActivity(true);
-    const { data } = await supabase
-      .from('practice_activity_log')
-      .select('*')
-      .eq('practice_id', id)
-      .order('created_at', { ascending: false });
-    setActivityLogs(data ?? []);
+    const [{ data: activityData }, { data: emailData }] = await Promise.all([
+      supabase
+        .from('practice_activity_log')
+        .select('*')
+        .eq('practice_id', id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('email_send_log')
+        .select('*')
+        .eq('practice_id', id)
+        .order('created_at', { ascending: false }),
+    ]);
+    setActivityLogs(activityData ?? []);
+    setEmailLogs((emailData ?? []) as EmailLog[]);
     setLoadingActivity(false);
   };
 
@@ -522,7 +530,7 @@ export default function PraticaDetailPage() {
     oggetto?: string;
     stato: string;
     sent_by_nome?: string;
-    delivery_type?: 'pratica' | 'approfondimento';
+    delivery_type?: 'pratica' | 'approfondimento' | 'copia';
     integration_request_id?: string | null;
     created_at: string;
     opened_at?: string | null;
@@ -4565,6 +4573,8 @@ export default function PraticaDetailPage() {
                   practiceCreatedAt={practice.created_at}
                   statusLogs={logs}
                   activityLogs={activityLogs}
+                  emailLogs={emailLogs}
+                  documentAccessLogs={bankDocumentAccessLogs}
                 />
               )}
             </TabsContent>
@@ -4713,6 +4723,11 @@ export default function PraticaDetailPage() {
                               {log.delivery_type === 'approfondimento' && (
                                 <Badge variant="outline" className="mb-1 text-[10px] border-indigo-200 text-indigo-700">
                                   Approfondimento
+                                </Badge>
+                              )}
+                              {log.delivery_type === 'copia' && (
+                                <Badge variant="outline" className="mb-1 text-[10px] border-fuchsia-200 text-fuchsia-700">
+                                  Copia documenti
                                 </Badge>
                               )}
                               <div>{log.oggetto ?? '—'}</div>

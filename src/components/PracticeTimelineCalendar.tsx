@@ -3,6 +3,7 @@ import {
   ArrowRightLeft,
   Building2,
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -32,6 +33,7 @@ type TimelineCategory =
   | 'document_upload'
   | 'bank'
   | 'email'
+  | 'document_access'
   | 'note'
   | 'other';
 
@@ -45,6 +47,27 @@ type TimelineEvent = {
   phase?: string;
   actor?: string;
   actorRole?: string;
+};
+
+type TimelineEmailLog = {
+  id: string;
+  bank_nome?: string | null;
+  destinatari?: string[] | null;
+  cc?: string[] | null;
+  oggetto?: string | null;
+  stato?: string | null;
+  sent_by_nome?: string | null;
+  delivery_type?: 'pratica' | 'approfondimento' | 'copia' | string | null;
+  created_at: string;
+  opened_at?: string | null;
+  delivered_at?: string | null;
+};
+
+type TimelineDocumentAccessLog = {
+  id: string;
+  event_type: 'opened' | 'downloaded';
+  occurred_at: string;
+  bank_id?: string | null;
 };
 
 type PhaseStyle = {
@@ -181,6 +204,11 @@ const EVENT_STYLES: Record<Exclude<TimelineCategory, 'phase'>, {
     dot: 'bg-fuchsia-500',
     badge: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
   },
+  document_access: {
+    label: 'Lettura documento',
+    dot: 'bg-indigo-500',
+    badge: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+  },
   note: {
     label: 'Nota',
     dot: 'bg-purple-500',
@@ -218,6 +246,11 @@ function dateKey(year: number, month: number, day: number): string {
 function activityCategory(action: string): TimelineCategory {
   const normalized = action.toLocaleLowerCase('it-IT');
   if (
+    normalized.includes('documenti_banca_inviati')
+    || normalized.includes('documenti_banca_copia_inviati')
+    || normalized.includes('approfondimenti_banca_inviati')
+  ) return 'email';
+  if (
     normalized.includes('richiesta_documentale')
     || normalized.includes('richiesta document')
     || normalized.includes('integrazione')
@@ -232,6 +265,8 @@ function activityCategory(action: string): TimelineCategory {
 function activityTitle(action: string): string {
   const labels: Record<string, string> = {
     richiesta_documentale_cliente_inviata: 'Richiesta documentale inviata al cliente',
+    documenti_banca_inviati: 'Documenti inviati alla banca',
+    documenti_banca_copia_inviati: 'Copia documenti inviata',
     approfondimenti_banca_inviati: 'Approfondimenti inviati alla banca',
     notifica_banche_inviata: 'Notifica inviata alle banche',
     risposta_domanda_cliente_inserita: 'Risposta alla domanda del cliente',
@@ -248,6 +283,7 @@ function EventIcon({ category }: { category: TimelineCategory }) {
   if (category === 'document_upload') return <Upload className="h-4 w-4" />;
   if (category === 'bank') return <Building2 className="h-4 w-4" />;
   if (category === 'email') return <Mail className="h-4 w-4" />;
+  if (category === 'document_access') return <CheckCircle2 className="h-4 w-4" />;
   if (category === 'note') return <MessageSquare className="h-4 w-4" />;
   return <Clock className="h-4 w-4" />;
 }
@@ -282,6 +318,8 @@ interface PracticeTimelineCalendarProps {
   practiceCreatedAt: string;
   statusLogs: PracticeStatusLog[];
   activityLogs: ActivityLog[];
+  emailLogs?: TimelineEmailLog[];
+  documentAccessLogs?: TimelineDocumentAccessLog[];
 }
 
 export default function PracticeTimelineCalendar({
@@ -289,12 +327,16 @@ export default function PracticeTimelineCalendar({
   practiceCreatedAt,
   statusLogs,
   activityLogs,
+  emailLogs = [],
+  documentAccessLogs = [],
 }: PracticeTimelineCalendarProps) {
   const todayKey = romeDateKey(new Date());
   const todayParts = monthFromKey(todayKey);
   const newestTimestamp = [
     ...statusLogs.map(item => item.created_at),
     ...activityLogs.map(item => item.created_at),
+    ...emailLogs.map(item => item.created_at),
+    ...documentAccessLogs.map(item => item.occurred_at),
   ].filter(Boolean).sort().at(-1);
   const initialMonth = newestTimestamp ? monthFromKey(romeDateKey(newestTimestamp)) : todayParts;
   const [year, setYear] = useState(initialMonth.year);
@@ -327,6 +369,11 @@ export default function PracticeTimelineCalendar({
     }));
     const activities = activityLogs
       .filter(log => !log.action.toLocaleLowerCase('it-IT').startsWith('stato cambiato:'))
+      .filter(log => ![
+        'documenti_banca_inviati',
+        'documenti_banca_copia_inviati',
+        'approfondimenti_banca_inviati',
+      ].includes(log.action))
       .map(log => ({
         id: `activity-${log.id}`,
         title: activityTitle(log.action),
@@ -339,9 +386,53 @@ export default function PracticeTimelineCalendar({
         actor: log.actor_nome,
         actorRole: log.actor_ruolo,
       }));
-    return [...phaseEvents, ...activities]
+
+    const emailEvents = emailLogs.map(log => {
+      const isIntegration = log.delivery_type === 'approfondimento';
+      const isCopy = log.delivery_type === 'copia';
+      const recipient = (log.destinatari ?? []).join(', ') || 'destinatario non indicato';
+      const cc = (log.cc ?? []).filter(Boolean);
+      const state = log.opened_at
+        ? `Letta dal destinatario il ${formatRomeDateTime(log.opened_at)}`
+        : log.delivered_at
+          ? `Consegnata il ${formatRomeDateTime(log.delivered_at)}`
+          : log.stato === 'rimbalzata'
+            ? 'Rimbalzata'
+            : log.stato === 'spam'
+              ? 'Segnalata come spam'
+              : 'Inviata, in attesa di conferma';
+      const title = isCopy
+        ? 'Copia documenti inviata'
+        : isIntegration
+          ? 'Integrazione inviata alla banca'
+          : 'Documenti inviati alla banca';
+      return {
+        id: `email-${log.id}`,
+        title,
+        description: `${state} · A: ${recipient}${cc.length > 0 ? ` · CC: ${cc.join(', ')}` : ''}${log.bank_nome ? ` · ${log.bank_nome}` : ''}`,
+        timestamp: log.created_at,
+        dateKey: romeDateKey(log.created_at),
+        category: 'email' as const,
+        actor: log.sent_by_nome ?? undefined,
+      };
+    });
+
+    const documentAccessEvents = documentAccessLogs.map(log => ({
+      id: `document-access-${log.id}`,
+      title: log.event_type === 'downloaded'
+        ? 'Documento scaricato dalla banca'
+        : 'Documento aperto dalla banca',
+      description: log.event_type === 'downloaded'
+        ? 'Il destinatario ha scaricato il documento dal link tracciato.'
+        : 'Il destinatario ha aperto il link tracciato del documento.',
+      timestamp: log.occurred_at,
+      dateKey: romeDateKey(log.occurred_at),
+      category: 'document_access' as const,
+    }));
+
+    return [...phaseEvents, ...activities, ...emailEvents, ...documentAccessEvents]
       .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
-  }, [activityLogs, sortedStatusLogs]);
+  }, [activityLogs, documentAccessLogs, emailLogs, sortedStatusLogs]);
 
   const practiceStartKey = romeDateKey(practiceCreatedAt);
   const initialStatus = sortedStatusLogs[0]?.old_status || (sortedStatusLogs.length === 0 ? currentStatus : 'bozza');
@@ -429,6 +520,14 @@ export default function PracticeTimelineCalendar({
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <span className={`h-2.5 w-2.5 rounded-full ${EVENT_STYLES.document_upload.dot}`} />
               Documento caricato
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className={`h-2.5 w-2.5 rounded-full ${EVENT_STYLES.email.dot}`} />
+              Invio / consegna email
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className={`h-2.5 w-2.5 rounded-full ${EVENT_STYLES.document_access.dot}`} />
+              Apertura / download banca
             </div>
           </div>
 

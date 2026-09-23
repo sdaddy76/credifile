@@ -8,7 +8,9 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_KEY   = process.env.RESEND_API_KEY;
 const FROM         = process.env.FROM_EMAIL   || 'Credifile <docflow@stedasrls.it>';
 const APP          = process.env.APP_URL      || 'https://credifile-eosin.vercel.app';
-const ARCHIVE_CC   = 'pratiche.credifile@gmail.com';
+// Casella archivio obbligatoria per ogni comunicazione documentale.
+// È configurabile lato server, senza esporre l'indirizzo nel frontend.
+const ARCHIVE_CC   = (process.env.DOCUMENT_ARCHIVE_EMAIL || 'pratiche.credifile@gmail.com').trim().toLowerCase();
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -464,14 +466,16 @@ export default async function handler(req, res) {
 
     // Destinatari CC e BCC (salvati come stringa separata da virgola)
     const configuredCcList = (pb.banks?.email_cc || '').split(',').map(e => e.trim()).filter(Boolean);
-    // Ogni comunicazione alla banca deve restare disponibile anche all'archivio
-    // operativo Credifile. Evita duplicati e non aggiungere la casella quando
-    // stiamo inviando una copia separata soltanto a quell'indirizzo.
+    // Ogni comunicazione documentale deve restare disponibile anche all'archivio
+    // operativo Credifile. Per una copia separata non propaghiamo le CC della
+    // banca, ma manteniamo sempre la copia archivio.
+    const primaryRecipient = (copyOnlyMode ? copyEmail : bankEmail).toLowerCase();
     const ccList = copyOnlyMode
-      ? []
-      : Array.from(new Set([...configuredCcList, ARCHIVE_CC].map(email => email.toLowerCase())));
+      ? (copyEmail === ARCHIVE_CC ? [] : [ARCHIVE_CC])
+      : Array.from(new Set([...configuredCcList, ARCHIVE_CC].map(email => email.toLowerCase())))
+        .filter(email => email !== primaryRecipient);
     const bccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (!copyOnlyMode && !ccList.includes(ARCHIVE_CC)) {
+    if (!ccList.includes(ARCHIVE_CC) && primaryRecipient !== ARCHIVE_CC) {
       return res.status(500).json({ success: false, error: 'Copia archivio non configurata' });
     }
 
@@ -1232,7 +1236,7 @@ ${integrationAnswersHtml}
       html: integrationMode ? integrationHtmlBody : standardHtmlBody,
     };
     if (agentEmail) emailPayload.reply_to = agentEmail;
-    if (!copyOnlyMode && ccList.length > 0) emailPayload.cc = ccList;
+    if (ccList.length > 0) emailPayload.cc = ccList;
     if (!copyOnlyMode && bccList.length > 0) emailPayload.bcc = bccList;
 
     const emailRes = await fetch('https://api.resend.com/emails', {
@@ -1265,27 +1269,6 @@ ${integrationAnswersHtml}
         },
       );
 
-      await fetch(`${SUPABASE_URL}/rest/v1/practice_activity_log`, {
-        method: 'POST',
-        headers: { ...H, Prefer: 'return=minimal' },
-        body: JSON.stringify({
-          practice_id,
-          action: 'approfondimenti_banca_inviati',
-          actor_id: actorProfile.id,
-          actor_nome: actorProfile.nome ?? actorProfile.email ?? null,
-          actor_ruolo: actorProfile.ruolo,
-          metadata: {
-            integration_request_id,
-            practice_bank_id: pb.id,
-            bank_id,
-            banca: pb.banks?.nome ?? null,
-            destinatario: bankEmail,
-            uploaded_file_ids: docLinks.map(document => document.uploadedFileId),
-            documenti: docLinks.map(document => document.nomeFile),
-            risposte: answeredQuestions.map(question => question.id),
-          },
-        }),
-      }).catch(() => null);
     } else {
       // L'invio iniziale della pratica aggiorna soltanto la banca destinataria.
       await fetch(
@@ -1298,6 +1281,28 @@ ${integrationAnswersHtml}
       );
     }
 
+    const deliveryType = copyOnlyMode ? 'copia' : integrationMode ? 'approfondimento' : 'pratica';
+    const activityAction = copyOnlyMode
+      ? 'documenti_banca_copia_inviati'
+      : integrationMode
+        ? 'approfondimenti_banca_inviati'
+        : 'documenti_banca_inviati';
+    const activityMetadata = {
+      integration_request_id: integrationMode ? integration_request_id : null,
+      practice_bank_id: pb.id,
+      bank_id,
+      banca: pb.banks?.nome ?? null,
+      destinatari: copyOnlyMode ? [copyEmail] : [bankEmail],
+      cc: ccList,
+      uploaded_file_ids: docLinks.map(document => document.uploadedFileId).filter(Boolean),
+      documenti: docLinks.map(document => document.nomeFile),
+      risposte: answeredQuestions.map(question => question.id),
+      delivery_type: deliveryType,
+      resend_id: emailBody?.id ?? null,
+      stato: 'inviata',
+      copia_archivio: ccList.includes(ARCHIVE_CC) || primaryRecipient === ARCHIVE_CC,
+    };
+
     // 10. Log storico email_send_log
     await fetch(`${SUPABASE_URL}/rest/v1/email_send_log`, {
       method: 'POST',
@@ -1307,7 +1312,7 @@ ${integrationAnswersHtml}
         bank_id,
         bank_nome: pb.banks?.nome ?? null,
         destinatari: copyOnlyMode ? [copyEmail] : [bankEmail],
-        cc: !copyOnlyMode && ccList.length > 0 ? ccList : null,
+        cc: ccList.length > 0 ? ccList : null,
         bcc: !copyOnlyMode && bccList.length > 0 ? bccList : null,
         oggetto: copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject,
         stato: 'inviata',
@@ -1315,13 +1320,26 @@ ${integrationAnswersHtml}
         sent_by_nome: actorProfile.nome ?? actorProfile.email ?? null,
         resend_id: emailBody?.id ?? null,
         integration_request_id: integrationMode ? integration_request_id : null,
-        // Il vincolo DB corrente ammette solo 'pratica' e 'approfondimento'.
-        // L'oggetto con prefisso "Copia —" identifica comunque senza ambiguità
-        // l'invio separato nello storico, senza far fallire la registrazione.
-        delivery_type: integrationMode ? 'approfondimento' : 'pratica',
+        delivery_type: deliveryType,
         uploaded_file_ids: docLinks.map(document => document.uploadedFileId).filter(Boolean),
       }),
     }).catch(() => null); // Non blocca se il log fallisce
+
+    // Ogni invio documentale entra anche nella timeline, inclusa la copia
+    // richiesta dal campo "collaboratore banca". In questo modo la cronologia
+    // resta utile anche prima che Resend notifichi consegna/apertura.
+    await fetch(`${SUPABASE_URL}/rest/v1/practice_activity_log`, {
+      method: 'POST',
+      headers: { ...H, Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        practice_id,
+        action: activityAction,
+        actor_id: actorProfile.id,
+        actor_nome: actorProfile.nome ?? actorProfile.email ?? null,
+        actor_ruolo: actorProfile.ruolo,
+        metadata: activityMetadata,
+      }),
+    }).catch(() => null);
 
     // Notifica centralizzata agli utenti che seguono la pratica. L'invio
     // email resta riuscito anche se la notifica in-app non fosse disponibile.
@@ -1364,18 +1382,18 @@ ${integrationAnswersHtml}
     return res.status(200).json({
       success: true,
       sent_to: copyOnlyMode ? copyEmail : bankEmail,
-      cc: copyOnlyMode ? [] : ccList,
+      cc: ccList,
       bcc: copyOnlyMode ? [] : bccList,
       reply_to: agentEmail ?? null,
       docs_sent: docLinks.length,
       relation_attached: false,
       relation_linked: !integrationMode && Boolean(commercialRelation?.pdf_url),
       answers_sent: answeredQuestions.length,
-      delivery_type: integrationMode ? 'approfondimento' : 'pratica',
+      delivery_type: deliveryType,
       bank_status_changed: !integrationMode && !copyOnlyMode,
       kpi_rows: integrationMode || copyOnlyMode ? 0 : kpiRows.length,
       has_rep: integrationMode || copyOnlyMode ? false : !!rep,
-      archive_copy: !copyOnlyMode && ccList.includes(ARCHIVE_CC),
+      archive_copy: ccList.includes(ARCHIVE_CC) || primaryRecipient === ARCHIVE_CC,
       copy_only: copyOnlyMode,
     });
 
