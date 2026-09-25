@@ -535,6 +535,11 @@ export default function PraticaDetailPage() {
     created_at: string;
     opened_at?: string | null;
     delivered_at?: string | null;
+    recipient_events?: Record<string, {
+      stato?: string;
+      evento?: string;
+      timestamp?: string;
+    }> | null;
   }
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
   const [loadingEmailLog, setLoadingEmailLog] = useState(false);

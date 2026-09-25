@@ -61,6 +61,11 @@ type TimelineEmailLog = {
   created_at: string;
   opened_at?: string | null;
   delivered_at?: string | null;
+  recipient_events?: Record<string, {
+    stato?: string;
+    evento?: string;
+    timestamp?: string;
+  }> | null;
 };
 
 type TimelineDocumentAccessLog = {
@@ -392,6 +397,8 @@ export default function PracticeTimelineCalendar({
       const isCopy = log.delivery_type === 'copia';
       const recipient = (log.destinatari ?? []).join(', ') || 'destinatario non indicato';
       const cc = (log.cc ?? []).filter(Boolean);
+      const recipientStatuses = Object.entries(log.recipient_events ?? {})
+        .map(([address, event]) => `${address}: ${event.stato ?? 'inviata'}`);
       const state = log.opened_at
         ? `Letta dal destinatario il ${formatRomeDateTime(log.opened_at)}`
         : log.delivered_at
@@ -409,7 +416,7 @@ export default function PracticeTimelineCalendar({
       return {
         id: `email-${log.id}`,
         title,
-        description: `${state} · A: ${recipient}${cc.length > 0 ? ` · CC: ${cc.join(', ')}` : ''}${log.bank_nome ? ` · ${log.bank_nome}` : ''}`,
+        description: `${recipientStatuses.length > 0 ? `Stati destinatari: ${recipientStatuses.join(' · ')}. ` : ''}${state} · A: ${recipient}${cc.length > 0 ? ` · CC: ${cc.join(', ')}` : ''}${log.bank_nome ? ` · ${log.bank_nome}` : ''}`,
         timestamp: log.created_at,
         dateKey: romeDateKey(log.created_at),
         category: 'email' as const,

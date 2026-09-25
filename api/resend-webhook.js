@@ -117,7 +117,50 @@ export default async function handler(req, res) {
   }
 
   const timestamp = pickEventTimestamp(payload);
-  const updatePayload = { stato };
+  const recipient = Array.isArray(payload?.data?.to)
+    ? payload.data.to[0]
+    : payload?.data?.to || payload?.to || null;
+  const normalizedRecipient = typeof recipient === 'string' ? recipient.trim().toLowerCase() : null;
+  const lookupRes = await fetch(
+    `${supabaseUrl}/rest/v1/email_send_log?resend_id=eq.${encodeURIComponent(emailId)}&select=id,destinatari,cc,bcc,recipient_events,stato,opened_at,delivered_at&limit=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+      },
+    },
+  );
+  if (!lookupRes.ok) {
+    const err = await lookupRes.text().catch(() => '');
+    return res.status(502).json({ success: false, error: `Errore lettura email_send_log (${lookupRes.status})`, detail: err });
+  }
+  const existingRows = await lookupRes.json().catch(() => []);
+  const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+  const recipientEvents = existing?.recipient_events && typeof existing.recipient_events === 'object'
+    ? { ...existing.recipient_events }
+    : {};
+  const eventRank = { inviata: 1, consegnata: 2, aperta: 3, cliccata: 4, rimbalzata: 5, spam: 5 };
+  if (normalizedRecipient) {
+    const previous = recipientEvents[normalizedRecipient];
+    // Non permettere a un evento precedente di stato inferiore di cancellare
+    // un'apertura o un errore già registrato per lo stesso destinatario.
+    if (!previous || (eventRank[stato] ?? 0) >= (eventRank[previous.stato] ?? 0)) {
+      recipientEvents[normalizedRecipient] = {
+        stato,
+        evento: eventType,
+        timestamp,
+      };
+    }
+  }
+
+  const aggregateStatus = !existing?.stato
+    || (eventRank[stato] ?? 0) >= (eventRank[existing.stato] ?? 0)
+    ? stato
+    : existing.stato;
+  const updatePayload = {
+    stato: aggregateStatus,
+    recipient_events: recipientEvents,
+  };
   if (eventType === 'email.opened') updatePayload.opened_at = timestamp;
   if (eventType === 'email.delivered') updatePayload.delivered_at = timestamp;
 
