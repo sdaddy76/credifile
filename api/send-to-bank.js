@@ -465,19 +465,21 @@ export default async function handler(req, res) {
     }
 
     // Destinatari CC e BCC (salvati come stringa separata da virgola)
-    const configuredCcList = (pb.banks?.email_cc || '').split(',').map(e => e.trim()).filter(Boolean);
-    // Ogni comunicazione documentale deve restare disponibile anche all'archivio
-    // operativo Credifile. Per una copia separata non propaghiamo le CC della
-    // banca, ma manteniamo sempre la copia archivio.
+    const configuredCcList = (pb.banks?.email_cc || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+    const configuredBccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+    // La copia archivio viene inviata con una richiesta Resend separata.
+    // In questo modo ha un proprio resend_id e un proprio evento di consegna,
+    // senza confondere l'esito della banca con quello della casella Credifile.
     const primaryRecipient = (copyOnlyMode ? copyEmail : bankEmail).toLowerCase();
     const ccList = copyOnlyMode
-      ? (copyEmail === ARCHIVE_CC ? [] : [ARCHIVE_CC])
-      : Array.from(new Set([...configuredCcList, ARCHIVE_CC].map(email => email.toLowerCase())))
-        .filter(email => email !== primaryRecipient);
-    const bccList = (pb.banks?.email_bcc || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (!ccList.includes(ARCHIVE_CC) && primaryRecipient !== ARCHIVE_CC) {
-      return res.status(500).json({ success: false, error: 'Copia archivio non configurata' });
-    }
+      ? []
+      : Array.from(new Set(configuredCcList)).filter(email =>
+          email !== primaryRecipient && email !== ARCHIVE_CC,
+        );
+    const bccList = configuredBccList.filter(email =>
+      email !== primaryRecipient && email !== ARCHIVE_CC,
+    );
+    const archiveCopyRequired = primaryRecipient !== ARCHIVE_CC;
 
     // 3b. URL firmati in parallelo (tutti i file contemporaneamente)
     const files = integrationMode
@@ -1228,7 +1230,9 @@ ${integrationAnswersHtml}
       ? `Approfondimenti pratica ${cliente} (${pratica.numero_pratica}) — Credifile`
       : `Pratica ${cliente} (${pratica.numero_pratica}) — Credifile`;
 
-    // 8. Invia via Resend
+    // 8. Invia via Resend. La mail principale e la copia archivio sono
+    // richieste separate, così la casella di sistema è verificabile in modo
+    // indipendente anche quando la banca è in TO.
     const emailPayload = {
       from: FROM,
       to: copyOnlyMode ? [copyEmail] : [bankEmail],
@@ -1247,6 +1251,31 @@ ${integrationAnswersHtml}
     const emailBody = await emailRes.json();
     if (!emailRes.ok) {
       return res.status(502).json({ success: false, error: emailBody?.message ?? 'Errore Resend' });
+    }
+
+    let archiveEmailBody = null;
+    let archiveError = null;
+    if (archiveCopyRequired) {
+      const archivePayload = {
+        from: FROM,
+        to: [ARCHIVE_CC],
+        subject: `Copia archivio — ${copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject}`,
+        html: integrationMode ? integrationHtmlBody : standardHtmlBody,
+      };
+      if (agentEmail) archivePayload.reply_to = agentEmail;
+      try {
+        const archiveResponse = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(archivePayload),
+        });
+        archiveEmailBody = await archiveResponse.json();
+        if (!archiveResponse.ok) {
+          archiveError = archiveEmailBody?.message ?? 'Errore invio copia archivio';
+        }
+      } catch (error) {
+        archiveError = error instanceof Error ? error.message : String(error);
+      }
     }
 
     const sentAt = new Date().toISOString();
@@ -1300,7 +1329,9 @@ ${integrationAnswersHtml}
       delivery_type: deliveryType,
       resend_id: emailBody?.id ?? null,
       stato: 'inviata',
-      copia_archivio: ccList.includes(ARCHIVE_CC) || primaryRecipient === ARCHIVE_CC,
+      copia_archivio: archiveCopyRequired || primaryRecipient === ARCHIVE_CC,
+      archive_resend_id: archiveEmailBody?.id ?? null,
+      archive_error: archiveError,
     };
 
     // 10. Log storico email_send_log
@@ -1324,6 +1355,30 @@ ${integrationAnswersHtml}
         uploaded_file_ids: docLinks.map(document => document.uploadedFileId).filter(Boolean),
       }),
     }).catch(() => null); // Non blocca se il log fallisce
+
+    if (archiveCopyRequired) {
+      await fetch(`${SUPABASE_URL}/rest/v1/email_send_log`, {
+        method: 'POST',
+        headers: { ...H, Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          practice_id,
+          bank_id,
+          bank_nome: pb.banks?.nome ?? null,
+          destinatari: [ARCHIVE_CC],
+          cc: null,
+          bcc: null,
+          oggetto: `Copia archivio — ${copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject}`,
+          stato: archiveError ? 'errore' : 'inviata',
+          errore: archiveError,
+          sent_by: actorProfile.id,
+          sent_by_nome: actorProfile.nome ?? actorProfile.email ?? null,
+          resend_id: archiveEmailBody?.id ?? null,
+          integration_request_id: integrationMode ? integration_request_id : null,
+          delivery_type: 'copia',
+          uploaded_file_ids: docLinks.map(document => document.uploadedFileId).filter(Boolean),
+        }),
+      }).catch(() => null);
+    }
 
     // Ogni invio documentale entra anche nella timeline, inclusa la copia
     // richiesta dal campo "collaboratore banca". In questo modo la cronologia
@@ -1379,8 +1434,10 @@ ${integrationAnswersHtml}
       console.warn('Notifica invio banca non registrata:', notificationError);
     }
 
-    return res.status(200).json({
-      success: true,
+    return res.status(archiveError ? 502 : 200).json({
+      success: !archiveError,
+      partial_success: Boolean(archiveError),
+      error: archiveError,
       sent_to: copyOnlyMode ? copyEmail : bankEmail,
       cc: ccList,
       bcc: copyOnlyMode ? [] : bccList,
@@ -1393,7 +1450,10 @@ ${integrationAnswersHtml}
       bank_status_changed: !integrationMode && !copyOnlyMode,
       kpi_rows: integrationMode || copyOnlyMode ? 0 : kpiRows.length,
       has_rep: integrationMode || copyOnlyMode ? false : !!rep,
-      archive_copy: ccList.includes(ARCHIVE_CC) || primaryRecipient === ARCHIVE_CC,
+      archive_copy: archiveCopyRequired || primaryRecipient === ARCHIVE_CC,
+      archive_resend_id: archiveEmailBody?.id ?? null,
+      archive_status: archiveError ? 'errore' : archiveCopyRequired ? 'inviata' : 'non_necessaria',
+      archive_error: archiveError,
       copy_only: copyOnlyMode,
     });
 
