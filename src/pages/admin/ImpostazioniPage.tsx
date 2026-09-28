@@ -95,7 +95,17 @@ export default function ImpostazioniPage() {
       if (json.ok) {
         const now = new Date().toISOString();
         setLastDropboxBackup(now);
-        toast.success(`✅ Backup Dropbox completato — ${json.size_kb} KB salvati`);
+        toast.success(
+          `Backup Dropbox completato — ${json.db_kb ?? 0} KB di dati e ${json.files_ok ?? 0}/${json.files_total ?? 0} file salvati`,
+        );
+      } else if (json.partial) {
+        const firstError = Array.isArray(json.errors) && json.errors.length > 0
+          ? ` (${json.errors[0]})`
+          : '';
+        toast.error(
+          `Backup incompleto: ${json.files_ok ?? 0}/${json.files_total ?? 0} file salvati; ${json.files_err ?? 0} errori, ${json.files_pending ?? 0} ancora da completare${firstError}`,
+          { duration: 12000 },
+        );
       } else {
         toast.error('Errore backup Dropbox: ' + (json.error ?? 'sconosciuto'));
       }
@@ -178,14 +188,14 @@ export default function ImpostazioniPage() {
               <CloudUpload className="w-4 h-4 text-blue-600" />
               <span>Backup su Dropbox</span>
               <span className="ml-auto text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">
-                Automatico ogni domenica
+                Automatico ogni giorno
               </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Esporta tutte le tabelle principali del sistema in un file JSON e le carica su Dropbox
-              ogni domenica alle 02:00. Puoi eseguire un backup manuale in qualsiasi momento.
+              Esporta tutte le tabelle del sistema e tutti i file registrati nelle pratiche e li carica su Dropbox
+              ogni giorno a mezzanotte (fuso orario italiano). Puoi eseguire un backup manuale in qualsiasi momento.
             </p>
 
             <div className="bg-white rounded-lg border border-blue-100 px-4 py-3 space-y-1">
