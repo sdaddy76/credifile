@@ -16,6 +16,7 @@ import type { BalanceAnomalyAnalysis } from '../../supabase/functions/_shared/ba
 import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
 import { buildAppUrl } from '@/lib/appUrl';
 import { parseLocalizedNumber } from '@/lib/numberParsing';
+import { uploadPracticeFile } from '@/lib/uploadFile';
 
 interface Props { practiceId: string }
 
@@ -469,7 +470,7 @@ function buildGeneralComment(bilanci: BilancioRecord[]): string {
 }
 
 // ─── Generazione report PDF ──────────────────────────────────────────────────
-function generateBancabilitaReport(
+async function generateBancabilitaReport(
   bilanci: BilancioRecord[],
   bancabilita: BancaCheck[],
   practiceId: string,
@@ -849,7 +850,18 @@ function generateBancabilitaReport(
   // ── DOWNLOAD ──────────────────────────────────────────────────────────────
   const firstName = bilanci[0]?.ragione_sociale ?? 'azienda';
   const safeName  = firstName.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 30);
-  doc.save(`Bancabilita_${safeName}_${now.replace(/\//g, '-')}.pdf`);
+  const fileName = `Bancabilita_${safeName}_${now.replace(/\//g, '-')}.pdf`;
+  const blob = doc.output('blob');
+  const archived = await uploadPracticeFile({
+    practiceId,
+    file: blob,
+    fileName,
+    mimeType: 'application/pdf',
+    size: blob.size,
+    uploadedBy: 'sistema',
+  });
+  if (archived.error) throw archived.error;
+  doc.save(fileName);
 }
 
 export default function AnalisiFinanziariaTab({ practiceId }: Props) {
@@ -1369,7 +1381,14 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             </Button>
             {bilanci.length > 0 && (
               <Button variant="outline" size="sm"
-                onClick={() => generateBancabilitaReport(bilanci, bancabilita, practiceId, anomalyAlerts)}
+                onClick={async () => {
+                  try {
+                    await generateBancabilitaReport(bilanci, bancabilita, practiceId, anomalyAlerts);
+                    toast.success('Report generato, archiviato e scaricato');
+                  } catch (error) {
+                    toast.error('Impossibile archiviare il report: ' + String(error));
+                  }
+                }}
                 title="Genera PDF riassuntivo KPI + bancabilità">
                 <Download className="w-3.5 h-3.5 mr-1.5" /> Genera Report PDF
               </Button>

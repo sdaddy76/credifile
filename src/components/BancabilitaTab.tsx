@@ -8,6 +8,7 @@ import IndiceBancabilita from '@/components/IndiceBancabilita';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { uploadPracticeFile } from '@/lib/uploadFile';
 
 interface Props { practiceId: string }
 
@@ -206,7 +207,7 @@ function buildGeneralComment(bilanci: BilancioRecord[]): string {
 }
 
 // ── generazione PDF ─────────────────────────────────────────────────────────
-function generatePdf(bilanci: BilancioRecord[], checks: BancaCheck[], practiceId: string) {
+async function generatePdf(bilanci: BilancioRecord[], checks: BancaCheck[], practiceId: string) {
   const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W    = doc.internal.pageSize.getWidth();
   const BLUE: [number,number,number] = [30,58,138];
@@ -370,7 +371,18 @@ function generatePdf(bilanci: BilancioRecord[], checks: BancaCheck[], practiceId
   }
 
   const safeName = (bilanci[0]?.ragione_sociale ?? 'azienda').replace(/[^a-zA-Z0-9_]/g,'_').substring(0,30);
-  doc.save(`Bancabilita_${safeName}_${now.replace(/\//g,'-')}.pdf`);
+  const fileName = `Bancabilita_${safeName}_${now.replace(/\//g,'-')}.pdf`;
+  const blob = doc.output('blob');
+  const archived = await uploadPracticeFile({
+    practiceId,
+    file: blob,
+    fileName,
+    mimeType: 'application/pdf',
+    size: blob.size,
+    uploadedBy: 'sistema',
+  });
+  if (archived.error) throw archived.error;
+  doc.save(fileName);
 }
 
 // ── componente ──────────────────────────────────────────────────────────────
@@ -638,7 +650,14 @@ export default function BancabilitaTab({ practiceId }: Props) {
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Aggiorna
           </Button>
           {!noBilancio && (
-            <Button size="sm" onClick={() => generatePdf(bilanci, checks, practiceId)}>
+            <Button size="sm" onClick={async () => {
+              try {
+                await generatePdf(bilanci, checks, practiceId);
+                toast.success('Report generato, archiviato e scaricato');
+              } catch (error) {
+                toast.error('Impossibile archiviare il report: ' + String(error));
+              }
+            }}>
               <Download className="w-3.5 h-3.5 mr-1.5" /> Genera Report PDF
             </Button>
           )}

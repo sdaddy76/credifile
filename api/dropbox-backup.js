@@ -1,5 +1,6 @@
 // Vercel Serverless Function — Backup Credifile su Dropbox
-// Include: 9 tabelle DB (JSON) + file fisici da Supabase Storage
+// Include: dati delle pratiche, note, report e inventario completo dei file
+// fisici presenti nel bucket Supabase Storage "practice-files".
 
 const SUPABASE_URL      = process.env.SUPABASE_URL      || 'https://fhieppjqlefdlanvrpik.supabase.co';
 const SUPABASE_KEY      = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -121,6 +122,62 @@ async function queryTable(table) {
   return rows;
 }
 
+async function listStorageFiles() {
+  const files = [];
+  const pendingPrefixes = [''];
+  const visitedPrefixes = new Set();
+  const pageSize = 1000;
+
+  while (pendingPrefixes.length > 0) {
+    const prefix = pendingPrefixes.pop();
+    if (visitedPrefixes.has(prefix)) continue;
+    visitedPrefixes.add(prefix);
+
+    let offset = 0;
+    while (true) {
+      const r = await fetchWithRetry(
+        `${SUPABASE_URL}/storage/v1/object/list/${STORAGE_BUCKET}`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prefix,
+            limit: pageSize,
+            offset,
+            sortBy: { column: 'name', order: 'asc' },
+          }),
+        },
+        `Storage inventory ${prefix || '/'}`,
+      );
+      if (!r.ok) {
+        throw new Error(`Storage inventory error ${r.status} for ${prefix || '/'}: ${await r.text()}`);
+      }
+
+      const entries = await r.json();
+      if (!Array.isArray(entries)) {
+        throw new Error(`Storage inventory returned invalid data for ${prefix || '/'}`);
+      }
+
+      for (const entry of entries) {
+        if (!entry?.name) continue;
+        const fullPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const isFile = Boolean(entry.id || entry.metadata);
+        if (isFile) files.push(fullPath);
+        else pendingPrefixes.push(fullPath);
+      }
+
+      if (entries.length < pageSize) break;
+      offset += pageSize;
+    }
+  }
+
+  return [...new Set(files)];
+}
+
 async function downloadStorageFile(storagePath) {
   const encodedPath = storagePath.split('/').map(encodeURIComponent).join('/');
   const url = `${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${encodedPath}`;
@@ -168,36 +225,48 @@ export default async function handler(req, res) {
     const tables = [
       'practices', 'clients', 'banks', 'admin_profiles', 'uploaded_files',
       'practice_documents', 'practice_banks', 'leads', 'document_templates',
+      'practice_notes', 'practice_tasks', 'practice_checklist_items',
+      'practice_client_questions', 'practice_client_banks',
+      'practice_integration_requests', 'practice_moduli_compilati',
+      'practice_activity_log', 'practice_status_log', 'practice_bank_status_log',
+      'relazioni_commerciali', 'consulente_reports',
+      'bilanci_kpi', 'reputational_analyses', 'schede_valutazione_rischio',
+      'document_deadlines', 'document_coherence_alerts', 'client_financing',
+      'estratto_conto_transactions', 'balance_anomaly_alerts', 'email_send_log',
     ];
 
     // 1. Backup DB (JSON) ─────────────────────────────────────────────────────
-    const backup = { _meta: { date: now, tables } };
+    const backup = {
+      _meta: {
+        date: now,
+        tables,
+        storage_bucket: STORAGE_BUCKET,
+      },
+    };
     for (const table of tables) {
       backup[table] = await queryTable(table);
     }
-    const jsonStr = JSON.stringify(backup, null, 2);
 
     const token = await getDropboxToken();
 
-    await dropboxUploadBuffer(
-      token,
-      `/Apps/Credifile/backups/backup_${now}.json`,
-      Buffer.from(jsonStr),
-    );
-    await dropboxUploadBuffer(
-      token,
-      '/Apps/Credifile/backups/backup_latest.json',
-      Buffer.from(jsonStr),
-    );
-    const db_kb = Math.round(jsonStr.length / 1024);
-
     // 2. Copia file fisici da Supabase Storage → Dropbox /files/ ─────────────
     const uploadedFiles = backup['uploaded_files'] || [];
-    const filePaths = [...new Set(
+    const referencedPaths = [
       uploadedFiles
         .map(f => f.storage_path)
         .filter(Boolean),
-    )];
+      (backup['practice_moduli_compilati'] || [])
+        .map(record => record.file_path)
+        .filter(Boolean),
+      (backup['relazioni_commerciali'] || [])
+        .flatMap(record => [record.docx_url, record.pdf_url])
+        .filter(Boolean),
+      (backup['consulente_reports'] || [])
+        .map(record => record.report_pdf_path)
+        .filter(Boolean),
+    ].flat();
+    const inventoryPaths = await listStorageFiles();
+    const filePaths = [...new Set([...referencedPaths, ...inventoryPaths])];
 
     let files_ok = 0;
     let files_err = 0;
@@ -228,11 +297,37 @@ export default async function handler(req, res) {
 
     const files_pending = filePaths.length - files_ok - files_err;
     const partial = files_err > 0 || files_pending > 0;
+    backup._meta.storage_inventory = {
+      inventory_files: inventoryPaths.length,
+      referenced_files: new Set(referencedPaths).size,
+      backup_files: filePaths.length,
+      files_ok,
+      files_err,
+      files_pending,
+    };
+
+    // Il JSON viene scritto per ultimo: contiene anche l'esito reale dei file.
+    const jsonStr = JSON.stringify(backup, null, 2);
+    await dropboxUploadBuffer(
+      token,
+      `/Apps/Credifile/backups/backup_${now}.json`,
+      Buffer.from(jsonStr),
+    );
+    await dropboxUploadBuffer(
+      token,
+      '/Apps/Credifile/backups/backup_latest.json',
+      Buffer.from(jsonStr),
+    );
+    const db_kb = Math.round(Buffer.byteLength(jsonStr) / 1024);
+
     return res.status(partial ? 207 : 200).json({
       ok:          !partial,
       partial,
       date:        now,
       db_kb,
+      tables_total: tables.length,
+      storage_inventory_files: inventoryPaths.length,
+      referenced_files: new Set(referencedPaths).size,
       files_total: filePaths.length,
       files_ok,
       files_err,

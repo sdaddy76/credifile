@@ -859,7 +859,7 @@ export default function PraticaDetailPage() {
     setGeneratedText(compileTemplate(data.contenuto));
   };
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (!generatedText.trim()) { toast.error('Genera prima il documento'); return; }
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
     const margin = 20;
@@ -911,8 +911,22 @@ export default function PraticaDetailPage() {
     doc.text(`Pratica n. ${practice?.numero_pratica ?? ''} — Generato il ${new Date().toLocaleDateString('it-IT')}`, margin, footerY);
     doc.text('Credifile', pageW - margin, footerY, { align: 'right' });
 
-    doc.save(`documento_${practice?.numero_pratica ?? 'pratica'}.pdf`);
-    toast.success('PDF esportato');
+    const fileName = `documento_${practice?.numero_pratica ?? 'pratica'}.pdf`;
+    const blob = doc.output('blob');
+    const archived = await uploadPracticeFile({
+      practiceId: practice.id,
+      file: blob,
+      fileName,
+      mimeType: 'application/pdf',
+      size: blob.size,
+      uploadedBy: user?.id ?? 'sistema',
+    });
+    if (archived.error) {
+      toast.error('Impossibile archiviare il PDF: ' + archived.error.message);
+      return;
+    }
+    doc.save(fileName);
+    toast.success('PDF archiviato nella pratica ed esportato');
   };
 
   const handleCopyText = () => {

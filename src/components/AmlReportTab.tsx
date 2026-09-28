@@ -11,6 +11,7 @@ import { ShieldCheck, ShieldAlert, AlertTriangle, FileDown, Loader2 } from 'luci
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { uploadPracticeFile } from '@/lib/uploadFile';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
 
@@ -396,8 +397,18 @@ export default function AmlReportTab({ practiceId }: Props) {
       }
 
       const fileName = `AML_REV12_${ragioneSociale.replace(/\s+/g, '_')}_${today.replace(/\//g, '-')}.pdf`;
+      const blob = doc.output('blob');
+      const archived = await uploadPracticeFile({
+        practiceId,
+        file: blob,
+        fileName,
+        mimeType: 'application/pdf',
+        size: blob.size,
+        uploadedBy: 'sistema',
+      });
+      if (archived.error) throw archived.error;
       doc.save(fileName);
-      toast.success('PDF esportato: ' + fileName);
+      toast.success('PDF archiviato nella pratica ed esportato: ' + fileName);
     } catch (e) {
       toast.error('Errore export PDF: ' + String(e));
     } finally {

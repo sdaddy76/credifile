@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
+import { uploadPracticeFile } from '@/lib/uploadFile';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────
 interface KpiEntry { valore: number | null; formatted: string; semaforo: 'verde' | 'giallo' | 'rosso' | 'nd'; label: string }
@@ -183,7 +184,7 @@ function buildGeneralComment(bilanci: BilancioRecord[]): string {
 }
 
 // ── Genera PDF bancabilità (stessa logica di AnalisiFinanziariaTab) ────────
-function generateReportPdf(bilanci: BilancioRecord[], practiceLabel: string) {
+async function generateReportPdf(bilanci: BilancioRecord[], practiceLabel: string, practiceId: string) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
   const BLUE: [number, number, number]  = [30, 58, 138];
@@ -306,7 +307,18 @@ function generateReportPdf(bilanci: BilancioRecord[], practiceLabel: string) {
   }
 
   const safeName = (bilanci[0]?.ragione_sociale ?? 'azienda').replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 30);
-  doc.save(`Bancabilita_${safeName}_${now.replace(/\//g, '-')}.pdf`);
+  const fileName = `Bancabilita_${safeName}_${now.replace(/\//g, '-')}.pdf`;
+  const blob = doc.output('blob');
+  const archived = await uploadPracticeFile({
+    practiceId,
+    file: blob,
+    fileName,
+    mimeType: 'application/pdf',
+    size: blob.size,
+    uploadedBy: 'sistema',
+  });
+  if (archived.error) throw archived.error;
+  doc.save(fileName);
 }
 
 // ── Status pratica colori ──────────────────────────────────────────────────
@@ -408,11 +420,12 @@ export default function ReportPage() {
   );
 
   // ── Genera PDF ───────────────────────────────────────────────────────────
-  const handleGenera = (cliente: ClienteKpi) => {
+  const handleGenera = async (cliente: ClienteKpi) => {
     setGenerando(cliente.clientId);
     try {
-      generateReportPdf(cliente.bilanci, cliente.numeroPratica ?? 'N/D');
-      toast.success(`Report PDF generato per ${cliente.ragioneSociale}`);
+      if (!cliente.practiceId) throw new Error('Pratica non associata');
+      await generateReportPdf(cliente.bilanci, cliente.numeroPratica ?? 'N/D', cliente.practiceId);
+      toast.success(`Report PDF generato e archiviato per ${cliente.ragioneSociale}`);
     } catch (e) {
       toast.error('Errore nella generazione del PDF');
     } finally {

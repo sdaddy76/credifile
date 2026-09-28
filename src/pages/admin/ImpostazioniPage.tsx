@@ -96,7 +96,7 @@ export default function ImpostazioniPage() {
         const now = new Date().toISOString();
         setLastDropboxBackup(now);
         toast.success(
-          `Backup Dropbox completato — ${json.db_kb ?? 0} KB di dati e ${json.files_ok ?? 0}/${json.files_total ?? 0} file salvati`,
+          `Backup Dropbox completato — ${json.tables_total ?? 0} tabelle e ${json.files_ok ?? 0}/${json.files_total ?? 0} file salvati`,
         );
       } else if (json.partial) {
         const firstError = Array.isArray(json.errors) && json.errors.length > 0
@@ -194,8 +194,9 @@ export default function ImpostazioniPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Esporta tutte le tabelle del sistema e tutti i file registrati nelle pratiche e li carica su Dropbox
-              ogni giorno a mezzanotte (fuso orario italiano). Puoi eseguire un backup manuale in qualsiasi momento.
+              Esporta i dati delle pratiche, comprese note e report, e copia tutti i file presenti
+              nell'archivio delle pratiche su Dropbox ogni giorno a mezzanotte (fuso orario italiano).
+              Puoi eseguire un backup manuale in qualsiasi momento.
             </p>
 
             <div className="bg-white rounded-lg border border-blue-100 px-4 py-3 space-y-1">
