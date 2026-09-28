@@ -2207,12 +2207,23 @@ export default function PraticaDetailPage() {
   };
 
   const downloadFile = async (path: string, name: string) => {
-    const { data } = await supabase.storage.from('practice-files').createSignedUrl(path, 60);
+    const { data, error } = await supabase.storage
+      .from('practice-files')
+      .createSignedUrl(path, 300, { download: name });
+    if (error) {
+      toast.error(`Impossibile preparare il download: ${error.message}`);
+      return;
+    }
     if (data?.signedUrl) {
       const a = document.createElement('a');
       a.href = data.signedUrl;
       a.download = name;
+      a.rel = 'noopener';
+      a.target = '_blank';
+      a.style.display = 'none';
+      document.body.appendChild(a);
       a.click();
+      a.remove();
       // Audit log in background
       supabase.from('download_logs').insert({
         user_id: user?.id ?? null,
@@ -3326,10 +3337,22 @@ export default function PraticaDetailPage() {
                                           <button
                                             className="flex items-center gap-2 text-xs text-primary hover:underline flex-1 min-w-0 text-left"
                                             onClick={() => downloadFile(f.storage_path, f.nome_file)}
+                                            title={`Scarica ${f.nome_file}`}
                                           >
                                             <Download className="w-3 h-3 shrink-0" />
                                             <span className="truncate">{f.nome_file}</span>
                                           </button>
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-7 shrink-0 gap-1 px-2 text-xs"
+                                            onClick={() => downloadFile(f.storage_path, f.nome_file)}
+                                            title={`Scarica ${f.nome_file}`}
+                                          >
+                                            <Download className="w-3 h-3" />
+                                            Scarica
+                                          </Button>
                                           {canEdit && (
                                             <button
                                               className="ml-1 shrink-0 text-destructive/50 hover:text-destructive transition-colors"
