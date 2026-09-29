@@ -22,6 +22,7 @@ const ConsensoCrePage = lazy(() => import("@/pages/ConsensoCrePage"));
 const ConsulenteDashboard = lazy(() => import("@/pages/consulente/ConsulenteDashboard"));
 const NuovoReportWizard = lazy(() => import("@/pages/consulente/NuovoReportWizard"));
 const ProfiloConsulentePage = lazy(() => import("@/pages/consulente/ProfiloConsulentePage"));
+const AnalisiCostiBancariPage = lazy(() => import("@/pages/consulente/AnalisiCostiBancariPage"));
 const BancaPortalPage = lazy(() => import("@/pages/banca/BancaPortalPage"));
 const AdminLayout = lazy(() => import("@/components/AdminLayout"));
 const DashboardPage = lazy(() => import("@/pages/admin/DashboardPage"));
@@ -125,6 +126,7 @@ const App = () => (
             {/* Portale Consulente — protetto */}
             <Route path="/consulente" element={<ProtectedRoute><ConsulenteDashboard /></ProtectedRoute>} />
             <Route path="/consulente/profilo" element={<ProtectedRoute><ProfiloConsulentePage /></ProtectedRoute>} />
+            <Route path="/consulente/costi-bancari" element={<ProtectedRoute><AnalisiCostiBancariPage /></ProtectedRoute>} />
             <Route path="/consulente/cliente/:clientId/nuovo-report" element={<ProtectedRoute><NuovoReportWizard /></ProtectedRoute>} />
 
             {/* Portale Banche — protetto */}

@@ -12,6 +12,7 @@ import {
   type ConfidenzaClassificazione,
 } from '@/lib/classificaTransazione';
 import { analyzeBankStatement } from '@/lib/bankStatementAnalysis';
+import { enrichBankCostTransaction } from '@/lib/bankCostAnalysis';
 import {
   parseBankStatementPdfRows,
   type PositionedPdfRow,
@@ -287,6 +288,13 @@ interface Transazione {
   classification_rule?: string;
   parse_confidence?: ConfidenzaClassificazione;
   source_format?: string;
+  bank_cost_type?: string | null;
+  bank_cost_confidence?: ConfidenzaClassificazione | null;
+  interest_amount?: number | null;
+  principal_amount?: number | null;
+  interest_rate?: number | null;
+  financing_reference?: string | null;
+  bank_cost_notes?: string | null;
 }
 
 interface Kpi {
@@ -634,6 +642,7 @@ export function EstrattoConto({ practiceId }: Props) {
       ...transaction,
       practice_id: practiceId,
       file_nome: fileName,
+      ...enrichBankCostTransaction(transaction),
     }));
 
     setTransazioni(withMeta);

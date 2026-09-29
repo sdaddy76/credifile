@@ -44,6 +44,7 @@ import {
   type BusinessRelationshipKind,
   type BusinessRelationshipRow,
 } from '@/lib/businessRelationships';
+import { AnalisiCostiBancari } from '@/components/AnalisiCostiBancari';
 
 interface ClientSession {
   practiceId: string;
@@ -1120,6 +1121,7 @@ export default function ClientPortalPage() {
     ['#domande-consulente', 'Domande', clientQuestions.length > 0],
     ['#situazione-banche', 'Banche', showBankSituationSection],
     ['#finanziamenti', 'Finanziamenti', showFinancingSection],
+    ['#costi-bancari', 'Costi bancari', true],
   ];
 
   return (
@@ -1347,6 +1349,22 @@ export default function ClientPortalPage() {
             </CardContent>
           </Card>
         )}
+
+        <Card id="costi-bancari" className="scroll-mt-24 border-indigo-200 bg-indigo-50/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">🏦 Analisi costi bancari</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Riepilogo dei costi rilevati dagli estratti conto già analizzati nella pratica.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <AnalisiCostiBancari
+              practiceId={practice.id}
+              accessCode={session.codice}
+              clientEmail={session.email}
+            />
+          </CardContent>
+        </Card>
 
         {/* ── Stepper stati pratica ───────────────────────────────────────── */}
         {(() => {

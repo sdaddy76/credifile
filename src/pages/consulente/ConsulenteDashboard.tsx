@@ -330,6 +330,9 @@ export default function ConsulenteDashboard() {
           <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" onClick={() => navigate('/consulente/profilo')}>
             <Settings className="w-4 h-4 md:mr-1" /> <span className="hidden md:inline">Profilo</span>
           </Button>
+          <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" onClick={() => navigate('/consulente/costi-bancari')}>
+            <TrendingUp className="w-4 h-4 md:mr-1" /> <span className="hidden md:inline">Costi bancari</span>
+          </Button>
           <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" onClick={() => navigate('/sicurezza-account')}>
             <ShieldCheck className="w-4 h-4 md:mr-1" /> <span className="hidden md:inline">Sicurezza</span>
           </Button>

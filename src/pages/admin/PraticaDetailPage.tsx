@@ -22,6 +22,7 @@ import BancabilitaTab from '@/components/BancabilitaTab';
 import ReputazioneTab from '@/components/ReputazioneTab';
 import RelazioneTab from '@/components/RelazioneTab';
 import { EstrattoConto } from '@/components/EstrattoConto';
+import { AnalisiCostiBancari } from '@/components/AnalisiCostiBancari';
 import AmlReportTab from '@/components/AmlReportTab';
 import DocumentCoherenceTab from '@/components/DocumentCoherenceTab';
 import PracticeTimelineCalendar from '@/components/PracticeTimelineCalendar';
@@ -2825,6 +2826,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="email-log" onClick={loadEmailLog}>📨 Storico</TabsTrigger>
               <TabsTrigger value="checklist" onClick={loadChecklist}>📋 Checklist {checklistItems.length > 0 ? `(${checklistItems.filter(i=>i.completata).length}/${checklistItems.length})` : ''}</TabsTrigger>
               <TabsTrigger value="estratto-conto">📊 Estratto Conto</TabsTrigger>
+              <TabsTrigger value="costi-bancari">🏦 Costi Bancari</TabsTrigger>
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
@@ -4846,6 +4848,10 @@ export default function PraticaDetailPage() {
 
             <TabsContent value="estratto-conto" className="mt-3">
               <EstrattoConto practiceId={practice.id} />
+            </TabsContent>
+
+            <TabsContent value="costi-bancari" className="mt-3">
+              <AnalisiCostiBancari practiceId={practice.id} />
             </TabsContent>
 
           </Tabs>
