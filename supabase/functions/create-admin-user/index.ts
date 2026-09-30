@@ -6,6 +6,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const responseJson = (body: Record<string, unknown>, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -13,9 +19,16 @@ serve(async (req) => {
     const { email, password, nome, ruolo, agent_id } = await req.json()
 
     if (!email || !password || !ruolo) {
-      return new Response(JSON.stringify({ error: 'email, password e ruolo obbligatori' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return responseJson({ success: false, error: 'email, password e ruolo obbligatori' })
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+      return responseJson({ success: false, error: 'Formato email non valido' })
+    }
+    if (String(password).length < 6) {
+      return responseJson({ success: false, error: 'Password minimo 6 caratteri' })
+    }
+    if (!['agente', 'supervisore_segreteria', 'segnalatore'].includes(ruolo)) {
+      return responseJson({ success: false, error: 'Ruolo non consentito da questa sezione' })
     }
 
     const supabase = createClient(
@@ -30,9 +43,7 @@ serve(async (req) => {
       .eq('email', email.trim().toLowerCase())
       .maybeSingle()
     if (existing) {
-      return new Response(JSON.stringify({ error: `Un account con email ${email} esiste già (ruolo: ${existing.ruolo})` }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return responseJson({ success: false, error: `Un account con email ${email} esiste già (ruolo: ${existing.ruolo})` })
     }
 
     // Crea utente via Admin API (non disconnette l'admin corrente)
@@ -44,33 +55,36 @@ serve(async (req) => {
     })
 
     if (userError || !userData.user) {
-      return new Response(JSON.stringify({ error: userError?.message ?? 'Errore creazione utente' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return responseJson({ success: false, error: userError?.message ?? 'Errore creazione utente' })
     }
 
     // Aggiorna profilo con ruolo scelto (il trigger ha già inserito 'agente')
-    await supabase.from('admin_profiles').upsert({
+    const { error: profileError } = await supabase.from('admin_profiles').upsert({
       id: userData.user.id,
       email: email.trim().toLowerCase(),
       nome: nome || null,
       ruolo,
     })
+    if (profileError) {
+      await supabase.auth.admin.deleteUser(userData.user.id)
+      return responseJson({ success: false, error: `Profilo non creato: ${profileError.message}` })
+    }
 
     // Se segnalatore e agent_id fornito, crea il collegamento automatico
     if (ruolo === 'segnalatore' && agent_id) {
-      await supabase.from('agent_segnalatori').insert({
+      const { error: linkError } = await supabase.from('agent_segnalatori').upsert({
         agent_id,
         segnalatore_id: userData.user.id,
-      })
+      }, { onConflict: 'agent_id,segnalatore_id' })
+      if (linkError) {
+        await supabase.from('admin_profiles').delete().eq('id', userData.user.id)
+        await supabase.auth.admin.deleteUser(userData.user.id)
+        return responseJson({ success: false, error: `Collegamento all’agente non creato: ${linkError.message}` })
+      }
     }
 
-    return new Response(JSON.stringify({ success: true, id: userData.user.id }), {
-      status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    return responseJson({ success: true, id: userData.user.id })
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    return responseJson({ success: false, error: String(e) })
   }
 })

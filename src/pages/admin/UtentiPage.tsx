@@ -228,28 +228,46 @@ export default function UtentiPage() {
     }
     setSaving(true);
 
-    // Usa Edge Function con service_role — non disconnette l'admin corrente
-    const { data, error } = await supabase.functions.invoke('create-admin-user', {
-      body: {
-        email: newEmail.trim().toLowerCase(),
-        password: newPassword,
-        nome: newNome || null,
-        ruolo: newRuolo,
-        agent_id: newRuolo === 'segnalatore' && newAgentId ? newAgentId : undefined,
-      },
-    });
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        toast.error('Sessione scaduta: effettua nuovamente l’accesso');
+        setSaving(false);
+        return;
+      }
 
-    if (error || !data?.success) {
-      toast.error(error?.message ?? data?.error ?? 'Errore nella creazione utente');
+      const response = await fetch('/api/create-admin-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          email: newEmail.trim().toLowerCase(),
+          password: newPassword,
+          nome: newNome || null,
+          ruolo: newRuolo,
+          agent_id: newRuolo === 'segnalatore' && newAgentId ? newAgentId : undefined,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data?.success) {
+        toast.error(data?.error ?? `Errore nella creazione utente (${response.status})`);
+        setSaving(false);
+        return;
+      }
+
+      toast.success(`Utente ${newEmail} creato con ruolo "${newRuolo}"`);
       setSaving(false);
-      return;
+      setShowCreate(false);
+      setNewEmail(''); setNewPassword(''); setNewNome(''); setNewRuolo('agente'); setNewAgentId('');
+      load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Errore di rete durante la creazione utente');
+      setSaving(false);
     }
-
-    toast.success(`Utente ${newEmail} creato con ruolo "${newRuolo}"`);
-    setSaving(false);
-    setShowCreate(false);
-    setNewEmail(''); setNewPassword(''); setNewNome(''); setNewRuolo('agente'); setNewAgentId('');
-    load();
   };
 
   // Ruoli che non possono essere modificati tramite questa UI
