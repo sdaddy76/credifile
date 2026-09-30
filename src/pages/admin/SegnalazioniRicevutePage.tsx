@@ -33,6 +33,10 @@ interface Segnalazione {
   numero_pratica?: string | null;
   piva?: string | null;
   tipo_richiesta?: string | null;
+  segnalatore_id?: string | null;
+  financing_amount?: number | null;
+  financing_type?: string | null;
+  financing_request?: string | null;
   disclaimer_pagamento_accettato_at?: string | null;
   privacy_consent_accepted_at?: string | null;
   agente?: { nome: string; nome_cognome: string } | null;
@@ -300,6 +304,11 @@ export default function SegnalazioniRicevutePage() {
           numero_pratica: numeroPratica,
           status: 'raccolta_documenti',
           note_admin: `Valutazione autonoma avviata dalla richiesta pubblica ${seg.id}.`,
+          importo_richiesto: seg.financing_amount ?? null,
+          motivazione: [
+            seg.financing_type ? `Prodotto richiesto: ${seg.financing_type}` : null,
+            seg.financing_request || null,
+          ].filter(Boolean).join('\n\n') || null,
           created_by: user?.id ?? null,
           assigned_to: seg.agente_id ?? null,
         })
@@ -332,36 +341,50 @@ export default function SegnalazioniRicevutePage() {
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLocaleLowerCase('it-IT');
-      const visuraDocument = (practiceDocuments ?? []).find(document =>
-        normalizeName(document.nome).includes('visura')
-      );
       const receivedFiles = (seg.file_urls ?? []).filter(file => Boolean(file.path));
-      if (visuraDocument && receivedFiles.length > 0) {
-        const visuraFile = receivedFiles.find(file => normalizeName(file.nome).includes('visura')) ?? receivedFiles[0];
-        const { error: visuraStatusError } = await supabase
-          .from('practice_documents')
-          .update({
-            status: 'caricato',
-            uploaded_at: new Date().toISOString(),
-            note_rifiuto: null,
-          })
-          .eq('id', visuraDocument.id);
-        if (visuraStatusError) throw visuraStatusError;
+      if (receivedFiles.length > 0) {
+        const unmatchedFiles = [...receivedFiles];
+        const matchedRows: { file: NonNullable<Segnalazione['file_urls']>[number]; document: { id: string; nome: string } }[] = [];
+        for (const document of practiceDocuments ?? []) {
+          const documentName = normalizeName(document.nome);
+          const fileIndex = unmatchedFiles.findIndex(file => {
+            const fileName = normalizeName(file.nome);
+            return fileName.includes(documentName) || documentName.includes(fileName);
+          });
+          if (fileIndex < 0) continue;
+          const [file] = unmatchedFiles.splice(fileIndex, 1);
+          matchedRows.push({ file, document });
+        }
 
-        const { error: fileError } = await supabase.from('uploaded_files').insert({
-          practice_document_id: visuraDocument.id,
-          practice_id: practice.id,
-          nome_file: visuraFile.nome,
-          storage_path: visuraFile.path,
-          mime_type: visuraFile.mime_type ?? 'application/pdf',
-          dimensione: visuraFile.dimensione ?? null,
-          uploaded_by: 'cliente',
-        });
-        if (fileError) throw fileError;
+        if (matchedRows.length > 0) {
+          const uploadedAt = new Date().toISOString();
+          const { error: statusError } = await supabase
+            .from('practice_documents')
+            .update({
+              status: 'caricato',
+              uploaded_at: uploadedAt,
+              note_rifiuto: null,
+            })
+            .in('id', matchedRows.map(row => row.document.id));
+          if (statusError) throw statusError;
 
-        // Gli eventuali allegati già ricevuti vengono conservati come
-        // documenti liberi già caricati, senza trasformarli in richieste.
-        const extraFiles = receivedFiles.filter(file => file !== visuraFile);
+          const { error: filesError } = await supabase.from('uploaded_files').insert(
+            matchedRows.map(({ file, document }) => ({
+              practice_document_id: document.id,
+              practice_id: practice.id,
+              nome_file: file.nome,
+              storage_path: file.path,
+              mime_type: file.mime_type ?? null,
+              dimensione: file.dimensione ?? null,
+              uploaded_by: 'segnalatore',
+            }))
+          );
+          if (filesError) throw filesError;
+        }
+
+        // Gli eventuali allegati non riconducibili a un documento standard
+        // restano conservati come documenti liberi già caricati.
+        const extraFiles = unmatchedFiles;
         if (extraFiles.length > 0) {
           const { data: extraDocs, error: extraDocsError } = await supabase
             .from('practice_documents')
@@ -383,7 +406,7 @@ export default function SegnalazioniRicevutePage() {
             storage_path: file.path,
             mime_type: file.mime_type ?? null,
             dimensione: file.dimensione ?? null,
-            uploaded_by: 'cliente',
+            uploaded_by: 'segnalatore',
           }));
           const { error: extraFilesError } = await supabase.from('uploaded_files').insert(extraFileRows);
           if (extraFilesError) throw extraFilesError;
@@ -412,8 +435,11 @@ export default function SegnalazioniRicevutePage() {
         .single();
       if (accessError) throw accessError;
 
+      const receivedDocumentNames = receivedFiles.map(file => normalizeName(file.nome));
       const pendingDocuments = (practiceDocuments ?? [])
-        .filter(document => document.id !== visuraDocument?.id)
+        .filter(document => !receivedDocumentNames.some(fileName =>
+          fileName.includes(normalizeName(document.nome)) || normalizeName(document.nome).includes(fileName)
+        ))
         .map(document => document.nome);
       let agentEmail: string | null = null;
       if (seg.agente_id) {
@@ -509,7 +535,7 @@ export default function SegnalazioniRicevutePage() {
             <Inbox className="w-6 h-6 text-orange-500" /> Segnalazioni Ricevute
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Segnalazioni inviate dal modulo pubblico — assegna ogni lead a un agente
+            Segnalazioni inviate dal modulo pubblico o dai segnalatori — assegna e avvia la lavorazione
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5">
@@ -607,6 +633,11 @@ export default function SegnalazioniRicevutePage() {
                             Richiesta valutazione · Impresa
                           </Badge>
                         )}
+                        {seg.tipo_richiesta === 'segnalazione_segnalatore' && (
+                          <Badge className="text-[10px] bg-orange-100 text-orange-800 border-orange-200">
+                            Inviata da Segnalatore
+                          </Badge>
+                        )}
                         {seg.tipo_richiesta === 'richiesta_su_pratica_esistente' && (
                           <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200">
                             P.IVA già in lavorazione
@@ -659,6 +690,18 @@ export default function SegnalazioniRicevutePage() {
                           {seg.note}
                         </p>
                       )}
+                      {(seg.financing_amount || seg.financing_type || seg.financing_request) && (
+                        <div className="mt-2 max-w-xl rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-950">
+                          <p className="font-semibold">Richiesta finanziaria</p>
+                          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                            {seg.financing_amount != null && (
+                              <span>Importo: <strong>€ {Number(seg.financing_amount).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong></span>
+                            )}
+                            {seg.financing_type && <span>Prodotto: <strong>{seg.financing_type}</strong></span>}
+                          </div>
+                          {seg.financing_request && <p className="mt-1 whitespace-pre-wrap">{seg.financing_request}</p>}
+                        </div>
+                      )}
                       {/* Documenti allegati */}
                       {seg.file_urls && seg.file_urls.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -678,7 +721,7 @@ export default function SegnalazioniRicevutePage() {
                     </div>
                     {/* Cambio stato rapido */}
                     <div className="flex items-center gap-1 shrink-0">
-                      {seg.tipo_richiesta === 'report_autonomo' && !seg.practice_id && (
+                      {['report_autonomo', 'segnalazione_segnalatore'].includes(seg.tipo_richiesta ?? '') && !seg.practice_id && (
                         <Button
                           size="sm"
                           variant="outline"

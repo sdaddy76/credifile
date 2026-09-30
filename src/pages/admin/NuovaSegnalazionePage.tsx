@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { Upload, X, FileText, Send, Plus, Loader2, CheckCircle2 } from 'lucide-react';
+import { extractPdfText, parseVisuraCompleta } from '@/lib/parseVisura';
 
 interface FileItem {
   id: string;
@@ -15,11 +17,37 @@ interface FileItem {
   nome: string; // nome descrittivo
 }
 
+const DOCUMENTI_OBBLIGATORI = [
+  { key: 'bilancio_depositato', label: 'Ultimo Bilancio Depositato' },
+  { key: 'bilancio_provvisorio', label: 'Bilancio provvisorio aggiornato' },
+  { key: 'atto_costitutivo', label: 'Atto costitutivo' },
+  { key: 'statuto', label: 'Statuto' },
+] as const;
+
+const TIPI_PRODOTTO = [
+  'Finanziamento',
+  'Mutuo',
+  'Fido / affidamento',
+  'Leasing strumentale',
+  'Leasing immobiliare',
+  'Factoring',
+  'Altro',
+] as const;
+
+const safeStorageName = (name: string) => name
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-zA-Z0-9._-]/g, '_')
+  .replace(/_+/g, '_')
+  .replace(/^[_\\.]+|[_\\.]+$/g, '')
+  .slice(0, 140) || 'documento';
+
 export default function NuovaSegnalazionePage() {
   const { user } = useAuth();
 
-  // Campi cliente
+  // Dati estratti dalla visura e recapiti del cliente
   const [ragioneSociale, setRagioneSociale] = useState('');
+  const [piva, setPiva]                   = useState('');
   const [cellulare, setCellulare]           = useState('');
   const [emailCliente, setEmailCliente]     = useState('');
   const [note, setNote]                     = useState('');
@@ -28,21 +56,60 @@ export default function NuovaSegnalazionePage() {
   const [visura,    setVisura]    = useState<File | null>(null);
   const visuraRef                 = useRef<HTMLInputElement>(null);
 
-  // Altri documenti (opzionali)
+  // Documenti obbligatori e allegati opzionali
+  const [documentiObbligatori, setDocumentiObbligatori] =
+    useState<Record<string, File | null>>({});
   const [altriDocs, setAltriDocs] = useState<FileItem[]>([]);
   const altriRef                  = useRef<HTMLInputElement>(null);
+
+  // Richiesta finanziaria
+  const [importoRichiesto, setImportoRichiesto] = useState('');
+  const [tipoProdotto, setTipoProdotto] = useState('');
+  const [motivazioneRichiesta, setMotivazioneRichiesta] = useState('');
 
   // Stato invio
   const [sending, setSending]   = useState(false);
   const [inviata, setInviata]   = useState(false);
 
   // ── Gestione visura ────────────────────────────────────────────────────────
-  const handleVisura = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVisura = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
     if (f.type !== 'application/pdf') { toast.error('La visura deve essere un PDF'); return; }
     if (f.size > 30 * 1024 * 1024) { toast.error('File troppo grande (max 30 MB)'); return; }
-    setVisura(f);
+    try {
+      const parsed = parseVisuraCompleta(await extractPdfText(await f.arrayBuffer()));
+      const extractedName = parsed.ragione_sociale?.trim() ?? '';
+      const extractedPiva = parsed.piva?.replace(/\D/g, '') ?? '';
+      if (!extractedName || !/^\d{11}$/.test(extractedPiva)) {
+        setVisura(null);
+        setRagioneSociale('');
+        setPiva('');
+        toast.error('Non riesco a leggere ragione sociale e P.IVA dalla visura. Carica un PDF testuale e non una scansione.');
+        return;
+      }
+      setVisura(f);
+      setRagioneSociale(extractedName);
+      setPiva(extractedPiva);
+      toast.success(`Dati estratti dalla visura: ${extractedName}`);
+    } catch (error) {
+      setVisura(null);
+      setRagioneSociale('');
+      setPiva('');
+      toast.error(`Impossibile analizzare la visura: ${error instanceof Error ? error.message : 'PDF non leggibile'}`);
+    }
+    e.target.value = '';
+  };
+
+  const handleDocumentoObbligatorio = (key: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 30 * 1024 * 1024) {
+      toast.error('File troppo grande (max 30 MB)');
+      e.target.value = '';
+      return;
+    }
+    setDocumentiObbligatori(prev => ({ ...prev, [key]: file }));
     e.target.value = '';
   };
 
@@ -63,23 +130,37 @@ export default function NuovaSegnalazionePage() {
     setAltriDocs(prev => prev.map(d => d.id === id ? { ...d, nome } : d));
 
   // ── Upload file su Supabase Storage ───────────────────────────────────────
-  const uploadFile = async (file: File, path: string): Promise<string | null> => {
-    const { error } = await supabase.storage
+  const uploadFile = async (file: File, path: string): Promise<{ url: string; path: string }> => {
+    const { error: uploadError } = await supabase.storage
       .from('practice-files')
-      .upload(path, file, { upsert: true });
-    if (error) { console.error('Upload error:', error); return null; }
+      .upload(path, file, { upsert: false, cacheControl: '3600' });
+    if (uploadError) {
+      throw new Error(`Upload "${file.name}" non riuscito: ${uploadError.message}`);
+    }
 
-    // Genera URL firmato lungo (10 anni)
-    const { data } = await supabase.storage
+    // Genera URL firmato lungo per il destinatario della segnalazione.
+    const { data, error: signedUrlError } = await supabase.storage
       .from('practice-files')
       .createSignedUrl(path, 315360000);
-    return data?.signedUrl ?? null;
+    if (signedUrlError || !data?.signedUrl) {
+      throw new Error(`Impossibile creare il link del documento "${file.name}": ${signedUrlError?.message ?? 'URL non disponibile'}`);
+    }
+    return { url: data.signedUrl, path };
   };
 
   // ── Invio segnalazione ─────────────────────────────────────────────────────
   const handleInvia = async () => {
     if (!ragioneSociale.trim()) { toast.error('Inserisci la ragione sociale'); return; }
+    if (!/^\d{11}$/.test(piva)) { toast.error('La P.IVA non è stata letta correttamente dalla visura'); return; }
     if (!visura)                { toast.error('Carica la visura camerale (PDF)'); return; }
+    const mancanti = DOCUMENTI_OBBLIGATORI.filter(documento => !documentiObbligatori[documento.key]);
+    if (mancanti.length > 0) {
+      toast.error(`Carica i documenti obbligatori: ${mancanti.map(documento => documento.label).join(', ')}`);
+      return;
+    }
+    if (!tipoProdotto) { toast.error('Seleziona la tipologia di finanziamento o leasing'); return; }
+    if (!importoRichiesto || Number(importoRichiesto) <= 0) { toast.error('Inserisci un importo richiesto valido'); return; }
+    if (!motivazioneRichiesta.trim()) { toast.error('Descrivi la richiesta e la motivazione'); return; }
     if (!user?.id)              { toast.error('Sessione scaduta, ricarica la pagina'); return; }
 
     setSending(true);
@@ -88,16 +169,39 @@ export default function NuovaSegnalazionePage() {
       const base = `segnalazioni/${user.id}/${ts}`;
 
       // Upload visura
-      const visuraUrl = await uploadFile(visura, `${base}/visura_${visura.name}`);
-      if (!visuraUrl) throw new Error('Errore upload visura');
+      const visuraUpload = await uploadFile(visura, `${base}/visura_${safeStorageName(visura.name)}`);
 
       // Upload altri documenti
-      const fileUrls: { nome: string; url: string }[] = [
-        { nome: `Visura Camerale — ${visura.name}`, url: visuraUrl },
+      const fileUrls: { nome: string; url: string; path: string; mime_type?: string; dimensione?: number }[] = [
+        {
+          nome: `Visura Camerale — ${visura.name}`,
+          url: visuraUpload.url,
+          path: visuraUpload.path,
+          mime_type: visura.type,
+          dimensione: visura.size,
+        },
       ];
+      for (const documento of DOCUMENTI_OBBLIGATORI) {
+        const file = documentiObbligatori[documento.key];
+        if (!file) continue;
+        const upload = await uploadFile(file, `${base}/${documento.key}_${safeStorageName(file.name)}`);
+        fileUrls.push({
+          nome: documento.label,
+          url: upload.url,
+          path: upload.path,
+          mime_type: file.type,
+          dimensione: file.size,
+        });
+      }
       for (const doc of altriDocs) {
-        const url = await uploadFile(doc.file, `${base}/${doc.file.name}`);
-        if (url) fileUrls.push({ nome: doc.nome || doc.file.name, url });
+        const upload = await uploadFile(doc.file, `${base}/${safeStorageName(doc.file.name)}`);
+        fileUrls.push({
+          nome: doc.nome || doc.file.name,
+          url: upload.url,
+          path: upload.path,
+          mime_type: doc.file.type,
+          dimensione: doc.file.size,
+        });
       }
 
       // Invia notifica email via API
@@ -107,9 +211,13 @@ export default function NuovaSegnalazionePage() {
         body: JSON.stringify({
           segnalatore_id: user.id,
           ragione_sociale: ragioneSociale.trim(),
+          piva,
           cellulare:       cellulare.trim() || null,
           email_cliente:   emailCliente.trim() || null,
           note:            note.trim() || null,
+          financing_amount: Number(importoRichiesto),
+          financing_type: tipoProdotto,
+          financing_request: motivazioneRichiesta.trim(),
           file_urls:       fileUrls,
         }),
       });
@@ -127,8 +235,9 @@ export default function NuovaSegnalazionePage() {
   };
 
   const handleNuova = () => {
-    setRagioneSociale(''); setCellulare(''); setEmailCliente(''); setNote('');
-    setVisura(null); setAltriDocs([]); setInviata(false);
+    setRagioneSociale(''); setPiva(''); setCellulare(''); setEmailCliente(''); setNote('');
+    setVisura(null); setDocumentiObbligatori({}); setAltriDocs([]); setInviata(false);
+    setImportoRichiesto(''); setTipoProdotto(''); setMotivazioneRichiesta('');
   };
 
   // ── Successo ───────────────────────────────────────────────────────────────
@@ -164,19 +273,23 @@ export default function NuovaSegnalazionePage() {
         </p>
       </div>
 
-      {/* Dati cliente */}
+      {/* Dati cliente: compilati automaticamente dalla visura */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold">👤 Dati Cliente</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
-            <Label>Ragione Sociale <span className="text-red-500">*</span></Label>
-            <Input
-              placeholder="Es. Acme S.r.l."
-              value={ragioneSociale}
-              onChange={e => setRagioneSociale(e.target.value)}
-            />
+            <Label>Ragione Sociale <span className="text-xs font-normal text-muted-foreground">(letta dalla visura)</span></Label>
+            <div className="min-h-10 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              {ragioneSociale || <span className="text-muted-foreground">Carica prima la visura camerale</span>}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>P.IVA <span className="text-xs font-normal text-muted-foreground">(letta dalla visura)</span></Label>
+            <div className="min-h-10 rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm">
+              {piva || <span className="font-sans text-muted-foreground">Carica prima la visura camerale</span>}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -228,6 +341,89 @@ export default function NuovaSegnalazionePage() {
               <input ref={visuraRef} type="file" accept="application/pdf" className="hidden" onChange={handleVisura} />
             </label>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Documenti obbligatori */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold">📚 Documenti obbligatori</CardTitle>
+          <p className="text-xs text-muted-foreground">Carica tutti i documenti richiesti per poter inviare la segnalazione.</p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {DOCUMENTI_OBBLIGATORI.map(documento => {
+            const file = documentiObbligatori[documento.key];
+            return (
+              <div key={documento.key} className="flex items-center gap-3 rounded-lg border p-3">
+                <FileText className={`w-5 h-5 shrink-0 ${file ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{documento.label} <span className="text-red-500">*</span></p>
+                  <p className="text-xs text-muted-foreground truncate">{file?.name ?? 'Nessun file caricato'}</p>
+                </div>
+                <label className="cursor-pointer">
+                  <Button size="sm" variant="outline" className="pointer-events-none" asChild>
+                    <span>{file ? 'Sostituisci' : 'Carica'}</span>
+                  </Button>
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={e => handleDocumentoObbligatorio(documento.key, e)}
+                  />
+                </label>
+                {file && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => setDocumentiObbligatori(prev => ({ ...prev, [documento.key]: null }))}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {/* Richiesta di finanziamento o leasing */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold">💶 Richiesta finanziaria</CardTitle>
+          <p className="text-xs text-muted-foreground">Indica importo, prodotto richiesto e motivazione dell'operazione.</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>Importo richiesto (€) <span className="text-red-500">*</span></Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Es. 100000"
+                value={importoRichiesto}
+                onChange={e => setImportoRichiesto(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Tipologia prodotto <span className="text-red-500">*</span></Label>
+              <Select value={tipoProdotto} onValueChange={setTipoProdotto}>
+                <SelectTrigger><SelectValue placeholder="Seleziona..." /></SelectTrigger>
+                <SelectContent>
+                  {TIPI_PRODOTTO.map(tipo => <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Richiesta e motivazione <span className="text-red-500">*</span></Label>
+            <Textarea
+              rows={4}
+              placeholder="Descrivi cosa deve finanziare il cliente e le finalità dell'operazione..."
+              value={motivazioneRichiesta}
+              onChange={e => setMotivazioneRichiesta(e.target.value)}
+            />
+          </div>
         </CardContent>
       </Card>
 
@@ -290,7 +486,16 @@ export default function NuovaSegnalazionePage() {
       <Button
         className="w-full gap-2 bg-orange-600 hover:bg-orange-700 h-12 text-base"
         onClick={handleInvia}
-        disabled={sending || !ragioneSociale.trim() || !visura}
+        disabled={
+          sending ||
+          !ragioneSociale.trim() ||
+          !/^\d{11}$/.test(piva) ||
+          !visura ||
+          DOCUMENTI_OBBLIGATORI.some(documento => !documentiObbligatori[documento.key]) ||
+          !tipoProdotto ||
+          !importoRichiesto ||
+          !motivazioneRichiesta.trim()
+        }
       >
         {sending
           ? <><Loader2 className="w-4 h-4 animate-spin" /> Invio in corso...</>
