@@ -560,6 +560,8 @@ export default function PraticaDetailPage() {
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTpl[]>([]);
   const [loadingChecklist, setLoadingChecklist] = useState(false);
   const [selectedTplId, setSelectedTplId] = useState('');
+  const [newChecklistItemName, setNewChecklistItemName] = useState('');
+  const [addingChecklistItem, setAddingChecklistItem] = useState(false);
 
   const loadChecklist = async () => {
     if (!id) return;
@@ -577,11 +579,59 @@ export default function PraticaDetailPage() {
     if (!selectedTplId || !id) return;
     const { data: tplItems } = await supabase.from('checklist_template_items').select('*').eq('template_id', selectedTplId).order('ordine');
     if (!tplItems?.length) { toast.error('Template vuoto'); return; }
-    const rows = tplItems.map(i => ({ practice_id: id, template_item_id: i.id, nome: i.nome, obbligatorio: i.obbligatorio, ordine: i.ordine, completata: false }));
+    const existingTemplateItemIds = new Set(checklistItems.map(item => item.template_item_id).filter(Boolean));
+    const existingNames = new Set(checklistItems.map(item => normalizeChecklistName(item.nome)));
+    const missingTemplateItems = tplItems.filter(item => (
+      !existingTemplateItemIds.has(item.id)
+      && !existingNames.has(normalizeChecklistName(item.nome))
+    ));
+    if (missingTemplateItems.length === 0) {
+      toast.info('Le voci del template sono già presenti nella checklist');
+      return;
+    }
+    const nextOrder = checklistItems.reduce((max, item) => Math.max(max, item.ordine ?? 0), 0) + 1;
+    const rows = missingTemplateItems.map((item, index) => ({
+      practice_id: id,
+      template_item_id: item.id,
+      nome: item.nome,
+      obbligatorio: item.obbligatorio,
+      ordine: nextOrder + index,
+      completata: false,
+    }));
     const { error } = await supabase.from('practice_checklist_items').insert(rows);
     if (error) { toast.error('Errore: ' + error.message); return; }
-    toast.success('Template applicato');
+    toast.success(`${rows.length} ${rows.length === 1 ? 'voce aggiunta' : 'voci aggiunte'}`);
     loadChecklist();
+  };
+
+  const addChecklistItem = async () => {
+    const nome = newChecklistItemName.trim();
+    if (!id || !nome) return;
+    if (checklistItems.some(item => normalizeChecklistName(item.nome) === normalizeChecklistName(nome))) {
+      toast.info('Questa voce è già presente nella checklist');
+      return;
+    }
+    setAddingChecklistItem(true);
+    const nextOrder = checklistItems.reduce((max, item) => Math.max(max, item.ordine ?? 0), 0) + 1;
+    const { data, error } = await supabase
+      .from('practice_checklist_items')
+      .insert({
+        practice_id: id,
+        nome,
+        obbligatorio: false,
+        ordine: nextOrder,
+        completata: false,
+      })
+      .select('*')
+      .single();
+    if (error) {
+      toast.error('Errore aggiunta voce: ' + error.message);
+    } else if (data) {
+      setChecklistItems(prev => [...prev, data as ChecklistItem]);
+      setNewChecklistItemName('');
+      toast.success('Voce aggiunta alla checklist');
+    }
+    setAddingChecklistItem(false);
   };
 
   const toggleChecklistItem = async (itemId: string, completata: boolean) => {
@@ -2804,29 +2854,31 @@ export default function PraticaDetailPage() {
         {/* Documenti + Log */}
         <div className="lg:col-span-2 space-y-4">
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList>
-              <TabsTrigger value="documenti">Documenti ({documents.length})</TabsTrigger>
-              <TabsTrigger value="banche">Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
-              <TabsTrigger value="finanziamenti">Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
-              <TabsTrigger value="analisi">Analisi Finanziaria</TabsTrigger>
-              <TabsTrigger value="coerenza">Coerenza Documentale</TabsTrigger>
-              <TabsTrigger value="bancabilita">Bancabilità</TabsTrigger>
-              <TabsTrigger value="reputazione">Reputazione</TabsTrigger>
+            <TabsList
+              aria-label="Sezioni della pratica"
+              className="!grid h-auto w-full grid-cols-2 items-stretch justify-start gap-1 rounded-lg bg-muted/70 p-1 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
+            >
+              <TabsTrigger value="documenti" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📄 Documenti ({documents.length})</TabsTrigger>
+              <TabsTrigger value="banche" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🏦 Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="finanziamenti" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">💳 Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="analisi" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📈 Analisi Finanziaria</TabsTrigger>
+              <TabsTrigger value="coerenza" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🔎 Coerenza Documentale</TabsTrigger>
+              <TabsTrigger value="bancabilita" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">✅ Bancabilità</TabsTrigger>
+              <TabsTrigger value="reputazione" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🛡️ Reputazione</TabsTrigger>
               {(isSuperAdmin || isSegreteria || isAgente) && (
-                <TabsTrigger value="aml">🛡️ AML</TabsTrigger>
+                <TabsTrigger value="aml" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🛡️ AML</TabsTrigger>
               )}
-              <TabsTrigger value="banche-ai">🤖 Banche AI</TabsTrigger>
-              <TabsTrigger value="scadenze">📅 Scadenze {deadlines.length > 0 ? `(${deadlines.length})` : ''}</TabsTrigger>
-              <TabsTrigger value="genera-doc" onClick={loadDocTemplates}>📝 Genera Doc</TabsTrigger>
-              <TabsTrigger value="relazione">📄 Relazione</TabsTrigger>
-              <TabsTrigger value="timeline" onClick={loadActivityLogs}>📋 Timeline</TabsTrigger>
-              <TabsTrigger value="log">Storico Stati</TabsTrigger>
-              <TabsTrigger value="note" onClick={loadNotes}>💬 Note {notes.length > 0 ? `(${notes.length})` : ''}</TabsTrigger>
-              <TabsTrigger value="task" onClick={loadPracticeTasks}>✅ Task {practiceTasks.filter(t=>t.stato!=='completata').length > 0 ? `(${practiceTasks.filter(t=>t.stato!=='completata').length})` : ''}</TabsTrigger>
-              <TabsTrigger value="email-log" onClick={loadEmailLog}>📨 Storico</TabsTrigger>
-              <TabsTrigger value="checklist" onClick={loadChecklist}>📋 Checklist {checklistItems.length > 0 ? `(${checklistItems.filter(i=>i.completata).length}/${checklistItems.length})` : ''}</TabsTrigger>
-              <TabsTrigger value="estratto-conto">📊 Estratto Conto</TabsTrigger>
-              <TabsTrigger value="costi-bancari">🏦 Costi Bancari</TabsTrigger>
+              <TabsTrigger value="banche-ai" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🤖 Banche AI</TabsTrigger>
+              <TabsTrigger value="scadenze" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📅 Scadenze {deadlines.length > 0 ? `(${deadlines.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="genera-doc" onClick={loadDocTemplates} className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📝 Genera documenti</TabsTrigger>
+              <TabsTrigger value="relazione" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📄 Relazione</TabsTrigger>
+              <TabsTrigger value="timeline" onClick={loadActivityLogs} className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📋 Timeline</TabsTrigger>
+              <TabsTrigger value="note" onClick={loadNotes} className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">💬 Note {notes.length > 0 ? `(${notes.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="task" onClick={loadPracticeTasks} className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">✅ Task {practiceTasks.filter(t=>t.stato!=='completata').length > 0 ? `(${practiceTasks.filter(t=>t.stato!=='completata').length})` : ''}</TabsTrigger>
+              <TabsTrigger value="email-log" onClick={loadEmailLog} className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📨 Invii email</TabsTrigger>
+              <TabsTrigger value="checklist" onClick={loadChecklist} className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📋 Checklist {checklistItems.length > 0 ? `(${checklistItems.filter(i=>i.completata).length}/${checklistItems.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="estratto-conto" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📊 Estratto conto</TabsTrigger>
+              <TabsTrigger value="costi-bancari" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🏦 Costi bancari</TabsTrigger>
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
@@ -4183,28 +4235,6 @@ export default function PraticaDetailPage() {
               {id && <AmlReportTab practiceId={id} />}
             </TabsContent>
 
-            <TabsContent value="log" className="mt-3">
-              <div className="space-y-2">
-                {logs.map(log => (
-                  <div key={log.id} className="flex gap-3 items-start py-2">
-                    <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {log.old_status && <Badge variant="outline" className="text-xs">{STATUS_LABELS[log.old_status as keyof typeof STATUS_LABELS] ?? log.old_status}</Badge>}
-                        {log.old_status && <span className="text-xs text-muted-foreground">→</span>}
-                        <Badge className={`text-xs ${STATUS_COLORS[log.new_status as keyof typeof STATUS_COLORS] ?? 'bg-muted text-muted-foreground'}`}>{STATUS_LABELS[log.new_status as keyof typeof STATUS_LABELS] ?? log.new_status}</Badge>
-                      </div>
-                      {log.note && <p className="text-xs text-muted-foreground mt-0.5">{log.note}</p>}
-                      <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                        <Clock className="w-3 h-3" />{formatRomeDateTime(log.created_at)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-                {logs.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">Nessun cambio di stato registrato</p>}
-              </div>
-            </TabsContent>
-
             {/* ── Tab Banche AI ── */}
             <TabsContent value="banche-ai" className="mt-3 space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
@@ -4800,6 +4830,10 @@ export default function PraticaDetailPage() {
                   <RefreshCw className={`w-3 h-3 ${loadingChecklist ? 'animate-spin' : ''}`}/> Aggiorna
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Serve per controllare manualmente i documenti o gli adempimenti ancora da completare nella pratica.
+                Le voci della checklist sono interne e non sostituiscono la richiesta documenti al cliente.
+              </p>
 
               {/* Applica template */}
               {checklistTemplates.length > 0 && (
@@ -4813,6 +4847,33 @@ export default function PraticaDetailPage() {
                   </Button>
                 </div>
               )}
+
+              <div className="flex gap-2 items-center rounded-lg border border-dashed border-blue-200 bg-blue-50/40 p-3">
+                <Input
+                  value={newChecklistItemName}
+                  onChange={e => setNewChecklistItemName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void addChecklistItem();
+                    }
+                  }}
+                  placeholder="Aggiungi una voce manuale..."
+                  className="h-8 text-xs bg-background"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 shrink-0 gap-1.5 text-xs"
+                  onClick={() => void addChecklistItem()}
+                  disabled={addingChecklistItem || !newChecklistItemName.trim()}
+                >
+                  {addingChecklistItem
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Plus className="h-3 w-3" />}
+                  Aggiungi voce
+                </Button>
+              </div>
 
               {/* Riepilogo completamento */}
               {checklistItems.length > 0 && (
@@ -4829,7 +4890,7 @@ export default function PraticaDetailPage() {
               {loadingChecklist && <div className="flex justify-center py-6"><div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"/></div>}
               {!loadingChecklist && checklistItems.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  <ListChecks className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessuna voce — applica un template o aggiunge voci manualmente
+                  <ListChecks className="w-8 h-8 mx-auto mb-2 opacity-20"/>Nessuna voce — applica un template o aggiungi una voce manualmente
                 </div>
               )}
               {checklistItems.map(item => (
