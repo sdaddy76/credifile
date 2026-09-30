@@ -14,7 +14,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, apikey, x-client-info',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, apikey, x-client-info, x-supabase-anon-key',
   'Content-Type': 'application/json',
 };
 
@@ -47,9 +47,13 @@ export default async function handler(req, res) {
       : '';
     if (!accessToken) return reply(res, { success: false, error: 'Sessione non autorizzata' });
 
+    const browserAnonKey = req.headers['x-supabase-anon-key'];
+    const authApiKey = typeof browserAnonKey === 'string' && browserAnonKey.trim()
+      ? browserAnonKey.trim()
+      : SUPABASE_ANON_KEY;
     const callerResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: {
-        apikey: SUPABASE_ANON_KEY,
+        apikey: authApiKey,
         Authorization: `Bearer ${accessToken}`,
       },
     });
@@ -57,7 +61,7 @@ export default async function handler(req, res) {
     if (!callerResponse.ok || !caller?.id) {
       return reply(res, {
         success: false,
-        error: 'Sessione non valida o scaduta. Aggiorna la pagina e accedi nuovamente.',
+        error: `Sessione non riconosciuta dal progetto Supabase (HTTP ${callerResponse.status}). Aggiorna la pagina e accedi nuovamente.`,
       });
     }
 

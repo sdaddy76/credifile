@@ -242,6 +242,8 @@ export default function UtentiPage() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
+          'x-supabase-anon-key': import.meta.env.VITE_SUPABASE_ANON_KEY
+            || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZoaWVwcGpxbGVmZGxhbnZycGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNTYxOTksImV4cCI6MjA5NTYzMjE5OX0.tM0B5OyxF1-w9ed1-eEX09S_d5gehZnFUZEJCnXMVBQ',
         },
         body: JSON.stringify({
           email: newEmail.trim().toLowerCase(),
