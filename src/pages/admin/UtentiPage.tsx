@@ -229,10 +229,10 @@ export default function UtentiPage() {
     setSaving(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData.session?.access_token;
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      const accessToken = userData.user ? (await supabase.auth.getSession()).data.session?.access_token : null;
       if (!accessToken) {
-        toast.error('Sessione scaduta: effettua nuovamente l’accesso');
+        toast.error(userError?.message ?? 'Sessione scaduta: effettua nuovamente l’accesso');
         setSaving(false);
         return;
       }

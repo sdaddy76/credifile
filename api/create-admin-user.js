@@ -3,7 +3,12 @@
 // chiamante e gestisce auth.users, admin_profiles e l'eventuale assegnazione.
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://fhieppjqlefdlanvrpik.supabase.co';
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
+// Le variabili VITE_* sono disponibili al build client, ma non sempre vengono
+// esposte al runtime delle Serverless Function. La anon key è pubblica per
+// definizione e viene mantenuta come fallback per validare la sessione Auth.
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
+  || process.env.VITE_SUPABASE_ANON_KEY
+  || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZoaWVwcGpxbGVmZGxhbnZycGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNTYxOTksImV4cCI6MjA5NTYzMjE5OX0.tM0B5OyxF1-w9ed1-eEX09S_d5gehZnFUZEJCnXMVBQ';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const corsHeaders = {
@@ -44,13 +49,16 @@ export default async function handler(req, res) {
 
     const callerResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: {
-        apikey: SUPABASE_ANON_KEY || SUPABASE_SERVICE_ROLE_KEY,
+        apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${accessToken}`,
       },
     });
     const caller = await readJson(callerResponse);
     if (!callerResponse.ok || !caller?.id) {
-      return reply(res, { success: false, error: 'Sessione non valida o scaduta' });
+      return reply(res, {
+        success: false,
+        error: 'Sessione non valida o scaduta. Aggiorna la pagina e accedi nuovamente.',
+      });
     }
 
     const callerProfileResponse = await fetch(
