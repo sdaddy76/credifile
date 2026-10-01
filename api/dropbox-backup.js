@@ -148,6 +148,48 @@ async function dropboxDownloadBuffer(token, path) {
   return Buffer.from(await r.arrayBuffer());
 }
 
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, Math.max(1, items.length)) }, () => worker()),
+  );
+  return results;
+}
+
+function summarizeBackup(backup) {
+  const uploadedFiles = Array.isArray(backup?.uploaded_files) ? backup.uploaded_files : [];
+  const practices = Array.isArray(backup?.practices) ? backup.practices : [];
+  const clients = Array.isArray(backup?.clients) ? backup.clients : [];
+  const profiles = Array.isArray(backup?.admin_profiles) ? backup.admin_profiles : [];
+  const storageInventory = backup?._meta?.storage_inventory || {};
+  const hasPhysicalFileCount = Number.isFinite(Number(storageInventory.files_ok));
+  const usersByRole = profiles.reduce((roles, profile) => {
+    const role = String(profile?.ruolo || 'non_specificato');
+    roles[role] = (roles[role] || 0) + 1;
+    return roles;
+  }, {});
+
+  return {
+    files_saved: hasPhysicalFileCount
+      ? Number(storageInventory.files_ok)
+      : uploadedFiles.length,
+    files_saved_estimated: !hasPhysicalFileCount,
+    documents: uploadedFiles.length,
+    practices: practices.length,
+    clients: clients.length,
+    users_total: profiles.length,
+    users_by_role: usersByRole,
+  };
+}
+
 function supabaseHeaders(extra = {}) {
   return {
     'apikey': SUPABASE_KEY,
@@ -462,19 +504,31 @@ export default async function handler(req, res) {
     try {
       const token = await getDropboxToken();
       const entries = await listDropboxFolder(token, BACKUP_ROOT);
-      const backups = entries
+      const backupEntries = entries
         .filter(entry =>
           entry?.['.tag'] === 'file'
           && /^backup_\d{4}-\d{2}-\d{2}\.json$/i.test(String(entry.name || ''))
         )
         .sort((a, b) => String(b.server_modified || '').localeCompare(String(a.server_modified || '')))
-        .slice(0, 20)
-        .map(entry => ({
+        .slice(0, 20);
+      const backups = await mapWithConcurrency(backupEntries, 3, async entry => {
+        let stats = null;
+        let statsError = null;
+        try {
+          const raw = await dropboxDownloadBuffer(token, entry.path_display);
+          stats = summarizeBackup(JSON.parse(raw.toString('utf8')));
+        } catch (error) {
+          statsError = error instanceof Error ? error.message : String(error);
+        }
+        return {
           name: entry.name,
           path: entry.path_display,
           size: entry.size ?? null,
           server_modified: entry.server_modified ?? null,
-        }));
+          stats,
+          stats_error: statsError,
+        };
+      });
       const latestEntry = entries.find(entry => entry.name === 'backup_latest.json');
       return res.status(200).json({
         ok: true,

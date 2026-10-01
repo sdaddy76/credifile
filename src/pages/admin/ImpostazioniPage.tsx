@@ -23,6 +23,16 @@ interface DropboxBackup {
   path: string;
   size?: number | null;
   server_modified?: string | null;
+  stats?: {
+    files_saved?: number;
+    files_saved_estimated?: boolean;
+    documents?: number;
+    practices?: number;
+    clients?: number;
+    users_total?: number;
+    users_by_role?: Record<string, number>;
+  } | null;
+  stats_error?: string | null;
 }
 
 interface DropboxVerification {
@@ -47,6 +57,19 @@ function formatBackupSize(size?: number | null) {
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: 'Super Admin',
+  agente: 'Agenti',
+  consulente: 'Consulenti',
+  segnalatore: 'Segnalatori',
+  banca: 'Utenti banca',
+  supervisore_segreteria: 'Segreterie',
+  segreteria: 'Segreterie',
+  collaboratore: 'Collaboratori',
+  commercialista: 'Commercialisti',
+  non_specificato: 'Ruolo non specificato',
+};
 
 export default function ImpostazioniPage() {
   const { user, session, isSegreteria, isSuperAdmin } = useAuth();
@@ -379,13 +402,47 @@ export default function ImpostazioniPage() {
               ) : (
                 <div className="divide-y divide-blue-50">
                   {dropboxBackups.map(backup => (
-                    <div key={backup.path} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
-                      <div className="min-w-0">
+                    <div key={backup.path} className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium truncate">{backup.name}</p>
                         <p className="text-xs text-muted-foreground">
                           {backup.server_modified ? formatRomeDateTime(backup.server_modified) : 'Data non disponibile'}
                           {backup.size ? ` · ${formatBackupSize(backup.size)}` : ''}
                         </p>
+                        {backup.stats ? (
+                          <div className="mt-2 space-y-1.5">
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-800">
+                                File: {backup.stats.files_saved ?? 0}
+                                {backup.stats.files_saved_estimated ? ' (da registro)' : ''}
+                              </span>
+                              <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
+                                Documenti: {backup.stats.documents ?? 0}
+                              </span>
+                              <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
+                                Pratiche: {backup.stats.practices ?? 0}
+                              </span>
+                              <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
+                                Clienti: {backup.stats.clients ?? 0}
+                              </span>
+                              <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
+                                Utenti: {backup.stats.users_total ?? 0}
+                              </span>
+                            </div>
+                            {backup.stats.users_by_role && Object.keys(backup.stats.users_by_role).length > 0 && (
+                              <p className="text-[11px] text-muted-foreground">
+                                {Object.entries(backup.stats.users_by_role)
+                                  .sort(([roleA], [roleB]) => roleA.localeCompare(roleB))
+                                  .map(([role, count]) => `${ROLE_LABELS[role] ?? role}: ${count}`)
+                                  .join(' · ')}
+                              </p>
+                            )}
+                          </div>
+                        ) : backup.stats_error ? (
+                          <p className="mt-1 text-[11px] text-amber-700">
+                            Conteggi non disponibili per questo backup.
+                          </p>
+                        ) : null}
                       </div>
                       <button
                         type="button"
