@@ -304,6 +304,58 @@ async function restoreBackup(token, backupPath) {
   };
 }
 
+async function verifyLatestBackup(token) {
+  const latestPath = `${BACKUP_ROOT}/backup_latest.json`;
+  const raw = await dropboxDownloadBuffer(token, latestPath);
+  let backup;
+  try {
+    backup = JSON.parse(raw.toString('utf8'));
+  } catch {
+    throw new Error('Il backup_latest.json non contiene JSON valido');
+  }
+  if (!backup || typeof backup !== 'object' || !backup._meta) {
+    throw new Error('Formato backup_latest.json non riconosciuto');
+  }
+
+  const currentStoragePaths = await listStorageFiles();
+  const dropboxEntries = await listDropboxFolder(token, FILES_ROOT, true);
+  const fileEntries = dropboxEntries.filter(entry =>
+    entry?.['.tag'] === 'file' && typeof entry.path_display === 'string'
+  );
+  const prefix = `${FILES_ROOT}/`;
+  const dropboxPaths = new Set(
+    fileEntries
+      .filter(entry => entry.path_display.startsWith(prefix))
+      .map(entry => entry.path_display.slice(prefix.length)),
+  );
+  const missingCurrentPaths = currentStoragePaths.filter(path => !dropboxPaths.has(path));
+  const storageInventory = backup._meta.storage_inventory || {};
+  const backupFileCount = Number(storageInventory.backup_files ?? 0);
+  const backupFilesOk = Number(storageInventory.files_ok ?? 0);
+  const backupFilesErr = Number(storageInventory.files_err ?? 0);
+  const backupFilesPending = Number(storageInventory.files_pending ?? 0);
+  const dropboxFilesBytes = fileEntries.reduce(
+    (total, entry) => total + (Number(entry.size) || 0),
+    0,
+  );
+
+  return {
+    backup_date: backup._meta.date ?? null,
+    backup_json_bytes: raw.length,
+    backup_file_count: backupFileCount,
+    backup_files_ok: backupFilesOk,
+    backup_files_err: backupFilesErr,
+    backup_files_pending: backupFilesPending,
+    current_storage_files: currentStoragePaths.length,
+    dropbox_files: fileEntries.length,
+    dropbox_files_bytes: dropboxFilesBytes,
+    missing_current_files: missingCurrentPaths.length,
+    missing_current_paths: missingCurrentPaths.slice(0, 50),
+    complete_at_backup: backupFilesErr === 0 && backupFilesPending === 0,
+    current_files_present_on_dropbox: missingCurrentPaths.length === 0,
+  };
+}
+
 // ── Supabase helpers ─────────────────────────────────────────────────────────
 
 async function queryTable(table) {
@@ -434,6 +486,21 @@ export default async function handler(req, res) {
           : null,
         backups,
       });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (action === 'verify') {
+    const admin = await getAuthenticatedSuperAdmin(req);
+    if (!admin) return res.status(401).json({ ok: false, error: 'Accesso riservato al Super Admin' });
+    try {
+      const token = await getDropboxToken();
+      const verification = await verifyLatestBackup(token);
+      return res.status(200).json({ ok: true, ...verification });
     } catch (error) {
       return res.status(502).json({
         ok: false,

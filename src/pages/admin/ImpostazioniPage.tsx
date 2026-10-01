@@ -25,6 +25,22 @@ interface DropboxBackup {
   server_modified?: string | null;
 }
 
+interface DropboxVerification {
+  backup_date?: string | null;
+  backup_json_bytes?: number;
+  backup_file_count?: number;
+  backup_files_ok?: number;
+  backup_files_err?: number;
+  backup_files_pending?: number;
+  current_storage_files?: number;
+  dropbox_files?: number;
+  dropbox_files_bytes?: number;
+  missing_current_files?: number;
+  missing_current_paths?: string[];
+  complete_at_backup?: boolean;
+  current_files_present_on_dropbox?: boolean;
+}
+
 function formatBackupSize(size?: number | null) {
   if (!size || size < 1024) return size ? `${size} B` : '';
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
@@ -42,6 +58,8 @@ export default function ImpostazioniPage() {
   const [dropboxBackups, setDropboxBackups] = useState<DropboxBackup[]>([]);
   const [dropboxBackupsLoading, setDropboxBackupsLoading] = useState(false);
   const [restoringBackup, setRestoringBackup] = useState<string | null>(null);
+  const [dropboxVerification, setDropboxVerification] = useState<DropboxVerification | null>(null);
+  const [dropboxVerificationLoading, setDropboxVerificationLoading] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -191,6 +209,28 @@ export default function ImpostazioniPage() {
     }
   };
 
+  const verifyDropboxBackup = async () => {
+    if (!session?.access_token) return;
+    setDropboxVerificationLoading(true);
+    try {
+      const res = await fetch('/api/dropbox-backup?action=verify', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error ?? 'Verifica non disponibile');
+      setDropboxVerification(json as DropboxVerification);
+      if (json.complete_at_backup && json.current_files_present_on_dropbox) {
+        toast.success('Verifica completata: i documenti risultano presenti su Dropbox');
+      } else {
+        toast.warning('Verifica completata: sono presenti documenti da controllare', { duration: 10000 });
+      }
+    } catch (error) {
+      toast.error(`Impossibile verificare i documenti: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setDropboxVerificationLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (isSuperAdmin && session?.access_token) void loadDropboxBackups();
   }, [isSuperAdmin, session?.access_token]);
@@ -306,16 +346,28 @@ export default function ImpostazioniPage() {
             <div className="border border-blue-100 bg-white rounded-lg px-4 py-3 space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-medium text-sm text-foreground">Ultimi backup disponibili</div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={loadDropboxBackups}
-                  disabled={dropboxBackupsLoading}
-                  className="h-7 gap-1.5 text-xs"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${dropboxBackupsLoading ? 'animate-spin' : ''}`} />
-                  Aggiorna
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={loadDropboxBackups}
+                    disabled={dropboxBackupsLoading}
+                    className="h-7 gap-1.5 text-xs"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${dropboxBackupsLoading ? 'animate-spin' : ''}`} />
+                    Aggiorna
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={verifyDropboxBackup}
+                    disabled={dropboxVerificationLoading}
+                    className="h-7 gap-1.5 text-xs"
+                  >
+                    <CheckCircle className={`w-3.5 h-3.5 ${dropboxVerificationLoading ? 'animate-pulse' : ''}`} />
+                    {dropboxVerificationLoading ? 'Verifica...' : 'Verifica documenti'}
+                  </Button>
+                </div>
               </div>
               {dropboxBackupsLoading && dropboxBackups.length === 0 ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
@@ -353,6 +405,47 @@ export default function ImpostazioniPage() {
                 Il ripristino reinserisce i dati e i file disponibili senza cancellare automaticamente quelli creati dopo il backup.
               </p>
             </div>
+
+            {dropboxVerification && (
+              <div className={`rounded-lg border px-4 py-3 space-y-2 ${
+                dropboxVerification.complete_at_backup && dropboxVerification.current_files_present_on_dropbox
+                  ? 'border-green-200 bg-green-50/70'
+                  : 'border-amber-200 bg-amber-50/70'
+              }`}>
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <CheckCircle className="w-4 h-4 shrink-0" />
+                  Verifica documenti del backup {dropboxVerification.backup_date ?? 'più recente'}
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span>File previsti dal backup</span>
+                  <strong className="text-foreground">{dropboxVerification.backup_file_count ?? 0}</strong>
+                  <span>File caricati senza errore</span>
+                  <strong className="text-foreground">{dropboxVerification.backup_files_ok ?? 0}</strong>
+                  <span>File fisici presenti oggi nello Storage</span>
+                  <strong className="text-foreground">{dropboxVerification.current_storage_files ?? 0}</strong>
+                  <span>File presenti su Dropbox</span>
+                  <strong className="text-foreground">
+                    {dropboxVerification.dropbox_files ?? 0}
+                    {dropboxVerification.dropbox_files_bytes
+                      ? ` · ${formatBackupSize(dropboxVerification.dropbox_files_bytes)}`
+                      : ''}
+                  </strong>
+                </div>
+                {(dropboxVerification.backup_files_err ?? 0) > 0 || (dropboxVerification.backup_files_pending ?? 0) > 0 ? (
+                  <p className="text-xs text-amber-800">
+                    Il backup segnala {dropboxVerification.backup_files_err ?? 0} errori e {dropboxVerification.backup_files_pending ?? 0} file non completati.
+                  </p>
+                ) : (dropboxVerification.missing_current_files ?? 0) > 0 ? (
+                  <p className="text-xs text-amber-800">
+                    Mancano su Dropbox {dropboxVerification.missing_current_files} file presenti oggi nello Storage.
+                  </p>
+                ) : (
+                  <p className="text-xs text-green-800">
+                    Tutti i file fisici risultano presenti nell’archivio Dropbox.
+                  </p>
+                )}
+              </div>
+            )}
 
             <Button
               onClick={backupToDropbox}
