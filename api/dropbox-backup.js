@@ -8,6 +8,8 @@ const DBX_APP_KEY       = process.env.DROPBOX_APP_KEY;
 const DBX_APP_SECRET    = process.env.DROPBOX_APP_SECRET;
 const DBX_REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
 const STORAGE_BUCKET    = 'practice-files';
+const BACKUP_ROOT       = '/Apps/Credifile/backups';
+const FILES_ROOT        = '/Apps/Credifile/files';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -106,6 +108,202 @@ async function dropboxUploadBuffer(token, path, buffer) {
   if (!r.ok) throw new Error(`Dropbox upload error ${r.status}: ${await r.text()}`);
 }
 
+async function dropboxApi(token, endpoint, body) {
+  const r = await fetchWithRetry(`https://api.dropboxapi.com/2/${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  }, `Dropbox ${endpoint}`);
+  if (!r.ok) throw new Error(`Dropbox ${endpoint} error ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function listDropboxFolder(token, path, recursive = false) {
+  let result = await dropboxApi(token, 'files/list_folder', {
+    path,
+    recursive,
+    include_deleted: false,
+    limit: 2000,
+  });
+  const entries = Array.isArray(result.entries) ? [...result.entries] : [];
+  while (result.has_more && result.cursor) {
+    result = await dropboxApi(token, 'files/list_folder/continue', { cursor: result.cursor });
+    if (Array.isArray(result.entries)) entries.push(...result.entries);
+  }
+  return entries;
+}
+
+async function dropboxDownloadBuffer(token, path) {
+  const r = await fetchWithRetry('https://content.dropboxapi.com/2/files/download', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Dropbox-API-Arg': JSON.stringify({ path }),
+    },
+  }, `Dropbox download ${path}`);
+  if (!r.ok) throw new Error(`Dropbox download error ${r.status}: ${await r.text()}`);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+function supabaseHeaders(extra = {}) {
+  return {
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    ...extra,
+  };
+}
+
+async function getAuthenticatedSuperAdmin(req) {
+  const authorization = String(req.headers.authorization || '');
+  if (!authorization.startsWith('Bearer ')) return null;
+
+  const userResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: supabaseHeaders({
+      'Authorization': authorization,
+    }),
+  });
+  if (!userResponse.ok) return null;
+  const user = await userResponse.json();
+  if (!user?.id) return null;
+
+  const profileResponse = await fetch(
+    `${SUPABASE_URL}/rest/v1/admin_profiles?id=eq.${encodeURIComponent(user.id)}&select=id,ruolo&limit=1`,
+    { headers: supabaseHeaders() },
+  );
+  if (!profileResponse.ok) return null;
+  const profiles = await profileResponse.json();
+  return profiles?.[0]?.ruolo === 'super_admin' ? user : null;
+}
+
+async function upsertTableRows(table, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return { rows: 0, errors: [] };
+  const errors = [];
+  let restored = 0;
+  const chunkSize = 100;
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const chunk = rows.slice(index, index + chunkSize);
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/${encodeURIComponent(table)}?on_conflict=id`,
+      {
+        method: 'POST',
+        headers: supabaseHeaders({
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates,return=minimal',
+        }),
+        body: JSON.stringify(chunk),
+      },
+    );
+    if (!r.ok) {
+      errors.push(`${table} [${index + 1}-${index + chunk.length}]: ${await r.text()}`);
+      continue;
+    }
+    restored += chunk.length;
+  }
+  return { rows: restored, errors };
+}
+
+async function restoreStorageFile(storagePath, buffer) {
+  const encodedPath = storagePath.split('/').map(encodeURIComponent).join('/');
+  const r = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${encodedPath}`,
+    {
+      method: 'POST',
+      headers: supabaseHeaders({
+        'Content-Type': 'application/octet-stream',
+        'x-upsert': 'true',
+      }),
+      body: buffer,
+    },
+  );
+  if (!r.ok) throw new Error(`Supabase Storage upload error ${r.status}: ${await r.text()}`);
+}
+
+async function restoreBackup(token, backupPath) {
+  const raw = await dropboxDownloadBuffer(token, backupPath);
+  let backup;
+  try {
+    backup = JSON.parse(raw.toString('utf8'));
+  } catch {
+    throw new Error('Il file di backup selezionato non contiene JSON valido');
+  }
+  if (!backup || typeof backup !== 'object' || !backup._meta) {
+    throw new Error('Formato backup non riconosciuto');
+  }
+
+  const restoreOrder = [
+    'admin_profiles',
+    'clients',
+    'banks',
+    'document_templates',
+    'bank_document_requirements',
+    'leads',
+    'practices',
+    'practice_banks',
+    'practice_documents',
+    'uploaded_files',
+    'practice_access_codes',
+    'practice_notes',
+    'practice_tasks',
+    'practice_checklist_items',
+    'practice_client_questions',
+    'practice_client_banks',
+    'practice_integration_requests',
+    'practice_moduli_compilati',
+    'practice_activity_log',
+    'practice_status_log',
+    'practice_bank_status_log',
+    'relazioni_commerciali',
+    'consulente_reports',
+    'bilanci_kpi',
+    'reputational_analyses',
+    'schede_valutazione_rischio',
+    'document_deadlines',
+    'document_coherence_alerts',
+    'client_financing',
+    'estratto_conto_transactions',
+    'balance_anomaly_alerts',
+    'email_send_log',
+  ];
+  const tableResults = [];
+  const restoreErrors = [];
+  for (const table of restoreOrder) {
+    if (!Array.isArray(backup[table]) || backup[table].length === 0) continue;
+    const result = await upsertTableRows(table, backup[table]);
+    tableResults.push({ table, rows: result.rows });
+    restoreErrors.push(...result.errors);
+  }
+
+  const availableFiles = await listDropboxFolder(token, FILES_ROOT, true);
+  const fileEntries = availableFiles.filter(entry =>
+    entry?.['.tag'] === 'file' && typeof entry.path_display === 'string'
+  );
+  let filesRestored = 0;
+  for (const entry of fileEntries) {
+    const prefix = `${FILES_ROOT}/`;
+    if (!entry.path_display.startsWith(prefix)) continue;
+    const storagePath = entry.path_display.slice(prefix.length);
+    try {
+      const fileBuffer = await dropboxDownloadBuffer(token, entry.path_display);
+      await restoreStorageFile(storagePath, fileBuffer);
+      filesRestored += 1;
+    } catch (error) {
+      restoreErrors.push(`${storagePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return {
+    backup_date: backup._meta.date ?? null,
+    tables: tableResults,
+    files_available: fileEntries.length,
+    files_restored: filesRestored,
+    errors: restoreErrors.slice(0, 50),
+    partial: restoreErrors.length > 0,
+  };
+}
+
 // ── Supabase helpers ─────────────────────────────────────────────────────────
 
 async function queryTable(table) {
@@ -202,6 +400,71 @@ async function downloadStorageFile(storagePath) {
 export default async function handler(req, res) {
   Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
   if (req.method === 'OPTIONS') return res.status(204).end();
+
+  const action = String(req.query?.action || req.body?.action || '');
+  if (action === 'list') {
+    const admin = await getAuthenticatedSuperAdmin(req);
+    if (!admin) return res.status(401).json({ ok: false, error: 'Accesso riservato al Super Admin' });
+    try {
+      const token = await getDropboxToken();
+      const entries = await listDropboxFolder(token, BACKUP_ROOT);
+      const backups = entries
+        .filter(entry =>
+          entry?.['.tag'] === 'file'
+          && /^backup_\d{4}-\d{2}-\d{2}\.json$/i.test(String(entry.name || ''))
+        )
+        .sort((a, b) => String(b.server_modified || '').localeCompare(String(a.server_modified || '')))
+        .slice(0, 20)
+        .map(entry => ({
+          name: entry.name,
+          path: entry.path_display,
+          size: entry.size ?? null,
+          server_modified: entry.server_modified ?? null,
+        }));
+      const latestEntry = entries.find(entry => entry.name === 'backup_latest.json');
+      return res.status(200).json({
+        ok: true,
+        latest: latestEntry
+          ? {
+              name: latestEntry.name,
+              path: latestEntry.path_display,
+              size: latestEntry.size ?? null,
+              server_modified: latestEntry.server_modified ?? null,
+            }
+          : null,
+        backups,
+      });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (action === 'restore') {
+    const admin = await getAuthenticatedSuperAdmin(req);
+    if (!admin) return res.status(401).json({ ok: false, error: 'Accesso riservato al Super Admin' });
+    const backupPath = String(req.body?.path || '');
+    if (!backupPath || !backupPath.startsWith(`${BACKUP_ROOT}/backup_`) || !backupPath.endsWith('.json')) {
+      return res.status(400).json({ ok: false, error: 'Percorso backup non valido' });
+    }
+    try {
+      const token = await getDropboxToken();
+      const result = await restoreBackup(token, backupPath);
+      return res.status(result.partial ? 207 : 200).json({
+        ok: !result.partial,
+        partial: result.partial,
+        ...result,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (req.method === 'GET') {
     if (!hasValidCronAuthorization(req)) {
       return res.status(401).json({ ok: false, error: 'Unauthorized' });
@@ -218,6 +481,8 @@ export default async function handler(req, res) {
     }
   } else if (req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'Method not allowed' });
+  } else if (!(await getAuthenticatedSuperAdmin(req))) {
+    return res.status(401).json({ ok: false, error: 'Backup manuale riservato al Super Admin' });
   }
 
   const startTime = Date.now();
@@ -312,12 +577,12 @@ export default async function handler(req, res) {
     const jsonStr = JSON.stringify(backup, null, 2);
     await dropboxUploadBuffer(
       token,
-      `/Apps/Credifile/backups/backup_${now}.json`,
+      `${BACKUP_ROOT}/backup_${now}.json`,
       Buffer.from(jsonStr),
     );
     await dropboxUploadBuffer(
       token,
-      '/Apps/Credifile/backups/backup_latest.json',
+      `${BACKUP_ROOT}/backup_latest.json`,
       Buffer.from(jsonStr),
     );
     const db_kb = Math.round(Buffer.byteLength(jsonStr) / 1024);

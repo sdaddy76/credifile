@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Download, Settings, RefreshCw, CloudUpload, CheckCircle } from 'lucide-react';
+import { Download, Settings, RefreshCw, CloudUpload, CheckCircle, RotateCcw, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRomeDateTime } from '@/lib/dateTime';
 
@@ -18,14 +18,30 @@ const INTERVALLI = [
   { value: '30', label: 'Ogni mese' },
 ];
 
+interface DropboxBackup {
+  name: string;
+  path: string;
+  size?: number | null;
+  server_modified?: string | null;
+}
+
+function formatBackupSize(size?: number | null) {
+  if (!size || size < 1024) return size ? `${size} B` : '';
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ImpostazioniPage() {
-  const { user, isSegreteria, isSuperAdmin } = useAuth();
+  const { user, session, isSegreteria, isSuperAdmin } = useAuth();
   const [intervalDays, setIntervalDays]         = useState('1');
   const [lastBackup, setLastBackup]             = useState<string | null>(null);
   const [saving, setSaving]                     = useState(false);
   const [downloading, setDownloading]           = useState(false);
   const [dropboxLoading, setDropboxLoading]     = useState(false);
   const [lastDropboxBackup, setLastDropboxBackup] = useState<string | null>(null);
+  const [dropboxBackups, setDropboxBackups] = useState<DropboxBackup[]>([]);
+  const [dropboxBackupsLoading, setDropboxBackupsLoading] = useState(false);
+  const [restoringBackup, setRestoringBackup] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -90,11 +106,17 @@ export default function ImpostazioniPage() {
     setDropboxLoading(true);
     try {
       // Chiama la Vercel Serverless Function (stessa origine, niente CORS)
-      const res = await fetch('/api/dropbox-backup', { method: 'POST' });
+      const res = await fetch('/api/dropbox-backup', {
+        method: 'POST',
+        headers: session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : undefined,
+      });
       const json = await res.json();
       if (json.ok) {
         const now = new Date().toISOString();
         setLastDropboxBackup(now);
+        await loadDropboxBackups();
         toast.success(
           `Backup Dropbox completato — ${json.tables_total ?? 0} tabelle e ${json.files_ok ?? 0}/${json.files_total ?? 0} file salvati`,
         );
@@ -114,6 +136,64 @@ export default function ImpostazioniPage() {
     }
     setDropboxLoading(false);
   };
+
+  const loadDropboxBackups = async () => {
+    if (!session?.access_token) return;
+    setDropboxBackupsLoading(true);
+    try {
+      const res = await fetch('/api/dropbox-backup?action=list', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error ?? 'Elenco non disponibile');
+      const backups = Array.isArray(json.backups) ? json.backups as DropboxBackup[] : [];
+      setDropboxBackups(backups);
+      if (json.latest?.server_modified) setLastDropboxBackup(json.latest.server_modified);
+      else if (backups[0]?.server_modified) setLastDropboxBackup(backups[0].server_modified);
+    } catch (error) {
+      toast.error(`Impossibile caricare gli ultimi backup: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setDropboxBackupsLoading(false);
+    }
+  };
+
+  const restoreDropboxBackup = async (backup: DropboxBackup) => {
+    if (!session?.access_token || restoringBackup) return;
+    const confirmed = window.confirm(
+      `Ripristinare il backup ${backup.name}?\n\n` +
+      'I dati del backup verranno reinseriti nel sistema e i file disponibili verranno ripristinati. ' +
+      'Le righe create dopo quella data non verranno cancellate automaticamente.',
+    );
+    if (!confirmed) return;
+    setRestoringBackup(backup.path);
+    try {
+      const res = await fetch('/api/dropbox-backup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ action: 'restore', path: backup.path }),
+      });
+      const json = await res.json();
+      if (!res.ok && res.status !== 207) throw new Error(json.error ?? 'Ripristino non riuscito');
+      const tableCount = Array.isArray(json.tables) ? json.tables.length : 0;
+      const message = `Ripristino completato: ${tableCount} tabelle, ${json.files_restored ?? 0}/${json.files_available ?? 0} file.`;
+      if (json.partial) {
+        toast.warning(`${message} Alcuni elementi non sono stati ripristinati.`, { duration: 12000 });
+      } else {
+        toast.success(message);
+      }
+    } catch (error) {
+      toast.error(`Errore ripristino: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setRestoringBackup(null);
+    }
+  };
+
+  useEffect(() => {
+    if (isSuperAdmin && session?.access_token) void loadDropboxBackups();
+  }, [isSuperAdmin, session?.access_token]);
 
   if (!isSegreteria && !isSuperAdmin) return null;
 
@@ -190,6 +270,11 @@ export default function ImpostazioniPage() {
               <span className="ml-auto text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">
                 Automatico ogni giorno
               </span>
+              {lastDropboxBackup && (
+                <span className="text-[11px] text-muted-foreground font-normal">
+                  Ultimo: {formatRomeDateTime(lastDropboxBackup)}
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -217,6 +302,57 @@ export default function ImpostazioniPage() {
                 Ultimo backup Dropbox: <strong>{formatRomeDateTime(lastDropboxBackup)}</strong>
               </div>
             )}
+
+            <div className="border border-blue-100 bg-white rounded-lg px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-medium text-sm text-foreground">Ultimi backup disponibili</div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={loadDropboxBackups}
+                  disabled={dropboxBackupsLoading}
+                  className="h-7 gap-1.5 text-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${dropboxBackupsLoading ? 'animate-spin' : ''}`} />
+                  Aggiorna
+                </Button>
+              </div>
+              {dropboxBackupsLoading && dropboxBackups.length === 0 ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Caricamento elenco...
+                </div>
+              ) : dropboxBackups.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">Nessun backup giornaliero trovato.</p>
+              ) : (
+                <div className="divide-y divide-blue-50">
+                  {dropboxBackups.map(backup => (
+                    <div key={backup.path} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{backup.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {backup.server_modified ? formatRomeDateTime(backup.server_modified) : 'Data non disponibile'}
+                          {backup.size ? ` · ${formatBackupSize(backup.size)}` : ''}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 hover:text-blue-900 hover:underline disabled:opacity-50"
+                        onClick={() => restoreDropboxBackup(backup)}
+                        disabled={Boolean(restoringBackup)}
+                      >
+                        {restoringBackup === backup.path
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <RotateCcw className="w-3.5 h-3.5" />}
+                        {restoringBackup === backup.path ? 'Ripristino...' : 'Ripristina'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Il ripristino reinserisce i dati e i file disponibili senza cancellare automaticamente quelli creati dopo il backup.
+              </p>
+            </div>
 
             <Button
               onClick={backupToDropbox}
