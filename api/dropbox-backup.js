@@ -64,9 +64,17 @@ function getRomeDateTime(date = new Date()) {
 
 function hasValidCronAuthorization(req) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
   const authorization = req.headers.authorization || '';
-  return authorization === `Bearer ${secret}`;
+  if (secret) return authorization === `Bearer ${secret}`;
+
+  // Vercel aggiunge sempre questo header alle invocazioni Cron. Il progetto
+  // usa due schedule UTC (22:00 e 23:00) per coprire l'ora legale italiana;
+  // il controllo sull'ora locale viene eseguito subito dopo, nel route handler.
+  // In questo modo il job resta automatico anche se CRON_SECRET non è stato
+  // ancora configurato nelle variabili Vercel, mentre le chiamate manuali
+  // senza header non possono avviare il backup.
+  const schedule = String(req.headers['x-vercel-cron-schedule'] || '');
+  return schedule === '0 22 * * *' || schedule === '0 23 * * *';
 }
 
 // ── Dropbox helpers ──────────────────────────────────────────────────────────
@@ -195,12 +203,6 @@ export default async function handler(req, res) {
   Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method === 'GET') {
-    if (!process.env.CRON_SECRET) {
-      return res.status(503).json({
-        ok: false,
-        error: 'CRON_SECRET non configurato: backup automatico non attivato',
-      });
-    }
     if (!hasValidCronAuthorization(req)) {
       return res.status(401).json({ ok: false, error: 'Unauthorized' });
     }
