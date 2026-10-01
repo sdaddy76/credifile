@@ -32,6 +32,7 @@ interface DropboxVerification {
   backup_files_ok?: number;
   backup_files_err?: number;
   backup_files_pending?: number;
+  missing_referenced_files?: number;
   current_storage_files?: number;
   dropbox_files?: number;
   dropbox_files_bytes?: number;
@@ -442,6 +443,9 @@ export default function ImpostazioniPage() {
                 ) : (
                   <p className="text-xs text-green-800">
                     Tutti i file fisici risultano presenti nell’archivio Dropbox.
+                    {(dropboxVerification.missing_referenced_files ?? 0) > 0
+                      ? ` ${dropboxVerification.missing_referenced_files} riferimenti obsoleti nel database sono stati ignorati.`
+                      : ''}
                   </p>
                 )}
               </div>

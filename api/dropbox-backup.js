@@ -334,6 +334,7 @@ async function verifyLatestBackup(token) {
   const backupFilesOk = Number(storageInventory.files_ok ?? 0);
   const backupFilesErr = Number(storageInventory.files_err ?? 0);
   const backupFilesPending = Number(storageInventory.files_pending ?? 0);
+  const missingReferencedFiles = Number(storageInventory.missing_referenced_files ?? 0);
   const dropboxFilesBytes = fileEntries.reduce(
     (total, entry) => total + (Number(entry.size) || 0),
     0,
@@ -346,6 +347,7 @@ async function verifyLatestBackup(token) {
     backup_files_ok: backupFilesOk,
     backup_files_err: backupFilesErr,
     backup_files_pending: backupFilesPending,
+    missing_referenced_files: missingReferencedFiles,
     current_storage_files: currentStoragePaths.length,
     dropbox_files: fileEntries.length,
     dropbox_files_bytes: dropboxFilesBytes,
@@ -585,7 +587,7 @@ export default async function handler(req, res) {
 
     // 2. Copia file fisici da Supabase Storage → Dropbox /files/ ─────────────
     const uploadedFiles = backup['uploaded_files'] || [];
-    const referencedPaths = [
+    const referencedCandidates = [
       uploadedFiles
         .map(f => f.storage_path)
         .filter(Boolean),
@@ -600,7 +602,13 @@ export default async function handler(req, res) {
         .filter(Boolean),
     ].flat();
     const inventoryPaths = await listStorageFiles();
-    const filePaths = [...new Set([...referencedPaths, ...inventoryPaths])];
+    const inventorySet = new Set(inventoryPaths);
+    const referencedPaths = [...new Set(referencedCandidates.filter(path => inventorySet.has(path)))];
+    const missingReferencedPaths = [...new Set(referencedCandidates.filter(path => !inventorySet.has(path)))];
+    // L'inventario Storage è la fonte completa dei file fisici. I riferimenti
+    // rimasti nel database ma non più presenti nello Storage non devono
+    // trasformarsi in falsi errori di download del backup.
+    const filePaths = inventoryPaths;
 
     let files_ok = 0;
     let files_err = 0;
@@ -634,6 +642,7 @@ export default async function handler(req, res) {
     backup._meta.storage_inventory = {
       inventory_files: inventoryPaths.length,
       referenced_files: new Set(referencedPaths).size,
+      missing_referenced_files: missingReferencedPaths.length,
       backup_files: filePaths.length,
       files_ok,
       files_err,
