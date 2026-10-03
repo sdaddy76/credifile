@@ -340,6 +340,7 @@ export default function PraticaDetailPage() {
   const [clientBankPositions, setClientBankPositions] = useState<ClientBankPosition[]>([]);
   const [saving, setSaving] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [addingFinancingRequest, setAddingFinancingRequest] = useState(false);
   const [showSollecita, setShowSollecita] = useState(false);
   const [sollecitando, setSollecitando] = useState(false);
   const [sendingNotif, setSendingNotif] = useState(false);
@@ -1037,7 +1038,7 @@ export default function PraticaDetailPage() {
   };
 
   // Invia email richiesta documenti (senza rigenerare il codice)
-  const sendDocumentRequest = async () => {
+  const sendDocumentRequest = async (onlyFinancing = false) => {
     if (!practice || !accessCode) return;
     const client = (practice as Practice & { clients?: { email: string } }).clients;
     if (!client?.email) { toast.error('Il cliente non ha un email'); return; }
@@ -1073,14 +1074,22 @@ export default function PraticaDetailPage() {
       // standard ancora mancanti della pratica.
       const hasIntegrationItems = (docs ?? []).some(document => Boolean(document.integration_request_id))
         || (questions ?? []).some(question => Boolean(question.integration_request_id));
-      const requestedDocs = hasIntegrationItems
+      const requestedDocs = onlyFinancing
+        ? (docs ?? [])
+        : hasIntegrationItems
         ? (docs ?? []).filter(document => Boolean(document.integration_request_id))
         : (docs ?? []);
-      const requestedQuestions = hasIntegrationItems
+      const requestedQuestions = onlyFinancing
+        ? []
+        : hasIntegrationItems
         ? (questions ?? []).filter(question => Boolean(question.integration_request_id))
         : (questions ?? []);
-      const docNames = requestedDocs.map((document: { nome: string }) => document.nome);
-      const questionTexts = requestedQuestions.map((question: { domanda: string }) => question.domanda);
+      const filteredDocs = onlyFinancing
+        ? requestedDocs.filter(document => isFinancingRequestDocument(document))
+        : requestedDocs;
+      const filteredQuestions = onlyFinancing ? [] : requestedQuestions;
+      const docNames = filteredDocs.map((document: { nome: string }) => document.nome);
+      const questionTexts = filteredQuestions.map((question: { domanda: string }) => question.domanda);
       if (docNames.length === 0 && questionTexts.length === 0) {
         toast.info('Non ci sono documenti mancanti o domande senza risposta da inviare');
         return;
@@ -1098,7 +1107,9 @@ export default function PraticaDetailPage() {
           code: accessCode.codice,
           practice_number: practice.numero_pratica,
           company_name: (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? undefined,
-          subject_override: `Richiesta documentale — ${(practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? practice.numero_pratica}`,
+          subject_override: onlyFinancing
+            ? `Richiesta situazione finanziamenti — ${(practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? practice.numero_pratica}`
+            : `Richiesta documentale — ${(practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? practice.numero_pratica}`,
           // La copia e le risposte del cliente devono arrivare all'agente assegnato.
           cc: getAssignedAgentEmail(practice),
           reply_to: getAssignedAgentEmail(practice),
@@ -1110,7 +1121,7 @@ export default function PraticaDetailPage() {
       }
 
       const integrationRequestIds = Array.from(new Set(
-        [...requestedDocs, ...requestedQuestions]
+        [...filteredDocs, ...filteredQuestions]
           .map(item => item.integration_request_id as string | null)
           .filter((requestId): requestId is string => Boolean(requestId))
       ));
@@ -1123,7 +1134,9 @@ export default function PraticaDetailPage() {
 
       await supabase.from('practice_activity_log').insert({
         practice_id: practice.id,
-        action: 'richiesta_documentale_cliente_inviata',
+        action: onlyFinancing
+          ? 'richiesta_finanziamenti_cliente_inviata'
+          : 'richiesta_documentale_cliente_inviata',
         actor_id: user?.id ?? null,
         actor_nome: consultantName,
         actor_ruolo: 'admin',
@@ -1131,6 +1144,7 @@ export default function PraticaDetailPage() {
           documenti: docNames,
           domande: questionTexts,
           destinatario: client.email,
+          solo_finanziamenti: onlyFinancing,
           integration_request_ids: integrationRequestIds,
         },
       });
@@ -1142,6 +1156,54 @@ export default function PraticaDetailPage() {
       toast.error('Errore invio email: ' + String(error));
     } finally {
       setSendingEmail(false);
+    }
+  };
+
+  // Aggiunge alla pratica la richiesta strutturata dei finanziamenti in
+  // essere. Il cliente non deve caricare un file: dal Portale Cliente troverà
+  // direttamente la tabella "Finanziamenti", che al salvataggio chiude questa
+  // richiesta come risposta ricevuta.
+  const addFinancingRequest = async () => {
+    if (!id || !practice) return;
+    const existing = documents.find(isFinancingRequestDocument);
+    if (existing) {
+      if (existing.status === 'caricato' || existing.status === 'approvato') {
+        toast.info('La situazione finanziamenti è già stata ricevuta dal cliente.');
+      } else {
+        toast.info('La richiesta finanziamenti è già presente. Inviala al cliente con “Invia Richiesta Documenti”.');
+      }
+      return;
+    }
+
+    setAddingFinancingRequest(true);
+    try {
+      const { error } = await supabase.from('practice_documents').insert({
+        practice_id: id,
+        nome: 'Finanziamenti in essere',
+        descrizione: 'Compilare la tabella nel menu Finanziamenti con tutti i finanziamenti attivi, le rate e il debito residuo.',
+        tipo: 'standard',
+        obbligatorio: true,
+        status: 'richiesto',
+      });
+      if (error) throw error;
+
+      await supabase.from('practice_activity_log').insert({
+        practice_id: id,
+        action: 'richiesta_finanziamenti_cliente_preparata',
+        actor_id: user?.id ?? null,
+        actor_nome: user?.email ?? 'Admin',
+        actor_ruolo: isSuperAdmin ? 'super_admin' : 'agente',
+        metadata: {
+          richiesta: 'Finanziamenti in essere',
+          modalita: 'tabella_portale_cliente',
+        },
+      });
+      await load();
+      await sendDocumentRequest(true);
+    } catch (error) {
+      toast.error('Errore aggiunta richiesta finanziamenti: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setAddingFinancingRequest(false);
     }
   };
 
@@ -2840,6 +2902,35 @@ export default function PraticaDetailPage() {
                       : <><Mail className="w-3.5 h-3.5" /> Invia Richiesta Documenti</>
                     }
                   </Button>
+                  {(() => {
+                    const financingRequest = documents.find(isFinancingRequestDocument);
+                    const financingCompleted = financingRequest
+                      && (financingRequest.status === 'caricato' || financingRequest.status === 'approvato');
+                    return (
+                      <div className="space-y-1.5">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2 border-blue-300 text-blue-700 hover:bg-blue-50"
+                          onClick={() => financingRequest
+                            ? sendDocumentRequest(true)
+                            : addFinancingRequest()}
+                          disabled={addingFinancingRequest || sendingEmail || Boolean(financingCompleted)}
+                        >
+                          {addingFinancingRequest
+                            ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Aggiunta in corso…</>
+                            : financingCompleted
+                              ? <><CheckCircle className="w-3.5 h-3.5" /> Finanziamenti ricevuti</>
+                              : financingRequest
+                                ? <><Mail className="w-3.5 h-3.5" /> Invia richiesta finanziamenti</>
+                                : <><PlusCircle className="w-3.5 h-3.5" /> Richiedi finanziamenti al cliente</>}
+                        </Button>
+                        <p className="text-[11px] text-muted-foreground text-center">
+                          Il cliente compilerà la tabella dal menu <strong>Finanziamenti</strong> del portale.
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </>
               ) : (
                 <Button className="w-full gap-2" size="sm" onClick={generateAccessCode}>
