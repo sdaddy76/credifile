@@ -735,7 +735,12 @@ export default async function handler(req, res) {
     const cliente  = pratica.clients?.ragione_sociale ?? pratica.clients?.codice_fiscale ?? 'N/D';
     const bankRequestAmount = pb.importo_richiesto ?? pratica.importo_richiesto ?? null;
     const bankRequestReason = pb.motivazione ?? pratica.motivazione ?? null;
-    const notaHtml = note ? `<p style="color:#555;margin-top:12px;"><strong>Note:</strong> ${note}</p>` : '';
+    const bankNoteHtml = note && !integrationMode
+      ? `<div style="margin:0 0 20px;padding:16px 18px;background:#fff7ed;border:1px solid #fdba74;border-left:5px solid #f97316;border-radius:7px;">
+  <p style="margin:0 0 6px;color:#9a3412;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Nota del consulente</p>
+  <p style="margin:0;color:#431407;font-size:14px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(String(note))}</p>
+</div>`
+      : '';
     const bankRequestSection = (bankRequestAmount != null || bankRequestReason)
       ? `<div style="margin-top:18px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:6px;">
   <h3 style="color:#1e3a8a;margin:0 0 8px;font-size:15px;">Richiesta per ${escapeHtml(pb.banks?.nome ?? 'questa banca')}</h3>
@@ -1151,10 +1156,10 @@ ${structuredRequirements.map(requirement => {
 <div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
   <h2 style="color:#1e3a5f;margin:0;">Credifile — Pratica inviata</h2>
 </div>
+${bankNoteHtml}
 <p>Gentile <strong>${pb.banks?.nome}</strong>,</p>
 <p>Le trasmettiamo la documentazione relativa alla pratica di <strong>${cliente}</strong>
 (rif. <code>${pratica.numero_pratica}</code>).</p>
-${notaHtml}
 ${bankRequestSection}
 <h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   📎 Documenti allegati (${docLinks.length})
@@ -1329,6 +1334,7 @@ ${integrationAnswersHtml}
       delivery_type: deliveryType,
       resend_id: emailBody?.id ?? null,
       stato: 'inviata',
+      nota_banca: !integrationMode && note ? String(note) : null,
       copia_archivio: archiveCopyRequired || primaryRecipient === ARCHIVE_CC,
       archive_resend_id: archiveEmailBody?.id ?? null,
       archive_error: archiveError,

@@ -833,7 +833,7 @@ export default function PratichePage() {
                           Inviata il {formatRomeDateTime(pb.data_invio, { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}
                         </p>
                       )}
-                      {/* Bottone invia + nota collassabile */}
+                      {/* Bottone invia + nota banca collassabile */}
                       <div className="space-y-1.5">
                         <div className="flex items-center gap-2">
                           <Button
@@ -855,13 +855,13 @@ export default function PratichePage() {
                             className="text-xs text-muted-foreground hover:text-foreground underline shrink-0"
                             onClick={() => setShowNoteFor(prev => ({ ...prev, [pb.bank_id]: !prev[pb.bank_id] }))}
                           >
-                            {showNoteFor[pb.bank_id] ? 'Nascondi nota' : '+ Aggiungi nota'}
+                            {showNoteFor[pb.bank_id] ? 'Nascondi note banca' : '+ Note banca'}
                           </button>
                         </div>
                         {showNoteFor[pb.bank_id] && (
                           <Textarea
-                            placeholder="Note per l'invio (opzionale)..."
-                            rows={2}
+                            placeholder="Messaggio in evidenza all’inizio dell’email alla banca..."
+                            rows={3}
                             className="text-xs"
                             value={sendNoteFor[pb.bank_id] ?? ''}
                             onChange={e => setSendNoteFor(prev => ({ ...prev, [pb.bank_id]: e.target.value }))}
@@ -895,13 +895,16 @@ export default function PratichePage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Note per la banca (opzionale)</Label>
+                <Label>Note banca (opzionale)</Label>
                 <Textarea
-                  placeholder="Eventuali note da allegare all'invio..."
-                  rows={2}
+                  placeholder="Messaggio in evidenza all’inizio dell’email alla banca..."
+                  rows={3}
                   value={assignBankNote}
                   onChange={e => setAssignBankNote(e.target.value)}
                 />
+                <p className="text-xs text-muted-foreground">
+                  La nota sarà mostrata in testa all’email ed è collegata soltanto a questa banca.
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <input

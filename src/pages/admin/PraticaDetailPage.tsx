@@ -3988,7 +3988,19 @@ export default function PraticaDetailPage() {
                       <DialogHeader><DialogTitle>✉️ Invia a {pb.banks?.nome}</DialogTitle></DialogHeader>
                       <div className="space-y-3 py-2">
                         <p className="text-sm text-muted-foreground">Destinatario: <strong>{bankEmail}</strong></p>
-                        <Textarea placeholder="Note per la banca (opzionale)..." rows={3} value={bankNote} onChange={e => setBankNote(e.target.value)} />
+                        <div className="space-y-1.5">
+                          <Label htmlFor="bank-send-note">Note banca (opzionale)</Label>
+                          <Textarea
+                            id="bank-send-note"
+                            placeholder="Scrivi il messaggio che la banca deve leggere prima dei dati della pratica..."
+                            rows={4}
+                            value={bankNote}
+                            onChange={e => setBankNote(e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            La nota comparirà in evidenza in testa all’email ed è collegata solo a questo invio e a questa banca.
+                          </p>
+                        </div>
                         <div className="rounded-lg border border-purple-100 bg-purple-50 p-3 text-sm text-purple-800">
                           <span className="font-semibold">📄 Relazione commerciale:</span> Prima di inviare alla banca, puoi{' '}
                           <button

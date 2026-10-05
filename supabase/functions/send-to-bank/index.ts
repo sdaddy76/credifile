@@ -6,6 +6,15 @@ const CORS = {
   'Content-Type': 'application/json',
 };
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // ── helper colore score (0-100) ────────────────────────────────────────────
 function scoreColor(s: number | null): string {
   if (s == null) return '#888';
@@ -155,7 +164,12 @@ serve(async (req) => {
     // 7. Componi HTML email
     // ─────────────────────────────────────────────────────────────────────
     const cliente  = pratica.clients?.ragione_sociale ?? pratica.clients?.codice_fiscale ?? 'N/D';
-    const notaHtml = note ? `<p style="color:#555;margin-top:12px;"><strong>Note:</strong> ${note}</p>` : '';
+    const bankNoteHtml = note
+      ? `<div style="margin:0 0 20px;padding:16px 18px;background:#fff7ed;border:1px solid #fdba74;border-left:5px solid #f97316;border-radius:7px;">
+  <p style="margin:0 0 6px;color:#9a3412;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Nota del consulente</p>
+  <p style="margin:0;color:#431407;font-size:14px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(String(note))}</p>
+</div>`
+      : '';
 
     const docsHtml = docLinks.length > 0
       ? (() => {
@@ -260,10 +274,10 @@ serve(async (req) => {
 <div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
   <h2 style="color:#1e3a5f;margin:0;">Credifile — Pratica inviata</h2>
 </div>
+${bankNoteHtml}
 <p>Gentile <strong>${pb.banks?.nome}</strong>,</p>
 <p>Le trasmettiamo la documentazione relativa alla pratica di <strong>${cliente}</strong>
 (rif. <code>${pratica.numero_pratica}</code>).</p>
-${notaHtml}
 
 <h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
   📎 Documenti allegati (${docLinks.length})
