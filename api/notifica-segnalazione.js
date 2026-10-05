@@ -105,20 +105,44 @@ export default async function handler(req, res) {
     const segnNome  = segnalatore?.nome  ?? segnalatore?.email ?? 'Segnalatore';
     const segnEmail = segnalatore?.email ?? null;
 
-    // 2. Routing: cerca agente collegato → segreteria → super admin
-    let destinatario = null;
-
-    // 2a. Agente collegato via agent_segnalatori
+    // 2. Routing: le nuove segnalazioni devono arrivare sempre al Super Admin.
+    // L'agente collegato può essere valorizzato nel record, ma non deve
+    // sostituire il destinatario di controllo e non va usata la segreteria
+    // come fallback quando esiste un Super Admin.
     const agArr = await fetch(
       `${SUPABASE_URL}/rest/v1/agent_segnalatori?segnalatore_id=eq.${encodeURIComponent(segnalatore_id)}&select=agent_id,agent:agent_id(id,nome,email)&limit=1`,
       { headers: H },
     ).then(r => r.json()).catch(() => []);
     const agLink = Array.isArray(agArr) ? agArr[0] : null;
-    if (agLink?.agent?.email) {
-      destinatario = { id: agLink.agent.id, nome: agLink.agent.nome ?? agLink.agent.email, email: agLink.agent.email, ruolo: 'Agente' };
-    }
+    const saArr = await fetch(
+      `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=eq.super_admin&select=id,nome,email&order=created_at.asc`,
+      { headers: H },
+    ).then(r => r.json()).catch(() => []);
+    const superAdmins = (Array.isArray(saArr) ? saArr : [])
+      .filter(profile => typeof profile?.email === 'string' && profile.email.trim())
+      .map(profile => ({
+        id: profile.id,
+        nome: profile.nome ?? profile.email,
+        email: profile.email.trim().toLowerCase(),
+        ruolo: 'Super Admin',
+      }));
 
-    // 2b. Nessun agente → cerca supervisore_segreteria
+    // Tutti i Super Admin ricevono la segnalazione: così non dipendiamo
+    // dall'ordine dei profili e non perdiamo richieste quando un referente
+    // viene collegato dopo l'invio.
+    let destinatariEmail = [...new Set(superAdmins.map(profile => profile.email))];
+    let destinatario = superAdmins[0] ?? null;
+
+    // Fallback solo se il progetto non ha ancora alcun Super Admin.
+    if (!destinatario && agLink?.agent?.email) {
+      destinatario = {
+        id: agLink.agent.id,
+        nome: agLink.agent.nome ?? agLink.agent.email,
+        email: agLink.agent.email,
+        ruolo: 'Agente',
+      };
+      destinatariEmail = [agLink.agent.email];
+    }
     if (!destinatario) {
       const segArr = await fetch(
         `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=eq.supervisore_segreteria&select=id,nome,email&order=created_at.asc&limit=1`,
@@ -127,18 +151,7 @@ export default async function handler(req, res) {
       const seg = Array.isArray(segArr) ? segArr[0] : null;
       if (seg?.email) {
         destinatario = { id: seg.id, nome: seg.nome ?? seg.email, email: seg.email, ruolo: 'Segreteria' };
-      }
-    }
-
-    // 2c. Nessuna segreteria → super admin
-    if (!destinatario) {
-      const saArr = await fetch(
-        `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=eq.super_admin&select=id,nome,email&order=created_at.asc&limit=1`,
-        { headers: H },
-      ).then(r => r.json()).catch(() => []);
-      const sa = Array.isArray(saArr) ? saArr[0] : null;
-      if (sa?.email) {
-        destinatario = { id: sa.id, nome: sa.nome ?? sa.email, email: sa.email, ruolo: 'Super Admin' };
+        destinatariEmail = [seg.email];
       }
     }
 
@@ -207,7 +220,7 @@ ${noteSection}
 ${fileList}
 
 <div style="margin-top:24px;padding:12px;background:#fff7ed;border-radius:8px;font-size:12px;color:#92400e;border-left:3px solid #f97316;">
-  Questa segnalazione ti è stata inviata perché sei il referente del segnalatore <strong>${escapeHtml(segnNome)}</strong> (${escapeHtml(destinatario.ruolo)}).
+  Questa segnalazione è stata inoltrata al presidio <strong>${escapeHtml(destinatario.ruolo)}</strong> per la presa in carico del segnalatore <strong>${escapeHtml(segnNome)}</strong>.
 </div>
 <p style="margin-top:16px;">
   <a href="${APP}" style="display:inline-block;background:#1e3a5f;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px;">Accedi a Credifile →</a>
@@ -220,7 +233,7 @@ ${fileList}
     // 4. Invia via Resend
     const emailPayload = {
       from: FROM,
-      to: [destinatario.email],
+      to: destinatariEmail,
       subject: `Nuova segnalazione: ${ragione_sociale} — da ${segnNome}`,
       html: htmlBody,
     };
