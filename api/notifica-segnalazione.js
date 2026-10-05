@@ -8,8 +8,6 @@ const REQUIRED_DOCUMENT_NAMES = [
   'Visura Camerale',
   'Ultimo Bilancio Depositato',
   'Bilancio provvisorio aggiornato',
-  'Atto costitutivo',
-  'Statuto',
 ];
 
 const CORS = {

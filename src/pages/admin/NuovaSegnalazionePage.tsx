@@ -17,12 +17,17 @@ interface FileItem {
   nome: string; // nome descrittivo
 }
 
-const DOCUMENTI_OBBLIGATORI = [
+const DOCUMENTI_RICHIESTI = [
   { key: 'bilancio_depositato', label: 'Ultimo Bilancio Depositato' },
   { key: 'bilancio_provvisorio', label: 'Bilancio provvisorio aggiornato' },
+] as const;
+
+const DOCUMENTI_OPZIONALI = [
   { key: 'atto_costitutivo', label: 'Atto costitutivo' },
   { key: 'statuto', label: 'Statuto' },
 ] as const;
+
+const DOCUMENTI_SEGNALAZIONE = [...DOCUMENTI_RICHIESTI, ...DOCUMENTI_OPZIONALI];
 
 const TIPI_PRODOTTO = [
   'Finanziamento',
@@ -153,7 +158,7 @@ export default function NuovaSegnalazionePage() {
     if (!ragioneSociale.trim()) { toast.error('Inserisci la ragione sociale'); return; }
     if (!/^\d{11}$/.test(piva)) { toast.error('La P.IVA non è stata letta correttamente dalla visura'); return; }
     if (!visura)                { toast.error('Carica la visura camerale (PDF)'); return; }
-    const mancanti = DOCUMENTI_OBBLIGATORI.filter(documento => !documentiObbligatori[documento.key]);
+    const mancanti = DOCUMENTI_RICHIESTI.filter(documento => !documentiObbligatori[documento.key]);
     if (mancanti.length > 0) {
       toast.error(`Carica i documenti obbligatori: ${mancanti.map(documento => documento.label).join(', ')}`);
       return;
@@ -181,7 +186,7 @@ export default function NuovaSegnalazionePage() {
           dimensione: visura.size,
         },
       ];
-      for (const documento of DOCUMENTI_OBBLIGATORI) {
+      for (const documento of DOCUMENTI_SEGNALAZIONE) {
         const file = documentiObbligatori[documento.key];
         if (!file) continue;
         const upload = await uploadFile(file, `${base}/${documento.key}_${safeStorageName(file.name)}`);
@@ -344,20 +349,62 @@ export default function NuovaSegnalazionePage() {
         </CardContent>
       </Card>
 
-      {/* Documenti obbligatori */}
+      {/* Documenti richiesti */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">📚 Documenti obbligatori</CardTitle>
-          <p className="text-xs text-muted-foreground">Carica tutti i documenti richiesti per poter inviare la segnalazione.</p>
+          <CardTitle className="text-sm font-semibold">📚 Documenti richiesti</CardTitle>
+          <p className="text-xs text-muted-foreground">Bilancio depositato e bilancio provvisorio sono necessari per inviare la segnalazione.</p>
         </CardHeader>
         <CardContent className="space-y-2">
-          {DOCUMENTI_OBBLIGATORI.map(documento => {
+          {DOCUMENTI_RICHIESTI.map(documento => {
             const file = documentiObbligatori[documento.key];
             return (
               <div key={documento.key} className="flex items-center gap-3 rounded-lg border p-3">
                 <FileText className={`w-5 h-5 shrink-0 ${file ? 'text-emerald-600' : 'text-muted-foreground'}`} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{documento.label} <span className="text-red-500">*</span></p>
+                  <p className="text-xs text-muted-foreground truncate">{file?.name ?? 'Nessun file caricato'}</p>
+                </div>
+                <label className="cursor-pointer">
+                  <Button size="sm" variant="outline" className="pointer-events-none" asChild>
+                    <span>{file ? 'Sostituisci' : 'Carica'}</span>
+                  </Button>
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={e => handleDocumentoObbligatorio(documento.key, e)}
+                  />
+                </label>
+                {file && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => setDocumentiObbligatori(prev => ({ ...prev, [documento.key]: null }))}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {/* Documenti facoltativi */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold">📄 Documenti societari <span className="text-muted-foreground font-normal">(facoltativi)</span></CardTitle>
+          <p className="text-xs text-muted-foreground">Puoi allegare anche atto costitutivo e statuto. Non sono obbligatori per inviare la segnalazione.</p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {DOCUMENTI_OPZIONALI.map(documento => {
+            const file = documentiObbligatori[documento.key];
+            return (
+              <div key={documento.key} className="flex items-center gap-3 rounded-lg border p-3">
+                <FileText className={`w-5 h-5 shrink-0 ${file ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{documento.label}</p>
                   <p className="text-xs text-muted-foreground truncate">{file?.name ?? 'Nessun file caricato'}</p>
                 </div>
                 <label className="cursor-pointer">
@@ -491,7 +538,7 @@ export default function NuovaSegnalazionePage() {
           !ragioneSociale.trim() ||
           !/^\d{11}$/.test(piva) ||
           !visura ||
-          DOCUMENTI_OBBLIGATORI.some(documento => !documentiObbligatori[documento.key]) ||
+          DOCUMENTI_RICHIESTI.some(documento => !documentiObbligatori[documento.key]) ||
           !tipoProdotto ||
           !importoRichiesto ||
           !motivazioneRichiesta.trim()
