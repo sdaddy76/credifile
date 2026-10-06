@@ -337,8 +337,8 @@ const CARICA_PATTERN = String.raw`(Amministratore\s+(?:Unico|[Dd]elegato)|AMM(?:
 
 export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set()): AmministratoreResult[] {
   const s5 = isolaSezione(raw,
-    [/(?:sezione\s+(?:V|5)\b|\b5[\s.)]\s*Amministrat|organi\s+sociali|persone\s+che\s+esercitano)/i],
-    /(?:sezione\s+(?:VI|6)\b|\b6[\s.)]\s*Sindac|$)/i,
+    [/(?:sezione\s+(?:V|5)\b|\b5[\s.)]\s*(?:organo\s+)?amministrat|organo\s+amministrativo|organi\s+sociali|persone\s+che\s+esercitano|esponenti\s*,?\s*consiglio\s+di\s+amministrazione)/i],
+    /(?:sezione\s+(?:VI|6)\b|\b6[\s.)]\s*Sindac|titolari\s+di\s+cariche|titolare\s+effettivo|societ[aà]\s+partecipate|unit[aà]\s+locali|$)/i,
   ) || raw;
 
   const results: AmministratoreResult[] = [];
@@ -364,7 +364,19 @@ export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set
     let nome = '';
     for (let k = nameMatches.length - 1; k >= 0; k--) {
       const cand = nameMatches[k][1].trim();
-      if (isPersonName(cand)) { nome = cand; break; }
+      if (isPersonName(cand) && (!nome || cand.split(/\s+/).length > nome.split(/\s+/).length)) nome = cand;
+    }
+    if (/amministratore\s+unico/i.test(window)) {
+      const beforeLabel = beforeCF.replace(/\b(?:CODICE\s+FISCALE|CF)\b/gi, ' ').trim();
+      const tokens = beforeLabel.split(/\s+/).filter(Boolean);
+      for (let count = Math.min(3, tokens.length); count >= 2; count--) {
+        const candidate = tokens.slice(-count).join(' ');
+        if (/\b(?:AMMINISTRATORE|AMMINISTRAZIONE|UNICO|ORGANO|CONSIGLIO|PRESIDENTE|CARICA)\b/i.test(candidate)) continue;
+        if (isPersonName(candidate)) {
+          if (!nome || candidate.split(/\s+/).length > nome.split(/\s+/).length) nome = candidate;
+          break;
+        }
+      }
     }
 
     if (!isPersonName(nome)) {
@@ -373,6 +385,15 @@ export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set
     }
 
     nome = nome.replace(/\b(?:CODICE|FISCALE|NATO|NATA|DEL|DELLA|CARICA|RAPPRESENTANTE|UNICO|DELEGATO|CF)\b/gi, '').replace(/\s{2,}/g, ' ').trim();
+    if (/amministratore\s+unico/i.test(carica)) {
+      const trailingAdminName = beforeCF
+        .replace(/\b(?:CODICE\s+FISCALE|CF)\b/gi, ' ')
+        .match(/([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'-]{1,24}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'-]{1,24}\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'-]{1,24})\s*$/i)?.[1]
+        ?.trim();
+      if (trailingAdminName && !/\b(?:AMMINISTRATORE|AMMINISTRAZIONE|ORGANO|CONSIGLIO|UNICO)\b/i.test(trailingAdminName) && isPersonName(trailingAdminName)) {
+        nome = trailingAdminName;
+      }
+    }
     if (seenNames.has(nome || cf)) continue;
     seenNames.add(nome || cf);
     results.push({ nome: nome || 'N/D', codice_fiscale: cf, carica });

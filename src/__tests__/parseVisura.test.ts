@@ -162,4 +162,17 @@ it('legge il formato Report Impresa BPER/CRIF', () => {
     'PETRASSI PIETRO',
     'LUCIBELLO GIUSEPPE',
   ]);
+  expect(parsed.soci.map(socio => socio.codice_fiscale)).toEqual([
+    'PRMFNC71H18M208A',
+    'PRMNNA70L62F537L',
+    'PTRPTR88T08H501A',
+    'LCBGPP73R24H703W',
+  ]);
+  expect(parsed.amministratori).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      nome: 'PRIMERANO FRANCESCO MARIA',
+      carica: expect.stringMatching(/AMMINISTRATORE UNICO/i),
+      codice_fiscale: 'PRMFNC71H18M208A',
+    }),
+  ]));
 });
