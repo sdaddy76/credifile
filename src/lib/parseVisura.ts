@@ -104,10 +104,11 @@ export function parseSoci(raw: string): SocioResult[] {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n')
     .trim();
-  const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s.)]\s*(?:Amministrat|Organ|Organi)|organi\s+sociali|organi\s+amministrativi|rappresentanza|persone\s+che\s+esercitano|cariche\s+sociali)/i;
+  const END_S5 = /(?:sezione\s+(?:V|5)\b|\b5[\s.)]\s*(?:Amministrat|Organ|Organi)|organi\s+sociali|organi\s+amministrativi|rappresentanza|persone\s+che\s+esercitano|cariche\s+sociali|partecipazioni\b)/i;
   const sectionStarts = [
     /(?:^|\n)\s*(?:sezione\s+)?(?:IV|4)[\s.\-)]*soci\s+e\s+titolari/gi,
     /(?:^|\n)\s*elenco\s+dei\s+soci\s+e\s+degli\s+altri\s+titolari/gi,
+    /(?:^|\n)\s*elenco\s+soci\s*(?:e\s+degli\s+altri\s+titolari)?/gi,
     /(?:^|\n)\s*sintesi\s+della\s+composizione\s+societaria/gi,
     /(?:^|\n)\s*composizione\s+societaria/gi,
     /(?:^|\n)\s*compagine\s+societaria/gi,
@@ -158,8 +159,10 @@ export function parseSoci(raw: string): SocioResult[] {
     'COGNOME', 'VALORE', 'PERCENTUALE', 'TIPO', 'DIRITTI', 'SEZIONE',
     'CAPITALE', 'NATO', 'NATA', 'RESIDENTE', 'DOMICILIO', 'AMMINISTRATORE',
     'PRESIDENTE', 'CONSIGLIERE', 'RAPPRESENTANTE', 'CARICA', 'E',
+    'AMMINISTRAZIONE', 'ORGANO', 'ESPONENTI',
     'COMPOSIZIONE', 'SOCIETARIA', 'EUR', 'EURO', 'PROPRIETA', 'PROPRIETÀ',
     'USUFRUTTO', 'DIRITTO', 'NUDA',
+    'POSSEDUTO', 'POSSEDUTA', 'DETTAGLIO', 'AZIONI', 'AMMONTARE',
   ]);
   const CF_RE = /\b([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gi;
   const PIVA_RE = /\b(\d{11})\b/g;
@@ -167,11 +170,13 @@ export function parseSoci(raw: string): SocioResult[] {
   const PCT_RE = /(\d{1,3}(?:[.,]\d{1,4})?)\s*%/i;
   const normalizeKey = (value: string) => value.toUpperCase().replace(/[^A-Z0-9ÀÈÉÌÒÙ]/g, '');
   const cleanName = (value: string): string => value
-    .replace(/\b(?:CODICE|FISCALE|CF|P\.?\s*IVA|NOME|COGNOME|SOCIO|SOCI|TITOLARE|TITOLARI|QUOTA|QUOTE|VALORE|PERCENTUALE|DIRITTO|DIRITTI|PROPRIET[AÀ]|USUFRUTTO|NUDA)\b/gi, ' ')
+    .replace(/\b(?:CODICE|FISCALE|CF|P\.?\s*IVA|NOME|COGNOME|SOCIO|SOCI|TITOLARE|TITOLARI|QUOTA|QUOTE|VALORE|PERCENTUALE|DIRITTO|DIRITTI|PROPRIET[AÀ]|USUFRUTTO|NUDA|AMMONTARE|EURO|EUR)\b/gi, ' ')
     .replace(/\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/gi, ' ')
     .replace(/\b\d{11}\b/g, ' ')
     .replace(/\b\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?\b/g, ' ')
     .replace(/[%€|:;()[\]{}]/g, ' ')
+    .replace(/(^|\s)['’](?=\s|$)/g, '$1')
+    .replace(/(^|\s)\.(?=\s|$)/g, '$1')
     .replace(/\s{2,}/g, ' ')
     .trim();
   const nameFrom = (value: string): string => {
@@ -213,7 +218,10 @@ export function parseSoci(raw: string): SocioResult[] {
         && cleanWords <= 5
         && previousKey !== cleanKey
         && (previousKey.endsWith(cleanKey) || previousKey.includes(cleanKey));
-      if (isCleanerContainedName || results[existing].nome.length < clean.length) {
+      const narrativeWords = /\b(?:NON|CORRETTO|ABBINAMENTO|COSTANTEMENTE|REVISIONI|POSIZIONI|ELENCO|SOCI|INFOCAMERE|CODICE|FISCALE)\b/i;
+      const previousLooksNarrative = narrativeWords.test(results[existing].nome);
+      const candidateLooksNarrative = narrativeWords.test(clean);
+      if (isCleanerContainedName || (previousLooksNarrative && !candidateLooksNarrative)) {
         results[existing].nome = clean;
       }
       return;
@@ -229,6 +237,22 @@ export function parseSoci(raw: string): SocioResult[] {
   const contextFor = (index: number): string => lines
     .slice(Math.max(0, index - 2), Math.min(lines.length, index + 3))
     .join(' ');
+
+  // Nel formato BPER/CRIF il nominativo e il codice fiscale sono spesso su
+  // due righe consecutive. Gestiamo esplicitamente questa tabella prima
+  // della passata generica a finestre, che altrimenti può associare il CF
+  // alla nota legale della pagina successiva.
+  for (let index = 0; index < lines.length - 1; index++) {
+    const line = lines[index];
+    const next = lines[index + 1];
+    const cf = next.match(/\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/i)?.[0];
+    if (!cf || idMatches(line).length > 0) continue;
+    if (!/propriet[aà]|ammontare|%/i.test(line)) continue;
+    const pct = line.match(PCT_RE)?.[1] ?? '';
+    const value = line.match(/(?:€|eur|ammontare|quota|capitale)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)?.[1] ?? '';
+    const nome = nameFrom(line);
+    if (nome) add(nome, cf, value, pct ? `${pct}%` : '');
+  }
 
   // Prima passata: righe tabellari e blocchi "Socio: ... / Codice fiscale: ...".
   lines.forEach((line, index) => {
@@ -394,6 +418,33 @@ export function parseVisuraCompleta(text: string): VisuraResult {
   const B = String.raw`(?=\s+(?:Data\s+(?:atto|cost)|Forma\s+giuridica|Natura\s+giuridica|Codice\s+[Ff]iscale|Partita\s+IVA|P\.?\s*IVA|Sede\s+legale|Indirizzo|Numero\s+REA|REA\s|Registro\s+[Ii]mprese|Iscrizione|Stato\s+dell|Capitale|Pec\b|PEC\b|Attivit|Oggetto\s+sociale|Sistema\s+di|Durata\s+della|Poteri\b|Archivio\s+ufficiale))`;
   const LABEL_RS = String.raw`(?:Denominazione(?:\s*[\/eo]\s*[Rr]agione\s+[Ss]ociale)?|Ragione\s+[Ss]ociale)\s*[:\-]?\s*`;
   const ragione_sociale = (() => {
+    // Nei report BPER/CRIF il nome è nella sezione anagrafica, mentre
+    // l'indice iniziale contiene riferimenti omonimi e numeri di pagina.
+    // Risolviamo prima il formato riconoscibile e solo dopo applichiamo i
+    // fallback generici delle visure camerali tradizionali.
+    const lines = clean.split('\n').map(line => line.trim());
+    const legalSuffix = /(?:S\.?\s*P\.?\s*A\.?|S\.?\s*R\.?\s*L\.?|S\.?\s*N\.?\s*C\.?|S\.?\s*A\.?\s*S\.?|S\.?\s*S\.?|SOCIETA['’]?\s+(?:PER\s+AZIONI|A\s+RESPONSABILITA['’]?\s+LIMITATA))\b/i;
+    const anagraficaCandidates: Array<{ name: string; score: number }> = [];
+    lines.forEach((line, index) => {
+      if (!/^ANAGRAFICA\s+IMPRESA$/i.test(line)) return;
+      const window = lines.slice(index + 1, index + 32);
+      const hasAddress = window.some(value => /Sede\s+dell['’]impresa/i.test(value));
+      const hasGeneralInfo = window.some(value => /INFORMAZIONI\s+GENERALI/i.test(value));
+      const name = window.find(value => {
+        if (!value || /^(?:INFORMAZIONI|GENERALI|DATI|FISCALI|REGISTRAZIONE)$/i.test(value)) return false;
+        if (/^(?:Sede\s+dell['’]impresa|Forma\s+giuridica|Stato\s+dell['’]impresa|Codice\s+fiscale|Partita\s+IVA)$/i.test(value)) return false;
+        return legalSuffix.test(value) && !/^(?:Report|Full\s+Impresa|Codice\s+fiscale)/i.test(value);
+      });
+      if (name) {
+        anagraficaCandidates.push({
+          name: cleanup(name),
+          score: (hasAddress ? 100 : 0) + (hasGeneralInfo ? 20 : 0) + (index > 0 ? 1 : 0),
+        });
+      }
+    });
+    anagraficaCandidates.sort((a, b) => b.score - a.score);
+    if (anagraficaCandidates[0]?.name) return anagraficaCandidates[0].name;
+
     const m1 = flat.match(new RegExp(LABEL_RS + String.raw`(.{2,}?)` + B, 'i'));
     if (m1?.[1]?.trim()) return cleanup(m1[1]);
     const m2 = flat.match(new RegExp(LABEL_RS + String.raw`([^\:]{2,80}?(?:S\.?\s*R\.?\s*L\.?|S\.?\s*P\.?\s*A\.?|S\.?\s*N\.?\s*C\.?|S\.?\s*A\.?\s*S\.?|SRL|SPA|SNC|SAS|S\.?\s*S\.?|Soc\.?\s*Coop\.?|ONLUS|ETS|APS|ODV|IMPRESA\s+INDIVIDUALE)\.?)`, 'i'));
@@ -406,14 +457,29 @@ export function parseVisuraCompleta(text: string): VisuraResult {
   const codice_fiscale = codice_fiscale_raw && codice_fiscale_raw !== piva ? codice_fiscale_raw : piva;
 
   const forma_giuridica = get([/Forma\s+giuridica\s*[:-]?\s*([^:]{3,80}?)(?=\s+(?:Capitale|Sede|Data|Codice|Partita|Registro|REA|Attivit))/i, /Natura\s+giuridica\s*[:-]?\s*([^:]{3,80}?)(?=\s+(?:Capitale|Sede|Data|Codice|Partita|Registro|REA|Attivit))/i]);
-  const ADDR_B = String.raw`(?=\s+(?:Partita\s+IVA|P\.?\s*IVA|Codice\s+[Ff]iscale|Pec\b|PEC\b|REA\s|Registro|Telefono|Tel\b|Email|Attivit|Stato\s+dell))`;
+  const ADDR_B = String.raw`(?=\s+(?:Partita\s+IVA|P\.?\s*IVA|Codice\s+[Ff]iscale|Pec\b|PEC\b|REA\s|Registro|Telefono|Tel\b|Email|Attivit|Stato\s+dell|Forma\s+giuridica))`;
   const indirizzo = (() => {
-    const m = flat.match(new RegExp(String.raw`Sede\s+legale\s*[:\-]?\s*(.{5,})` + ADDR_B, 'i'));
+    const addressLines = clean.split('\n').map(line => line.trim()).filter(Boolean);
+    const addressLabelIndex = addressLines.findIndex(line => /^(?:Sede\s+legale|Sede\s+dell['’]impresa)\s*:?\s*$/i.test(line));
+    if (addressLabelIndex >= 0) {
+      const parts: string[] = [];
+      for (const line of addressLines.slice(addressLabelIndex + 1, addressLabelIndex + 6)) {
+        if (/^(?:Forma\s+giuridica|Stato\s+dell['’]impresa|Data\s+iscrizione|Codice\s+fiscale|Partita\s+IVA|Numero\s+REA|E-?mail|PEC|Ateco\b|CLASSIFICAZIONE)/i.test(line)) break;
+        parts.push(line);
+      }
+      if (parts.length > 0) return cleanup(parts.join(' '));
+    }
+    const m = flat.match(new RegExp(String.raw`(?:Sede\s+legale|Sede\s+dell['’]impresa)\s*[:\-]?\s*(.{5,})` + ADDR_B, 'i'));
     if (m?.[1]?.trim()) return cleanup(m[1]);
-    return get([/Sede\s+legale\s*[:-]?\s*([^:]{5,120})/i, /Indirizzo\s*[:-]?\s*([^:]{5,120})/i]);
+    return get([
+      /(?:Sede\s+legale|Sede\s+dell['’]impresa)\s*[:-]?\s*([^:]{5,160}?)(?=\s+(?:Forma\s+giuridica|Partita\s+IVA|Codice\s+[Ff]iscale|PEC|Email|Attivit))/i,
+      /Indirizzo\s*[:-]?\s*([^:]{5,120})/i,
+    ]);
   })();
 
-  const atecoMatch = flat.match(/(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i) ?? flat.match(/\bATECO\b[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i);
+  const atecoMatch = flat.match(/Ateco\s+2025\s*[:-]?\s*(\d{2}\.\d{2}(?:\.\d{1,2})?)\s*(?:-\s*)?(.{5,120}?)(?=\s+Ateco\s+2007|\s+RAE\/SAE|\s+SIC\s+2007|$)/i)
+    ?? flat.match(/(?:Attivit[àa]\s+(?:prevalente|principale|esercitata)|codice\s+ATECO|ATECO)\s*[:-]?\s*[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i)
+    ?? flat.match(/\bATECO\b[^\d]*(\d{2}\.\d{2}(?:\.\d{1,2})?)(?:\s+([^.;]{5,120}))?/i);
   const codice_ateco = atecoMatch?.[1];
   const ateco_descrizione = atecoMatch?.[2] ? cleanup(atecoMatch[2]) : undefined;
   const email = flat.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)?.[1];

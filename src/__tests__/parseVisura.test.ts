@@ -105,3 +105,61 @@ it('separa soci e amministratori nel parsing completo', () => {
   expect(parsed.soci.map(s => s.codice_fiscale)).toEqual(['RSSMRA80A01H501Z', 'BNCLCU82B02H501Y']);
   expect(parsed.amministratori.map(a => a.codice_fiscale)).toContain('VRDPLA75C03H501X');
 });
+
+it('legge il formato Report Impresa BPER/CRIF', () => {
+  const parsed = parseVisuraCompleta(`
+    ANAGRAFICA IMPRESA
+    INTENT S.P.A.
+    INFORMAZIONI GENERALI
+    Sede dell'impresa
+    VIA PRENESTINA NUOVA, 301/C - 00036 PALESTRINA (RM)
+    Forma giuridica
+    SOCIETA' PER AZIONI
+    Codice fiscale
+    12326171001
+    Partita IVA
+    12326171001
+    CLASSIFICAZIONE ATTIVITA'
+    Ateco 2025
+    62.20.10 - ATTIVITÀ DI CONSULENZA INFORMATICA
+    Ateco 2007
+    62.02 - CONSULENZA NEL SETTORE DELLE TECNOLOGIE DELL'INFORMATICA
+
+    ELENCO SOCI
+    ELENCO SOCI E DEGLI ALTRI TITOLARI DI DIRITTI SU AZIONI E QUOTE SOCIALI
+    Dettaglio quote e azioni
+    Tipo di Diritto Capitale Posseduto Quota
+    PRIMERANO FRANCESCO MARIA
+    PRMFNC71H18M208A
+    PROPRIETA' AMMONTARE 2.850.000,00 EURO 57.00 %
+    PRIMERANO ANNA
+    PRMNNA70L62F537L
+    PROPRIETA' AMMONTARE 1.050.000,00 EURO 21.00 %
+    PETRASSI PIETRO
+    PTRPTR88T08H501A
+    PROPRIETA' AMMONTARE 550.000,00 EURO 11.00 %
+    LUCIBELLO GIUSEPPE
+    LCBGPP73R24H703W
+    PROPRIETA' AMMONTARE 550.000,00 EURO 11.00 %
+    PARTECIPAZIONI
+
+    ESPONENTI, CONSIGLIO DI AMMINISTRAZIONE
+    PRIMERANO FRANCESCO MARIA
+    CODICE FISCALE
+    PRMFNC71H18M208A
+    AMMINISTRATORE UNICO
+  `);
+
+  expect(parsed.ragione_sociale).toBe('INTENT S.P.A.');
+  expect(parsed.piva).toBe('12326171001');
+  expect(parsed.indirizzo).toBe('VIA PRENESTINA NUOVA, 301/C - 00036 PALESTRINA (RM)');
+  expect(parsed.codice_ateco).toBe('62.20.10');
+  expect(parsed.ateco_descrizione).toContain('ATTIVITÀ DI CONSULENZA INFORMATICA');
+  expect(parsed.soci).toHaveLength(4);
+  expect(parsed.soci.map(socio => socio.nome)).toEqual([
+    'PRIMERANO FRANCESCO MARIA',
+    'PRIMERANO ANNA',
+    'PETRASSI PIETRO',
+    'LUCIBELLO GIUSEPPE',
+  ]);
+});
