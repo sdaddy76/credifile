@@ -419,9 +419,9 @@ export default function SegnalazioniRicevutePage() {
       navigate(`/admin/pratiche/${seg.practice_id}`);
       return;
     }
-    const email = (seg.email_referente?.trim() || seg.segnalatore?.email?.trim() || '').toLowerCase();
-    if (!email) {
-      toast.error('La segnalazione non contiene un’email cliente né un’email del segnalatore.');
+    let email = (seg.email_referente?.trim() || seg.segnalatore?.email?.trim() || '').toLowerCase();
+    if (!email && !isSuperAdmin) {
+      toast.error('La segnalazione non contiene un’email cliente né un’email del segnalatore. Il trasferimento senza email è riservato al Super Admin.');
       return;
     }
 
@@ -440,6 +440,9 @@ export default function SegnalazioniRicevutePage() {
           .limit(1);
         if (clientLookupError) throw clientLookupError;
         client = (existingClients?.[0] ?? null) as typeof client;
+        if (!email && client?.email?.trim()) {
+          email = client.email.trim().toLowerCase();
+        }
       }
 
       if (!client) {
@@ -448,7 +451,7 @@ export default function SegnalazioniRicevutePage() {
           .insert({
             ragione_sociale: seg.ragione_sociale.trim(),
             piva,
-            email,
+            email: email || '',
             telefono: seg.telefono?.trim() || null,
           })
           .select('id,ragione_sociale,email,telefono')
@@ -622,20 +625,24 @@ export default function SegnalazioniRicevutePage() {
         created_by: user?.id ?? null,
       });
 
-      const accessCode = `CF${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-      const expiry = new Date();
-      expiry.setDate(expiry.getDate() + 30);
-      const { data: access, error: accessError } = await supabase
-        .from('practice_access_codes')
-        .insert({
-          practice_id: practice.id,
-          codice: accessCode,
-          email_cliente: email,
-          scadenza: expiry.toISOString(),
-        })
-        .select('id,codice')
-        .single();
-      if (accessError) throw accessError;
+      let access: { id: string; codice: string } | null = null;
+      if (email) {
+        const accessCode = `CF${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+        const expiry = new Date();
+        expiry.setDate(expiry.getDate() + 30);
+        const { data: accessData, error: accessError } = await supabase
+          .from('practice_access_codes')
+          .insert({
+            practice_id: practice.id,
+            codice: accessCode,
+            email_cliente: email,
+            scadenza: expiry.toISOString(),
+          })
+          .select('id,codice')
+          .single();
+        if (accessError) throw accessError;
+        access = accessData as { id: string; codice: string };
+      }
 
       const receivedDocumentNames = receivedFiles.map(file => normalizeName(file.nome));
       const pendingDocuments = (practiceDocuments ?? [])
@@ -653,28 +660,32 @@ export default function SegnalazioniRicevutePage() {
         agentEmail = agent?.email ?? null;
       }
 
-      const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
-        body: {
-          to: email,
-          consultant_name: consultantName,
-          documents: pendingDocuments,
-          questions: [],
-          link: buildAppUrl(`/accesso?p=${practice.id}`),
-          code: access?.codice ?? accessCode,
-          practice_number: practice.numero_pratica,
-          company_name: seg.ragione_sociale,
-          subject_override: `Valutazione di bancabilità avviata — ${seg.ragione_sociale}`,
-          cc: agentEmail,
-          reply_to: agentEmail,
-        },
-      });
-      if (emailError || emailData?.success === false) {
-        const message = emailData?.error
-          ? JSON.stringify(emailData.error)
-          : emailError?.message ?? 'email non inviata';
-        toast.warning(`Pratica ${practice.numero_pratica} creata, ma l'email non è stata inviata: ${message}`);
+      if (email) {
+        const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
+          body: {
+            to: email,
+            consultant_name: consultantName,
+            documents: pendingDocuments,
+            questions: [],
+            link: buildAppUrl(`/accesso?p=${practice.id}`),
+            code: access?.codice ?? '',
+            practice_number: practice.numero_pratica,
+            company_name: seg.ragione_sociale,
+            subject_override: `Valutazione di bancabilità avviata — ${seg.ragione_sociale}`,
+            cc: agentEmail,
+            reply_to: agentEmail,
+          },
+        });
+        if (emailError || emailData?.success === false) {
+          const message = emailData?.error
+            ? JSON.stringify(emailData.error)
+            : emailError?.message ?? 'email non inviata';
+          toast.warning(`Pratica ${practice.numero_pratica} creata, ma l'email non è stata inviata: ${message}`);
+        } else {
+          toast.success(`Valutazione avviata: ${practice.numero_pratica}. Link inviato a ${email}.`);
+        }
       } else {
-        toast.success(`Valutazione avviata: ${practice.numero_pratica}. Link inviato a ${email}.`);
+        toast.success(`Segnalazione trasferita nella pratica ${practice.numero_pratica}. Email cliente non presente: il link non è stato inviato.`);
       }
 
       const { error: requestUpdateError } = await supabase
@@ -682,7 +693,7 @@ export default function SegnalazioniRicevutePage() {
         .update({
           practice_id: practice.id,
           stato: 'lavorazione',
-          email_referente: seg.email_referente?.trim() ? seg.email_referente.trim().toLowerCase() : email,
+          email_referente: seg.email_referente?.trim() ? seg.email_referente.trim().toLowerCase() : (email || null),
           updated_at: new Date().toISOString(),
         })
         .eq('id', seg.id);
@@ -694,7 +705,7 @@ export default function SegnalazioniRicevutePage() {
           practice_id: practice.id,
           numero_pratica: practice.numero_pratica,
           stato: 'lavorazione',
-          email_referente: item.email_referente?.trim() ? item.email_referente : email,
+          email_referente: item.email_referente?.trim() ? item.email_referente : (email || null),
         }
         : item
       ));
