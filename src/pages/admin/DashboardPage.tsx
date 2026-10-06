@@ -45,7 +45,7 @@ const STATUS_BAR_COLOR: Record<string, string> = {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { isSuperAdmin, isSegreteria } = useAuth();
+  const { user, isSuperAdmin, isSegreteria, isAgente, isSegnalatore } = useAuth();
   const [stats, setStats] = useState<Stats>({ totalPractices: 0, activeClients: 0, totalBanks: 0, byStatus: {} });
   const [recentPractices, setRecentPractices] = useState<Practice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,9 +59,50 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function load() {
+      if (!user?.id) return;
+      let allowedPracticeIds: string[] | null = null;
+      if (isAgente) {
+        const { data } = await supabase.from('practices').select('id').eq('assigned_to', user.id);
+        allowedPracticeIds = (data ?? []).map(row => row.id);
+      } else if (isSegreteria) {
+        const { data: assignments } = await supabase
+          .from('segreteria_agent_assignments')
+          .select('agent_user_id')
+          .eq('segreteria_user_id', user.id);
+        const agentIds = (assignments ?? []).map(row => row.agent_user_id);
+        if (agentIds.length === 0) {
+          allowedPracticeIds = [];
+        } else {
+          const { data } = await supabase.from('practices').select('id').in('assigned_to', agentIds);
+          allowedPracticeIds = (data ?? []).map(row => row.id);
+        }
+      } else if (isSegnalatore) {
+        const { data } = await supabase.from('practices').select('id').eq('segnalatore_id', user.id);
+        allowedPracticeIds = (data ?? []).map(row => row.id);
+      }
+
+      const applyPracticeVisibility = (query: any) => (
+        allowedPracticeIds === null
+          ? query
+          : query.in(
+              'id',
+              allowedPracticeIds.length > 0
+                ? allowedPracticeIds
+                : ['00000000-0000-0000-0000-000000000000'],
+            )
+      );
       const [pratiche, clienti, banche] = await Promise.all([
-        supabase.from('practices').select('*, clients(ragione_sociale), banks(nome)').order('created_at', { ascending: false }).limit(200),
-        supabase.from('clients').select('id'),
+        applyPracticeVisibility(
+          supabase.from('practices').select('*, clients(ragione_sociale), banks(nome)')
+        ).order('created_at', { ascending: false }).limit(200),
+        allowedPracticeIds === null
+          ? supabase.from('clients').select('id')
+          : supabase.from('practices').select('client_id').in(
+              'id',
+              allowedPracticeIds.length > 0
+                ? allowedPracticeIds
+                : ['00000000-0000-0000-0000-000000000000'],
+            ),
         supabase.from('banks').select('id').eq('attiva', true),
       ]);
 
@@ -71,7 +112,9 @@ export default function DashboardPage() {
 
       setStats({
         totalPractices: practices.length,
-        activeClients: clienti.data?.length ?? 0,
+        activeClients: allowedPracticeIds === null
+          ? clienti.data?.length ?? 0
+          : new Set((clienti.data ?? []).map(row => row.client_id).filter(Boolean)).size,
         totalBanks: banche.data?.length ?? 0,
         byStatus,
       });
@@ -98,7 +141,7 @@ export default function DashboardPage() {
     tomorrow14.setDate(tomorrow14.getDate() + 14);
     supabase.from('practice_tasks').select('id', { count: 'exact', head: true }).in('stato', ['aperta','in_corso']).then(({ count }) => setPendingTasks(count ?? 0));
     supabase.from('document_deadlines').select('id', { count: 'exact', head: true }).lte('data_scadenza', tomorrow14.toISOString().split('T')[0]).gte('data_scadenza', new Date().toISOString().split('T')[0]).then(({ count }) => setUpcomingDeadlines(count ?? 0));
-  }, []);
+  }, [user?.id, isAgente, isSegreteria, isSegnalatore]);
 
   useEffect(() => {
     if (!canSeeBankRequests) return;

@@ -40,6 +40,7 @@ interface Segnalazione {
   disclaimer_pagamento_accettato_at?: string | null;
   privacy_consent_accepted_at?: string | null;
   agente?: { nome: string; nome_cognome: string } | null;
+  segnalatore?: { nome?: string | null; email: string } | null;
 }
 
 interface Agente {
@@ -113,7 +114,38 @@ export default function SegnalazioniRicevutePage() {
       .select('*')
       .order('created_at', { ascending: false });
     if (filtroStato && filtroStato !== 'tutte') q = q.eq('stato', filtroStato);
-    if (isAgente && user?.id) q = q.eq('agente_id', user.id);
+    if (isAgente && user?.id) {
+      // L'agente vede soltanto le segnalazioni assegnate a lui. Quelle ancora
+      // prive di agente restano nel presidio esclusivo del Super Admin.
+      q = q.eq('agente_id', user.id);
+    } else if (isSegreteria && user?.id) {
+      // La segreteria vede soltanto le segnalazioni assegnate ai propri
+      // agenti; non deve vedere quelle non ancora associate a un agente.
+      const { data: assignments, error: assignmentsError } = await supabase
+        .from('segreteria_agent_assignments')
+        .select('agent_user_id')
+        .eq('segreteria_user_id', user.id);
+      if (assignmentsError) {
+        setLoadError(assignmentsError.message);
+        toast.error('Errore caricamento agenti della segreteria: ' + assignmentsError.message);
+        setSegnalazioni([]);
+        setLoading(false);
+        return;
+      }
+      const agentIds = (assignments ?? []).map(
+        (assignment: { agent_user_id: string }) => assignment.agent_user_id
+      );
+      if (agentIds.length === 0) {
+        setSegnalazioni([]);
+        setLoading(false);
+        return;
+      }
+      q = q.in('agente_id', agentIds);
+    } else if (!isSuperAdmin) {
+      setSegnalazioni([]);
+      setLoading(false);
+      return;
+    }
     const { data, error } = await q.limit(100);
     if (error) {
       setLoadError(error.message);
@@ -130,6 +162,21 @@ export default function SegnalazioniRicevutePage() {
         const agentById = new Map((agentRows ?? []).map(agent => [agent.id, agent]));
         rows.forEach(row => {
           if (row.agente_id) row.agente = agentById.get(row.agente_id) as Segnalazione['agente'] ?? null;
+        });
+      }
+    }
+    const segnalatoreIds = [...new Set(rows.map(row => row.segnalatore_id).filter(Boolean))] as string[];
+    if (segnalatoreIds.length > 0) {
+      const { data: segnalatoreRows, error: segnalatoriError } = await supabase
+        .from('admin_profiles')
+        .select('id,nome,email')
+        .in('id', segnalatoreIds);
+      if (!segnalatoriError) {
+        const segnalatoreById = new Map((segnalatoreRows ?? []).map(profile => [profile.id, profile]));
+        rows.forEach(row => {
+          if (row.segnalatore_id) {
+            row.segnalatore = segnalatoreById.get(row.segnalatore_id) as Segnalazione['segnalatore'] ?? null;
+          }
         });
       }
     }
@@ -157,7 +204,7 @@ export default function SegnalazioniRicevutePage() {
   };
 
   useEffect(() => { loadAgenti(); }, []);
-  useEffect(() => { load(); }, [filtroStato, isAgente, user?.id]);
+  useEffect(() => { load(); }, [filtroStato, isAgente, isSegreteria, isSuperAdmin, user?.id]);
 
   // Assegna segnalazione a un agente
   const assegna = async (seg: Segnalazione) => {
@@ -311,6 +358,7 @@ export default function SegnalazioniRicevutePage() {
           ].filter(Boolean).join('\n\n') || null,
           created_by: user?.id ?? null,
           assigned_to: seg.agente_id ?? null,
+          segnalatore_id: seg.segnalatore_id ?? null,
         })
         .select('id,numero_pratica,status')
         .single();
@@ -651,6 +699,11 @@ export default function SegnalazioniRicevutePage() {
                             <User className="w-3 h-3" /> {seg.agente.nome_cognome || seg.agente.nome || 'Agente'}
                           </span>
                         )}
+                        {isSuperAdmin && !seg.agente_id && (
+                          <Badge className="text-[10px] bg-red-100 text-red-800 border-red-200">
+                            Solo Super Admin · non assegnata
+                          </Badge>
+                        )}
                       </div>
                       {seg.practice_id && (
                         <p className="text-xs text-teal-700 mt-1">
@@ -661,6 +714,16 @@ export default function SegnalazioniRicevutePage() {
                       {seg.piva && (
                         <p className="text-xs text-muted-foreground mt-1">
                           P.IVA: <code className="font-mono">{seg.piva}</code>
+                        </p>
+                      )}
+                      {seg.segnalatore && (
+                        <p className="text-xs text-orange-700 mt-1 flex items-center gap-1">
+                          <User className="w-3 h-3" />
+                          <span className="font-medium">Segnalatore:</span>
+                          <span>{seg.segnalatore.nome || seg.segnalatore.email}</span>
+                          {seg.segnalatore.nome && (
+                            <span className="text-muted-foreground">· {seg.segnalatore.email}</span>
+                          )}
                         </p>
                       )}
                       {seg.disclaimer_pagamento_accettato_at && (
