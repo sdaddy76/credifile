@@ -319,7 +319,8 @@ export default function PraticaDetailPage() {
 
   // Dialogs
   const [showStatusChange, setShowStatusChange] = useState(false);
-    const [showAddDoc, setShowAddDoc] = useState(false);
+  const [showAddDoc, setShowAddDoc] = useState(false);
+  const [showEditDoc, setShowEditDoc] = useState<string | null>(null);
   const [showRejectDoc, setShowRejectDoc] = useState<string | null>(null);
   const [showIntegration, setShowIntegration] = useState(false);
 
@@ -329,6 +330,9 @@ export default function PraticaDetailPage() {
   const [newDocName, setNewDocName] = useState('');
   const [newDocDesc, setNewDocDesc] = useState('');
   const [newDocInputType, setNewDocInputType] = useState<'upload' | 'text' | 'contacts' | 'customers' | 'suppliers'>('upload');
+  const [editDocName, setEditDocName] = useState('');
+  const [editDocDesc, setEditDocDesc] = useState('');
+  const [savingDocEdit, setSavingDocEdit] = useState(false);
   const [rejectNote, setRejectNote] = useState('');
   const [integrationRequests, setIntegrationRequests] = useState<IntegrationRequestDraft[]>([
     { nome: '', descrizione: '' },
@@ -2178,6 +2182,45 @@ export default function PraticaDetailPage() {
     load();
   };
 
+  const openEditDoc = (document: PracticeDocument) => {
+    setShowEditDoc(document.id);
+    setEditDocName(document.nome ?? '');
+    setEditDocDesc(document.descrizione ?? '');
+  };
+
+  const handleEditDoc = async () => {
+    if (!showEditDoc) return;
+    const nome = editDocName.trim();
+    if (!nome) {
+      toast.error('Inserisci il nome del documento');
+      return;
+    }
+    setSavingDocEdit(true);
+    const { error } = await supabase
+      .from('practice_documents')
+      .update({
+        nome,
+        descrizione: editDocDesc.trim() || null,
+      })
+      .eq('id', showEditDoc)
+      .eq('practice_id', id);
+    if (error) {
+      toast.error('Errore modifica documento: ' + error.message);
+      setSavingDocEdit(false);
+      return;
+    }
+    setDocuments(prev => prev.map(document => (
+      document.id === showEditDoc
+        ? { ...document, nome, descrizione: editDocDesc.trim() || undefined }
+        : document
+    )));
+    toast.success('Voce del documento aggiornata');
+    setSavingDocEdit(false);
+    setShowEditDoc(null);
+    setEditDocName('');
+    setEditDocDesc('');
+  };
+
   // Aggiunta doc manuale
   const handleAddDoc = async () => {
     if (!newDocName.trim()) { toast.error('Inserisci il nome del documento'); return; }
@@ -3563,6 +3606,15 @@ export default function PraticaDetailPage() {
                               )}
                               {canEdit && (
                                 <div className="shrink-0 flex gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 p-0 text-blue-600 hover:bg-blue-50"
+                                    title="Modifica voce documento"
+                                    onClick={() => openEditDoc(doc)}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </Button>
                                   {inputType === 'upload' && (
                                     <>
                                       <input type="file" multiple className="hidden"
@@ -5374,6 +5426,59 @@ export default function PraticaDetailPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDoc(false)}>Annulla</Button>
             <Button onClick={handleAddDoc} disabled={saving}>Aggiungi richiesta</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog modifica voce documento */}
+      <Dialog
+        open={!!showEditDoc}
+        onOpenChange={open => {
+          if (!open && !savingDocEdit) {
+            setShowEditDoc(null);
+            setEditDocName('');
+            setEditDocDesc('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader><DialogTitle>Modifica documento richiesto</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Nome della richiesta *</Label>
+              <Input
+                value={editDocName}
+                onChange={event => setEditDocName(event.target.value)}
+                placeholder="Nome visualizzato al cliente"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Descrizione / istruzioni (opzionale)</Label>
+              <Textarea
+                value={editDocDesc}
+                onChange={event => setEditDocDesc(event.target.value)}
+                placeholder="Istruzioni per il cliente o note operative..."
+                rows={4}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowEditDoc(null);
+                setEditDocName('');
+                setEditDocDesc('');
+              }}
+              disabled={savingDocEdit}
+            >
+              Annulla
+            </Button>
+            <Button onClick={handleEditDoc} disabled={savingDocEdit}>
+              {savingDocEdit
+                ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Salvataggio...</>
+                : <><Save className="w-3.5 h-3.5 mr-1.5" /> Salva modifiche</>}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

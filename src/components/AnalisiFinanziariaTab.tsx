@@ -20,7 +20,13 @@ import { uploadPracticeFile } from '@/lib/uploadFile';
 
 interface Props { practiceId: string }
 
-interface UploadedPdf { id: string; nome_file: string; storage_path: string; created_at: string }
+interface UploadedPdf {
+  id: string;
+  nome_file: string;
+  storage_path: string;
+  created_at: string;
+  source?: 'pratica' | 'segnalatore';
+}
 
 interface KpiEntry {
   valore: number | null;
@@ -985,14 +991,53 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       setAnomalyAlerts([]);
     }
 
-    // PDF già caricati nella pratica
-    const { data: pdfData } = await supabase
-      .from('uploaded_files')
-      .select('id, nome_file, storage_path, created_at')
-      .eq('practice_id', practiceId)
-      .ilike('nome_file', '%.pdf')
-      .order('created_at', { ascending: false });
-    setUploadedPdfs((pdfData ?? []) as UploadedPdf[]);
+    // PDF già caricati nella pratica. I file ricevuti tramite una
+    // segnalazione pubblica vengono inclusi anche se, per una vecchia
+    // segnalazione, non sono ancora stati materializzati in uploaded_files.
+    const [{ data: pdfData }, { data: publicSignals }] = await Promise.all([
+      supabase
+        .from('uploaded_files')
+        .select('id, nome_file, storage_path, created_at, uploaded_by')
+        .eq('practice_id', practiceId)
+        .ilike('nome_file', '%.pdf')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('segnalazioni_pubbliche')
+        .select('id, file_urls, created_at')
+        .eq('practice_id', practiceId)
+        .order('created_at', { ascending: false }),
+    ]);
+    const practicePdfs = (pdfData ?? []).map(file => ({
+      id: file.id,
+      nome_file: file.nome_file,
+      storage_path: file.storage_path,
+      created_at: file.created_at,
+      source: file.uploaded_by === 'segnalatore' ? 'segnalatore' as const : 'pratica' as const,
+    }));
+    const existingPaths = new Set(practicePdfs.map(file => file.storage_path));
+    const publicPdfs = (publicSignals ?? []).flatMap(signal => {
+      const fileUrls = Array.isArray(signal.file_urls) ? signal.file_urls : [];
+      return fileUrls
+        .map((file, index) => {
+          const entry = file as {
+            nome?: string;
+            path?: string;
+            mime_type?: string | null;
+          };
+          if (!entry.path || existingPaths.has(entry.path)) return null;
+          const name = entry.nome || entry.path.split('/').pop() || `Documento segnalatore ${index + 1}`;
+          if (!/\.pdf$/i.test(name) && entry.mime_type !== 'application/pdf') return null;
+          return {
+            id: `segnalazione:${signal.id}:${index}`,
+            nome_file: name,
+            storage_path: entry.path,
+            created_at: signal.created_at,
+            source: 'segnalatore' as const,
+          };
+        })
+        .filter((file): file is UploadedPdf => file !== null);
+    });
+    setUploadedPdfs([...practicePdfs, ...publicPdfs]);
     setLoading(false);
   };
 
@@ -1278,7 +1323,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
 
       toast.info('Analisi XBRL e calcolo KPI...');
       const pdfText = await extractPdfText(file);
-      const result = await runAnalysis(pdfText, pdf.id);
+      const result = await runAnalysis(
+        pdfText,
+        pdf.id.startsWith('segnalazione:') ? null : pdf.id,
+      );
       toast.success(`Bilancio ${result.anno ?? ''} analizzato — KPI calcolati`);
       await loadData();
     } catch (err: unknown) {
@@ -1357,7 +1405,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
               <SelectContent>
                 {uploadedPdfs.map(p => (
                   <SelectItem key={p.id} value={p.id}>
-                    {p.nome_file}
+                    {p.nome_file}{p.source === 'segnalatore' ? ' · ricevuto tramite segnalatore' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
