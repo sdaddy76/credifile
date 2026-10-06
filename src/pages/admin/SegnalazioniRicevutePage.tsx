@@ -6,15 +6,17 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { buildAppUrl } from '@/lib/appUrl';
+import { sanitizeFileName } from '@/lib/uploadFile';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { formatRomeDateTime } from '@/lib/dateTime';
-import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, AlertTriangle, Trash2, Link2, Loader2 } from 'lucide-react';
+import { Inbox, RefreshCw, User, Building2, Phone, Mail, FileText, CheckCircle2, Clock, AlertCircle, AlertTriangle, Trash2, Link2, Loader2, Pencil, Save, X, Upload } from 'lucide-react';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
 interface Segnalazione {
@@ -40,7 +42,7 @@ interface Segnalazione {
   disclaimer_pagamento_accettato_at?: string | null;
   privacy_consent_accepted_at?: string | null;
   agente?: { nome: string; nome_cognome: string } | null;
-  segnalatore?: { nome?: string | null; email: string } | null;
+  segnalatore?: { nome?: string | null; email?: string | null } | null;
 }
 
 interface Agente {
@@ -49,6 +51,19 @@ interface Agente {
   nome_cognome?: string | null;
   email?: string | null;
   ruolo: string;
+}
+
+interface SegnalazioneEditForm {
+  ragione_sociale: string;
+  piva: string;
+  nome_referente: string;
+  email_referente: string;
+  telefono: string;
+  note: string;
+  note_interne: string;
+  financing_amount: string;
+  financing_type: string;
+  financing_request: string;
 }
 
 const STATO_COLOR: Record<string, string> = {
@@ -72,6 +87,10 @@ export default function SegnalazioniRicevutePage() {
   const [startingEvaluation, setStartingEvaluation] = useState<string | null>(null);
   const [noteInterne, setNoteInterne]   = useState<Record<string, string>>({});
   const [selectedAgente, setSelectedAgente] = useState<Record<string, string>>({});
+  const [editingSegnalazioneId, setEditingSegnalazioneId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<SegnalazioneEditForm | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [uploadingDocuments, setUploadingDocuments] = useState<string | null>(null);
 
   const apriDocumento = async (file: { nome: string; url?: string; path?: string }) => {
     if (file.path) {
@@ -257,6 +276,141 @@ export default function SegnalazioniRicevutePage() {
     setSegnalazioni(prev => prev.map(s => s.id === id ? { ...s, stato } : s));
   };
 
+  const apriEditor = (seg: Segnalazione) => {
+    setEditingSegnalazioneId(seg.id);
+    setEditForm({
+      ragione_sociale: seg.ragione_sociale ?? '',
+      piva: seg.piva ?? '',
+      nome_referente: seg.nome_referente ?? '',
+      email_referente: seg.email_referente ?? '',
+      telefono: seg.telefono ?? '',
+      note: seg.note ?? '',
+      note_interne: seg.note_interne ?? '',
+      financing_amount: seg.financing_amount != null ? String(seg.financing_amount) : '',
+      financing_type: seg.financing_type ?? '',
+      financing_request: seg.financing_request ?? '',
+    });
+  };
+
+  const chiudiEditor = () => {
+    if (savingEdit) return;
+    setEditingSegnalazioneId(null);
+    setEditForm(null);
+  };
+
+  const aggiornaCampoEdit = <K extends keyof SegnalazioneEditForm>(campo: K, valore: SegnalazioneEditForm[K]) => {
+    setEditForm(prev => prev ? { ...prev, [campo]: valore } : prev);
+  };
+
+  const salvaModificheSegnalazione = async (seg: Segnalazione) => {
+    if (!editForm) return;
+    if (!editForm.ragione_sociale.trim()) {
+      toast.error('La ragione sociale è obbligatoria.');
+      return;
+    }
+    setSavingEdit(true);
+    const importo = editForm.financing_amount.trim() === ''
+      ? null
+      : Number(editForm.financing_amount.replace(/\./g, '').replace(',', '.'));
+    if (importo !== null && (!Number.isFinite(importo) || importo < 0)) {
+      toast.error('Inserisci un importo richiesto valido.');
+      setSavingEdit(false);
+      return;
+    }
+    const payload = {
+      ragione_sociale: editForm.ragione_sociale.trim(),
+      piva: editForm.piva.replace(/\D/g, '') || null,
+      nome_referente: editForm.nome_referente.trim() || null,
+      email_referente: editForm.email_referente.trim().toLowerCase() || null,
+      telefono: editForm.telefono.trim() || null,
+      note: editForm.note.trim() || null,
+      note_interne: editForm.note_interne.trim() || null,
+      financing_amount: importo,
+      financing_type: editForm.financing_type.trim() || null,
+      financing_request: editForm.financing_request.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase
+      .from('segnalazioni_pubbliche')
+      .update(payload)
+      .eq('id', seg.id);
+    if (error) {
+      toast.error('Errore salvataggio segnalazione: ' + error.message);
+      setSavingEdit(false);
+      return;
+    }
+    setSegnalazioni(prev => prev.map(item => item.id === seg.id
+      ? { ...item, ...payload, piva: payload.piva, financing_amount: payload.financing_amount }
+      : item
+    ));
+    toast.success('Segnalazione aggiornata.');
+    setSavingEdit(false);
+    chiudiEditor();
+  };
+
+  const caricaDocumentiSegnalazione = async (seg: Segnalazione, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const selectedFiles = Array.from(files);
+    const tooLarge = selectedFiles.find(file => file.size > 30 * 1024 * 1024);
+    if (tooLarge) {
+      toast.error(`Il file "${tooLarge.name}" supera il limite di 30 MB.`);
+      return;
+    }
+    setUploadingDocuments(seg.id);
+    const uploadedPaths: string[] = [];
+    try {
+      const newFiles: NonNullable<Segnalazione['file_urls']> = [];
+      for (const [index, file] of selectedFiles.entries()) {
+        const path = `segnalazioni/admin/${seg.id}/${Date.now()}_${index}_${sanitizeFileName(file.name)}`;
+        const { error: uploadError } = await supabase.storage
+          .from('practice-files')
+          .upload(path, file, { upsert: false, cacheControl: '3600' });
+        if (uploadError) throw new Error(`Upload "${file.name}" non riuscito: ${uploadError.message}`);
+        uploadedPaths.push(path);
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from('practice-files')
+          .createSignedUrl(path, 315360000);
+        if (signedError || !signedData?.signedUrl) {
+          throw new Error(`Impossibile creare il link del documento "${file.name}".`);
+        }
+        newFiles.push({
+          nome: file.name,
+          url: signedData.signedUrl,
+          path,
+          mime_type: file.type || null,
+          dimensione: file.size,
+        });
+      }
+
+      const { data: current, error: currentError } = await supabase
+        .from('segnalazioni_pubbliche')
+        .select('file_urls')
+        .eq('id', seg.id)
+        .single();
+      if (currentError) throw currentError;
+      const existingFiles = Array.isArray(current?.file_urls) ? current.file_urls : (seg.file_urls ?? []);
+      const mergedFiles = [...existingFiles, ...newFiles];
+      const { error: updateError } = await supabase
+        .from('segnalazioni_pubbliche')
+        .update({ file_urls: mergedFiles, updated_at: new Date().toISOString() })
+        .eq('id', seg.id);
+      if (updateError) throw updateError;
+
+      setSegnalazioni(prev => prev.map(item => item.id === seg.id
+        ? { ...item, file_urls: mergedFiles }
+        : item
+      ));
+      toast.success(`${newFiles.length} document${newFiles.length === 1 ? 'o' : 'i'} aggiunt${newFiles.length === 1 ? 'o' : 'i'} alla segnalazione.`);
+    } catch (error) {
+      if (uploadedPaths.length > 0) {
+        await supabase.storage.from('practice-files').remove(uploadedPaths);
+      }
+      toast.error(`Impossibile aggiungere i documenti: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setUploadingDocuments(null);
+    }
+  };
+
   // Trasforma una richiesta pubblica di valutazione in una pratica operativa.
   // La visura già ricevuta resta nello stesso bucket e viene collegata alla
   // nuova pratica senza duplicare il file.
@@ -265,9 +419,9 @@ export default function SegnalazioniRicevutePage() {
       navigate(`/admin/pratiche/${seg.practice_id}`);
       return;
     }
-    const email = seg.email_referente?.trim().toLowerCase();
+    const email = (seg.email_referente?.trim() || seg.segnalatore?.email?.trim() || '').toLowerCase();
     if (!email) {
-      toast.error('La richiesta non contiene un email: inserisci prima il recapito del cliente.');
+      toast.error('La segnalazione non contiene un’email cliente né un’email del segnalatore.');
       return;
     }
 
@@ -528,13 +682,20 @@ export default function SegnalazioniRicevutePage() {
         .update({
           practice_id: practice.id,
           stato: 'lavorazione',
+          email_referente: seg.email_referente?.trim() ? seg.email_referente.trim().toLowerCase() : email,
           updated_at: new Date().toISOString(),
         })
         .eq('id', seg.id);
       if (requestUpdateError) throw requestUpdateError;
 
       setSegnalazioni(prev => prev.map(item => item.id === seg.id
-        ? { ...item, practice_id: practice.id, numero_pratica: practice.numero_pratica, stato: 'lavorazione' }
+        ? {
+          ...item,
+          practice_id: practice.id,
+          numero_pratica: practice.numero_pratica,
+          stato: 'lavorazione',
+          email_referente: item.email_referente?.trim() ? item.email_referente : email,
+        }
         : item
       ));
       navigate(`/admin/pratiche/${practice.id}`);
@@ -809,12 +970,107 @@ export default function SegnalazioniRicevutePage() {
                         </button>
                       )}
                       {isSuperAdmin && (
-                        <button onClick={() => elimina(seg.id, seg.ragione_sociale)} className="p-1.5 rounded hover:bg-red-50 transition-colors text-red-500" title="Elimina segnalazione">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => editingSegnalazioneId === seg.id ? chiudiEditor() : apriEditor(seg)}
+                            className="p-1.5 rounded hover:bg-blue-50 transition-colors text-blue-600"
+                            title={editingSegnalazioneId === seg.id ? 'Chiudi modifica' : 'Modifica segnalazione'}
+                          >
+                            {editingSegnalazioneId === seg.id ? <X className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+                          </button>
+                          <button onClick={() => elimina(seg.id, seg.ragione_sociale)} className="p-1.5 rounded hover:bg-red-50 transition-colors text-red-500" title="Elimina segnalazione">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
+
+                  {isSuperAdmin && editingSegnalazioneId === seg.id && editForm && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-blue-950">Modifica segnalazione</p>
+                          <p className="text-xs text-blue-800/80">Correggi i dati prima di avviare la valutazione. Gli allegati già presenti non vengono rimossi.</p>
+                        </div>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={chiudiEditor} disabled={savingEdit}>
+                          <X className="h-3.5 w-3.5" /> Annulla
+                        </Button>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Ragione sociale
+                          <Input value={editForm.ragione_sociale} onChange={e => aggiornaCampoEdit('ragione_sociale', e.target.value)} className="mt-1 h-8 text-xs" />
+                        </label>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Partita IVA
+                          <Input value={editForm.piva} onChange={e => aggiornaCampoEdit('piva', e.target.value)} className="mt-1 h-8 text-xs" inputMode="numeric" />
+                        </label>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Referente
+                          <Input value={editForm.nome_referente} onChange={e => aggiornaCampoEdit('nome_referente', e.target.value)} className="mt-1 h-8 text-xs" />
+                        </label>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Email cliente
+                          <Input value={editForm.email_referente} onChange={e => aggiornaCampoEdit('email_referente', e.target.value)} className="mt-1 h-8 text-xs" type="email" />
+                        </label>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Telefono
+                          <Input value={editForm.telefono} onChange={e => aggiornaCampoEdit('telefono', e.target.value)} className="mt-1 h-8 text-xs" type="tel" />
+                        </label>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Importo richiesto
+                          <Input value={editForm.financing_amount} onChange={e => aggiornaCampoEdit('financing_amount', e.target.value)} className="mt-1 h-8 text-xs" inputMode="decimal" placeholder="es. 150000" />
+                        </label>
+                        <label className="text-xs font-medium text-muted-foreground md:col-span-2">
+                          Tipologia prodotto
+                          <Input value={editForm.financing_type} onChange={e => aggiornaCampoEdit('financing_type', e.target.value)} className="mt-1 h-8 text-xs" placeholder="Finanziamento, mutuo, leasing…" />
+                        </label>
+                      </div>
+                      <label className="block text-xs font-medium text-muted-foreground">
+                        Richiesta e motivazione finanziaria
+                        <Textarea value={editForm.financing_request} onChange={e => aggiornaCampoEdit('financing_request', e.target.value)} className="mt-1 text-xs" rows={3} placeholder="Descrizione della finalità e della natura dell'operazione…" />
+                      </label>
+                      <label className="block text-xs font-medium text-muted-foreground">
+                        Note della segnalazione
+                        <Textarea value={editForm.note} onChange={e => aggiornaCampoEdit('note', e.target.value)} className="mt-1 text-xs" rows={2} />
+                      </label>
+                      <label className="block text-xs font-medium text-muted-foreground">
+                        Note interne
+                        <Textarea value={editForm.note_interne} onChange={e => aggiornaCampoEdit('note_interne', e.target.value)} className="mt-1 text-xs" rows={2} placeholder="Visibili solo agli operatori…" />
+                      </label>
+                      <div className="flex items-center justify-between gap-3 flex-wrap border-t border-blue-200 pt-3">
+                        <div>
+                          <p className="text-xs font-medium text-blue-950">Aggiungi documenti</p>
+                          <p className="text-[11px] text-blue-800/80">Puoi selezionare più file. Quelli già caricati restano disponibili.</p>
+                        </div>
+                        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50">
+                          {uploadingDocuments === seg.id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Upload className="h-3.5 w-3.5" />}
+                          {uploadingDocuments === seg.id ? 'Caricamento…' : 'Carica documenti'}
+                          <input
+                            type="file"
+                            multiple
+                            className="sr-only"
+                            disabled={uploadingDocuments === seg.id}
+                            onChange={event => {
+                              void caricaDocumentiSegnalazione(seg, event.target.files);
+                              event.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <div className="flex justify-end">
+                        <Button type="button" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void salvaModificheSegnalazione(seg)} disabled={savingEdit}>
+                          {savingEdit
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Save className="h-3.5 w-3.5" />}
+                          {savingEdit ? 'Salvataggio…' : 'Salva modifiche'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Sezione assegnazione (visibile solo se non chiusa/annullata) */}
                   {seg.stato !== 'chiusa' && seg.stato !== 'annullata' && (
