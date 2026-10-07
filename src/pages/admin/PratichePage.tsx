@@ -42,6 +42,7 @@ export default function PratichePage() {
   const [assignBankId, setAssignBankId] = useState('');
   const [assignBankNote, setAssignBankNote] = useState('');
   const [sendBankEmail, setSendBankEmail] = useState(false);
+  const [forceSendWithoutRelation, setForceSendWithoutRelation] = useState(false);
   const [savingBank, setSavingBank] = useState(false);
   const [existingPracticeBanks, setExistingPracticeBanks] = useState<{
     id:string;
@@ -73,6 +74,7 @@ export default function PratichePage() {
     setAssignBankId('');
     setAssignBankNote('');
     setSendBankEmail(false);
+    setForceSendWithoutRelation(false);
     setLoadingBankDialog(true);
     // Carica tutti i bank_id assegnati alla pratica (senza filtro created_by) per il dropdown
     const { data: allBanks } = await supabase
@@ -97,6 +99,7 @@ export default function PratichePage() {
     setAssignBankId('');
     setAssignBankNote('');
     setSendBankEmail(false);
+    setForceSendWithoutRelation(false);
     setExistingPracticeBanks([]);
     setAllAssignedBankIds([]);
     setSendNoteFor({});
@@ -107,7 +110,10 @@ export default function PratichePage() {
     if (!showAssignBank) return;
     setSendingBankId(bankId);
     const { data, error } = await invokeSendToBank({
-      practice_id: showAssignBank.id, bank_id: bankId, note: sendNoteFor[bankId] || null,
+      practice_id: showAssignBank.id,
+      bank_id: bankId,
+      note: sendNoteFor[bankId] || null,
+      force_without_relation: forceSendWithoutRelation,
     });
     if (error || data?.error) {
       toast.error('Errore invio: ' + (error?.message ?? data?.error));
@@ -466,7 +472,10 @@ export default function PratichePage() {
     // Invia email alla banca se richiesto
     if (sendBankEmail) {
       const { data: fnData, error: fnError } = await invokeSendToBank({
-        practice_id: showAssignBank.id, bank_id: assignBankId, note: assignBankNote || null,
+        practice_id: showAssignBank.id,
+        bank_id: assignBankId,
+        note: assignBankNote || null,
+        force_without_relation: forceSendWithoutRelation,
       });
       if (fnError || fnData?.error) {
         toast.warning('Banca assegnata ma errore invio email: ' + (fnError?.message ?? fnData?.error));
@@ -962,6 +971,22 @@ export default function PratichePage() {
                   Invia subito email alla banca con i documenti disponibili
                 </label>
               </div>
+              {sendBankEmail && (
+                <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={forceSendWithoutRelation}
+                    onChange={e => setForceSendWithoutRelation(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 accent-amber-600"
+                  />
+                  <span>
+                    <span className="font-semibold block">Forza invio senza Relazione Commerciale</span>
+                    <span className="text-xs text-amber-800">
+                      Invia i documenti disponibili anche se la relazione non è stata generata.
+                    </span>
+                  </span>
+                </label>
+              )}
             </div>
           </div>
           <DialogFooter>

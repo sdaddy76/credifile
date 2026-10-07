@@ -312,6 +312,7 @@ export default async function handler(req, res) {
       integration_request_id,
       copy_to,
       copy_only = false,
+      force_without_relation = false,
     } = req.body;
     if (!practice_id || !bank_id) {
       return res.status(400).json({ success: false, error: 'practice_id e bank_id obbligatori' });
@@ -325,6 +326,8 @@ export default async function handler(req, res) {
     }
     const integrationMode = Boolean(integration_request_id);
     const copyOnlyMode = Boolean(copy_only);
+    // L'invio forzato vale solo per l'invio ordinario della pratica.
+    const forceWithoutRelation = Boolean(force_without_relation) && !integrationMode && !copyOnlyMode;
 
     const H = {
       'apikey': SUPABASE_KEY,
@@ -355,6 +358,9 @@ export default async function handler(req, res) {
     }
     if (!Array.isArray(accessiblePracticeArr) || accessiblePracticeArr.length === 0) {
       return res.status(403).json({ success: false, error: 'Non hai accesso a questa pratica' });
+    }
+    if (forceWithoutRelation && !allowedRoles.has(actorProfile.ruolo)) {
+      return res.status(403).json({ success: false, error: 'Ruolo non autorizzato all’invio forzato' });
     }
 
     const filesUrl = integrationMode
@@ -417,24 +423,24 @@ export default async function handler(req, res) {
     if (!pb) return res.status(404).json({ success: false, error: 'Assegnazione banca non trovata' });
 
     const generatedRelations = Array.isArray(relazioniRaw) ? relazioniRaw : [];
-    const commercialRelation = !integrationMode
+    const commercialRelation = !integrationMode && !forceWithoutRelation
       ? generatedRelations.find(relation => relation.bank_id === bank_id)
         ?? generatedRelations.find(relation => relation.bank_id === null)
         ?? null
       : null;
-    if (!integrationMode && !commercialRelation) {
+    if (!integrationMode && !forceWithoutRelation && !commercialRelation) {
       return res.status(422).json({
         success: false,
         error: 'Prima di inviare la pratica alla banca devi generare la Relazione Commerciale con AI.',
       });
     }
-    if (!integrationMode && !commercialRelation?.pdf_url) {
+    if (!integrationMode && !forceWithoutRelation && !commercialRelation?.pdf_url) {
       return res.status(422).json({
         success: false,
         error: 'La Relazione Commerciale non dispone del PDF. Rigenera DOCX e PDF prima dell’invio alla banca.',
       });
     }
-    if (!integrationMode) {
+    if (!integrationMode && !forceWithoutRelation) {
       const savedSelection = commercialRelation?.risposte?.__selected_kpi_keys;
       const positiveOnly = commercialRelation?.risposte?.__bank_positive_only === 'true';
       if (!positiveOnly || !Array.isArray(savedSelection)) {
@@ -1338,6 +1344,7 @@ ${integrationAnswersHtml}
       copia_archivio: archiveCopyRequired || primaryRecipient === ARCHIVE_CC,
       archive_resend_id: archiveEmailBody?.id ?? null,
       archive_error: archiveError,
+      relazione_forzatamente_esclusa: forceWithoutRelation,
     };
 
     // 10. Log storico email_send_log

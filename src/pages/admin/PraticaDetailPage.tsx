@@ -280,6 +280,7 @@ export default function PraticaDetailPage() {
   const [addingBankRequirements, setAddingBankRequirements] = useState<BankDocumentRequirement[]>([]);
   const [sendingBankId, setSendingBankId] = useState<string|null>(null);
   const [bankNote, setBankNote] = useState('');
+  const [forceSendWithoutRelation, setForceSendWithoutRelation] = useState(false);
   const [showSendBankDialog, setShowSendBankDialog] = useState<string|null>(null);
   const [integrationPracticeBankId, setIntegrationPracticeBankId] = useState('none');
   const [sendingIntegrationId, setSendingIntegrationId] = useState<string | null>(null);
@@ -4000,7 +4001,11 @@ export default function PraticaDetailPage() {
                               {canApprove && (
                                 bankEmail ? (
                                   <Button size="sm" variant="outline" className="gap-1.5 text-blue-700 border-blue-300 hover:bg-blue-50"
-                                    onClick={() => { setBankNote(''); setShowSendBankDialog(pb.id); }}>
+                                    onClick={() => {
+                                      setBankNote('');
+                                      setForceSendWithoutRelation(false);
+                                      setShowSendBankDialog(pb.id);
+                                    }}>
                                     ✉️ Invia
                                   </Button>
                                 ) : (
@@ -4064,6 +4069,20 @@ export default function PraticaDetailPage() {
                           </button>{' '}
                           nel tab dedicato.
                         </div>
+                        <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 accent-amber-600"
+                            checked={forceSendWithoutRelation}
+                            onChange={event => setForceSendWithoutRelation(event.target.checked)}
+                          />
+                          <span>
+                            <span className="font-semibold block">Forza invio senza Relazione Commerciale</span>
+                            <span className="text-xs text-amber-800">
+                              Trasmette i documenti e le analisi disponibili senza allegare la relazione.
+                            </span>
+                          </span>
+                        </label>
                         <p className="text-xs text-muted-foreground">Verranno inviati i link firmati (7gg) a tutti i documenti. Lo stato sarà aggiornato.</p>
                       </div>
                       <DialogFooter>
@@ -4071,11 +4090,18 @@ export default function PraticaDetailPage() {
                         <Button className="bg-blue-600 hover:bg-blue-700 gap-2" disabled={sendingBankId === pb.id}
                           onClick={async () => {
                             setSendingBankId(pb.id);
-                            const { data, error } = await invokeSendToBank({ practice_id: practice!.id, bank_id: pb.bank_id, note: bankNote || null });
+                            const { data, error } = await invokeSendToBank({
+                              practice_id: practice!.id,
+                              bank_id: pb.bank_id,
+                              note: bankNote || null,
+                              force_without_relation: forceSendWithoutRelation,
+                            });
                             setSendingBankId(null);
                             if (error || !data?.success) { toast.error('Errore: ' + (error?.message ?? data?.error)); return; }
                             toast.success(`Pratica inviata a ${data.sent_to}!`);
-                            setShowSendBankDialog(null); load();
+                            setShowSendBankDialog(null);
+                            setForceSendWithoutRelation(false);
+                            load();
                           }}>
                           {sendingBankId === pb.id ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>Invio...</> : '✉️ Invia'}
                         </Button>
