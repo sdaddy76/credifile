@@ -946,7 +946,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     }
   }, [practiceId]);
 
-  const loadData = async () => {
+  const loadData = async (preferredBilancioId: string | null = null) => {
     setLoading(true);
     // Codice ATECO della pratica (per benchmark settoriale)
     const { data: practiceData } = await supabase
@@ -969,10 +969,15 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       .from('bilanci_kpi')
       .select('*')
       .eq('practice_id', practiceId)
-      .order('anno_esercizio', { ascending: false });
+      .order('anno_esercizio', { ascending: false })
+      .order('created_at', { ascending: false });
     const list = (kpiData ?? []) as BilancioRecord[];
     setBilanci(list);
     setSelectedBilancio(current => {
+      if (preferredBilancioId) {
+        const preferred = list.find(item => item.id === preferredBilancioId);
+        if (preferred) return preferred;
+      }
       if (current) {
         const refreshed = list.find(item => item.id === current.id);
         if (refreshed) return refreshed;
@@ -1328,7 +1333,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
         pdf.id.startsWith('segnalazione:') ? null : pdf.id,
       );
       toast.success(`Bilancio ${result.anno ?? ''} analizzato — KPI calcolati`);
-      await loadData();
+      await loadData(typeof result.bilancio_id === 'string' ? result.bilancio_id : null);
     } catch (err: unknown) {
       toast.error('Errore: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -1355,7 +1360,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       const pdfText = await extractPdfText(file);
       const result = await runAnalysis(pdfText, ufRow?.id ?? null);
       toast.success(`Bilancio ${result.anno ?? ''} analizzato — KPI calcolati`);
-      await loadData();
+      await loadData(typeof result.bilancio_id === 'string' ? result.bilancio_id : null);
     } catch (err: unknown) {
       toast.error('Errore: ' + (err instanceof Error ? err.message : String(err)));
     } finally {

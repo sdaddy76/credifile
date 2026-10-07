@@ -601,7 +601,11 @@ Deno.serve(async (req) => {
     benchmark: sector.benchmark,
   });
 
-  // Upsert su DB via REST
+  // Salva la nuova analisi sul record dello stesso esercizio, se esiste.
+  // Non ci affidiamo solo a `on_conflict`: nei progetti storici la constraint
+  // practice_id + anno_esercizio può non essere stata applicata e in quel caso
+  // PostgREST inserirebbe una seconda riga lasciando l'interfaccia sul record
+  // precedente.
   const row = {
     practice_id,
     uploaded_file_id: uploaded_file_id ?? null,
@@ -658,24 +662,30 @@ Deno.serve(async (req) => {
     anomaly_engine_version: anomalyAnalysis.engine_version,
   };
 
-  const upsertRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/bilanci_kpi?on_conflict=practice_id,anno_esercizio`,
-    {
-      method: 'POST',
-      headers: {
-        ...serviceHeaders,
-        'Prefer': 'resolution=merge-duplicates,return=representation',
-      },
-      body: JSON.stringify(row),
-    }
-  );
+  const existingRows = bilData.anno_esercizio === null
+    ? []
+    : await fetchJson<Array<{ id: string }>>(
+      `bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&anno_esercizio=eq.${encodeURIComponent(String(bilData.anno_esercizio))}&select=id&order=created_at.desc&limit=1`,
+    );
+  const existingId = existingRows?.[0]?.id ?? null;
+  const saveUrl = existingId
+    ? `${SUPABASE_URL}/rest/v1/bilanci_kpi?id=eq.${encodeURIComponent(existingId)}`
+    : `${SUPABASE_URL}/rest/v1/bilanci_kpi`;
+  const saveRes = await fetch(saveUrl, {
+    method: existingId ? 'PATCH' : 'POST',
+    headers: {
+      ...serviceHeaders,
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify(row),
+  });
 
-  if (!upsertRes.ok) {
-    const err = await upsertRes.text();
+  if (!saveRes.ok) {
+    const err = await saveRes.text();
     return fail('Errore salvataggio DB: ' + err);
   }
 
-  const saved = await upsertRes.json();
+  const saved = await saveRes.json();
   return ok({
     bilancio_id: saved?.[0]?.id,
     anno: bilData.anno_esercizio,
