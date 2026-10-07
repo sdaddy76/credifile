@@ -46,6 +46,7 @@ export interface Client {
   ateco_descrizione?: string;
   codice_ateco?: string;
   provincia?: string;
+  visura_json?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }

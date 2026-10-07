@@ -13,6 +13,7 @@ import {
 import { toast } from 'sonner';
 import type { Client, Socio, Amministratore } from '@/lib/types';
 import { extractPdfText, parseVisuraCompleta, type VisuraResult } from '@/lib/parseVisura';
+import { saveClientVisura } from '@/lib/clientVisura';
 
 // ═══════════════════════════════════════════════════════════
 //  TIPI VISURA
@@ -113,6 +114,7 @@ export default function ClientiPage() {
   const [saving,      setSaving]      = useState(false);
   const [parsing,     setParsing]     = useState(false);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [pendingVisura, setPendingVisura] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sezione documenti per segnalatore
@@ -203,8 +205,8 @@ export default function ClientiPage() {
     amministratori:    c.amministratori   ?? [],
   });
 
-  const openCreate = () => { setEditing(null); setForm(EMPTY); setParseResult(null); setShowForm(true); };
-  const openEdit   = (c: Client) => { setEditing(c); setForm(toForm(c)); setParseResult(null); setShowForm(true); };
+  const openCreate = () => { setEditing(null); setForm(EMPTY); setParseResult(null); setPendingVisura(null); setShowForm(true); };
+  const openEdit   = (c: Client) => { setEditing(c); setForm(toForm(c)); setParseResult(null); setPendingVisura(null); setShowForm(true); };
 
   // ── Import visura ─────────────────────────────────────────────────────────
   const handleVisuraFile = async (file: File) => {
@@ -239,6 +241,7 @@ export default function ClientiPage() {
         amministratori:    parsed.amministratori ?? prev.amministratori,
       }));
       setParseResult(result);
+      setPendingVisura(file);
       toast.success(`Estratti: ${result.found.join(', ')}`);
     } catch (e) {
       toast.error('Errore lettura PDF: ' + String(e));
@@ -279,6 +282,18 @@ export default function ClientiPage() {
     if (editing) {
       const { error } = await supabase.from('clients').update(payload).eq('id', editing.id);
       if (error) { toast.error('Errore aggiornamento: ' + error.message); setSaving(false); return; }
+      if (pendingVisura) {
+        try {
+          await saveClientVisura(
+            editing.id,
+            pendingVisura,
+          );
+        } catch (error) {
+          toast.error('Cliente aggiornato, ma non è stato possibile conservare la visura: ' + String(error));
+          setSaving(false);
+          return;
+        }
+      }
       if (payload.email !== editing.email) {
         const { data: practices } = await supabase.from('practices').select('id').eq('client_id', editing.id);
         if (practices?.length) {
@@ -289,11 +304,27 @@ export default function ClientiPage() {
       }
       toast.success('Cliente aggiornato');
     } else {
-      const { error } = await supabase.from('clients').insert({ ...payload, created_by: user.id });
-      if (error) { toast.error('Errore creazione: ' + error.message); setSaving(false); return; }
+      const { data: insertedClient, error } = await supabase
+        .from('clients')
+        .insert({ ...payload, created_by: user.id })
+        .select('id')
+        .single();
+      if (error || !insertedClient) { toast.error('Errore creazione: ' + (error?.message ?? 'cliente non creato')); setSaving(false); return; }
+      if (pendingVisura) {
+        try {
+          await saveClientVisura(insertedClient.id, pendingVisura);
+        } catch (error) {
+          const { error: rollbackError } = await supabase.from('clients').delete().eq('id', insertedClient.id);
+          toast.error(rollbackError
+            ? `Cliente creato, ma la visura non è stata conservata e non è stato possibile annullare il censimento: ${String(error)}`
+            : 'Non è stato possibile conservare la visura; il nuovo censimento è stato annullato: ' + String(error));
+          setSaving(false);
+          return;
+        }
+      }
       toast.success('Cliente creato');
     }
-    setSaving(false); setShowForm(false); load();
+    setSaving(false); setPendingVisura(null); setShowForm(false); load();
   };
 
   const handleDelete = async (id: string, nome: string) => {
@@ -390,7 +421,13 @@ export default function ClientiPage() {
       )}
 
       {/* Dialog nuovo/modifica cliente */}
-      <Dialog open={showForm} onOpenChange={v => { setShowForm(v); if (!v) setParseResult(null); }}>
+      <Dialog open={showForm} onOpenChange={v => {
+        setShowForm(v);
+        if (!v) {
+          setParseResult(null);
+          setPendingVisura(null);
+        }
+      }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? 'Modifica Cliente' : 'Nuovo Cliente'}</DialogTitle>
@@ -636,7 +673,11 @@ export default function ClientiPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowForm(false)}>Annulla</Button>
+            <Button variant="outline" onClick={() => {
+              setShowForm(false);
+              setParseResult(null);
+              setPendingVisura(null);
+            }}>Annulla</Button>
             <Button onClick={handleSave} disabled={saving}>
               {saving ? 'Salvo…' : editing ? 'Salva Modifiche' : 'Crea Cliente'}
             </Button>

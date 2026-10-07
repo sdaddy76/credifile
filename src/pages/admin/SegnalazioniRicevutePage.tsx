@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { buildAppUrl } from '@/lib/appUrl';
 import { sanitizeFileName } from '@/lib/uploadFile';
 import { useAuth } from '@/hooks/useAuth';
+import { initializePracticeDocuments } from '@/lib/clientVisura';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -429,12 +430,12 @@ export default function SegnalazioniRicevutePage() {
     let createdClientId: string | null = null;
     try {
       const piva = seg.piva?.replace(/\D/g, '') || null;
-      let client: { id: string; ragione_sociale: string; email: string; telefono?: string | null } | null = null;
+      let client: { id: string; ragione_sociale: string; email: string; telefono?: string | null; visura_json?: Record<string, unknown> | null } | null = null;
 
       if (piva) {
         const { data: existingClients, error: clientLookupError } = await supabase
           .from('clients')
-          .select('id,ragione_sociale,email,telefono')
+          .select('id,ragione_sociale,email,telefono,visura_json')
           .eq('piva', piva)
           .order('created_at', { ascending: true })
           .limit(1);
@@ -454,7 +455,7 @@ export default function SegnalazioniRicevutePage() {
             email: email || '',
             telefono: seg.telefono?.trim() || null,
           })
-          .select('id,ragione_sociale,email,telefono')
+          .select('id,ragione_sociale,email,telefono,visura_json')
           .single();
         if (clientError) throw clientError;
         client = insertedClient as typeof client;
@@ -528,18 +529,18 @@ export default function SegnalazioniRicevutePage() {
         .order('ordine');
       if (templatesError) throw templatesError;
 
-      const templateRows = (templates ?? []).map(template => ({
-        practice_id: practice.id,
-        template_id: template.id,
-        nome: template.nome,
-        descrizione: template.descrizione,
-        tipo: 'standard',
-        obbligatorio: true,
-        status: 'richiesto',
-      }));
-      const { data: practiceDocuments, error: documentsError } = templateRows.length > 0
-        ? await supabase.from('practice_documents').insert(templateRows).select('id,nome,status')
-        : { data: [], error: null };
+      try {
+        await initializePracticeDocuments(practice.id, client.id, templates ?? [], client.visura_json);
+      } catch (error) {
+        await supabase.from('practices').delete().eq('id', practice.id);
+        throw error;
+      }
+
+      const { data: practiceDocuments, error: documentsError } = await supabase
+        .from('practice_documents')
+        .select('id,nome,status')
+        .eq('practice_id', practice.id)
+        .eq('tipo', 'standard');
       if (documentsError) throw documentsError;
 
       const normalizeName = (value: string) => value
@@ -572,6 +573,15 @@ export default function SegnalazioniRicevutePage() {
             })
             .in('id', matchedRows.map(row => row.document.id));
           if (statusError) throw statusError;
+
+          // La pratica è appena stata creata. Se il documento standard era
+          // stato inizializzato dalla visura cliente, la visura ricevuta con
+          // la segnalazione ne prende il posto senza creare due allegati.
+          const { error: previousFilesError } = await supabase
+            .from('uploaded_files')
+            .delete()
+            .in('practice_document_id', matchedRows.map(row => row.document.id));
+          if (previousFilesError) throw previousFilesError;
 
           const { error: filesError } = await supabase.from('uploaded_files').insert(
             matchedRows.map(({ file, document }) => ({

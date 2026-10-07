@@ -15,6 +15,11 @@ import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
 import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
+import {
+  getClientVisuraReference,
+  initializePracticeDocuments,
+  isVisuraDocumentName,
+} from '@/lib/clientVisura';
 
 export default function PratichePage() {
   const navigate = useNavigate();
@@ -240,7 +245,7 @@ export default function PratichePage() {
       status:           'bozza',
       created_by:       user?.id ?? null,
       assigned_to:      duplicaAgentId || null,
-    }).select().single();
+    }).select('*, clients(visura_json)').single();
 
     if (error || !newPractice) {
       toast.error('Errore nella duplicazione: ' + (error?.message ?? 'sconosciuto'));
@@ -248,7 +253,8 @@ export default function PratichePage() {
       return;
     }
 
-    // Documenti: copia SEMPRE tutti i documenti dall'originale (standard + personalizzati)
+    // Documenti: copia dall'originale solo le richieste, non i record già
+    // caricati. I file dell'altra pratica non devono risultare consegnati.
     // Se duplicaFile=true, include anche gli uploaded_files per copiare i file fisici
     const selectFields = duplicaFile
       ? 'id, template_id, bank_requirement_id, nome, descrizione, tipo, obbligatorio, uploaded_files(id, nome_file, storage_path, mime_type, dimensione)'
@@ -260,7 +266,16 @@ export default function PratichePage() {
 
     type OrigDoc = { id: string; template_id: string | null; bank_requirement_id: string | null; nome: string; descrizione?: string; tipo: string; obbligatorio: boolean; uploaded_files?: { id: string; nome_file: string; storage_path: string; mime_type: string; dimensione: number }[] };
     if (origDocs && origDocs.length > 0) {
-      const typedDocs = origDocs as unknown as OrigDoc[];
+      const allTypedDocs = origDocs as unknown as OrigDoc[];
+      const originalVisura = allTypedDocs.find(document =>
+        document.tipo === 'standard' && isVisuraDocumentName(document.nome)
+      );
+      const clientVisuraJson = newPractice.clients?.visura_json;
+      const hasClientVisura = Boolean(getClientVisuraReference(clientVisuraJson));
+      const typedDocs = allTypedDocs.filter(document =>
+        !(document.tipo === 'standard' && isVisuraDocumentName(document.nome))
+        || (duplicaFile && !hasClientVisura)
+      );
       for (const d of typedDocs) {
         const { data: newDoc } = await supabase.from('practice_documents').insert({
           practice_id:         newPractice.id,
@@ -301,16 +316,43 @@ export default function PratichePage() {
           }
         }
       }
+
+      if (!typedDocs.some(document => document.tipo === 'standard' && isVisuraDocumentName(document.nome))) {
+        let visuraTemplate = originalVisura
+          ? [{
+              id: originalVisura.template_id,
+              nome: originalVisura.nome,
+              descrizione: originalVisura.descrizione ?? null,
+              obbligatorio: originalVisura.obbligatorio,
+            }]
+          : [];
+        if (visuraTemplate.length === 0) {
+          const { data: templates, error: templatesError } = await supabase
+            .from('document_templates')
+            .select('id,nome,descrizione,obbligatorio')
+            .eq('obbligatorio', true);
+          if (templatesError) throw templatesError;
+          visuraTemplate = (templates ?? []).filter(template => isVisuraDocumentName(template.nome));
+        }
+        if (visuraTemplate.length > 0) {
+          await initializePracticeDocuments(
+            newPractice.id,
+            showDuplica.client_id,
+            visuraTemplate,
+            clientVisuraJson,
+          );
+        }
+      }
     } else {
       // Fallback: nessun documento nell'originale — usa i template standard obbligatori
       const { data: templates } = await supabase
         .from('document_templates').select('*').eq('obbligatorio', true);
       if (templates && templates.length > 0) {
-        await supabase.from('practice_documents').insert(
-          templates.map((t: { id: string; nome: string; descrizione?: string }) => ({
-            practice_id: newPractice.id, template_id: t.id, nome: t.nome,
-            descrizione: t.descrizione, tipo: 'standard', obbligatorio: true, status: 'richiesto',
-          }))
+        await initializePracticeDocuments(
+          newPractice.id,
+          showDuplica.client_id,
+          templates,
+          newPractice.clients?.visura_json,
         );
       }
     }
@@ -357,24 +399,26 @@ export default function PratichePage() {
       created_by: user?.id ?? null,
       assigned_to: form.assigned_to || null,
       segnalatore_id: form.segnalatore_id || null,
-    }).select().single();
+    }).select('*, clients(visura_json)').single();
 
     if (error) { toast.error('Errore nella creazione'); setSaving(false); return; }
 
     // Crea i documenti standard per questa pratica
     const { data: templates } = await supabase.from('document_templates').select('*').eq('obbligatorio', true);
     if (templates && templates.length > 0) {
-      await supabase.from('practice_documents').insert(
-        templates.map(t => ({
-          practice_id: practice.id,
-          template_id: t.id,
-          nome: t.nome,
-          descrizione: t.descrizione,
-          tipo: 'standard',
-          obbligatorio: true,
-          status: 'richiesto',
-        }))
-      );
+      try {
+        await initializePracticeDocuments(
+          practice.id,
+          form.client_id,
+          templates,
+          practice.clients?.visura_json,
+        );
+      } catch (documentError) {
+        await supabase.from('practices').delete().eq('id', practice.id);
+        toast.error('Errore nella preparazione dei documenti: ' + String(documentError));
+        setSaving(false);
+        return;
+      }
     }
 
 
