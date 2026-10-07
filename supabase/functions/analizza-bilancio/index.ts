@@ -583,6 +583,24 @@ Deno.serve(async (req) => {
     servizio_debito_annuo,
   } = calcolaKpi(bilData, financing ?? [], transactions ?? []);
 
+  // Non creare un record KPI vuoto quando l'utente seleziona un allegato
+  // generico, una scansione illeggibile oppure un PDF che contiene solo una
+  // mail/copertina. In precedenza questi file producevano una riga con anno
+  // nullo e tutti i valori N/D; essendo più recente finiva in cima alla lista
+  // e sembrava che il nuovo bilancio avesse sostituito quello corretto.
+  const hasReadableFinancialData = [
+    bilData.totale_attivo,
+    bilData.totale_patrimonio_netto,
+    bilData.totale_passivo,
+    bilData.totale_valore_produzione,
+    bilData.utile_netto,
+  ].some((value) => value !== null && Number.isFinite(value));
+  if (!hasReadableFinancialData) {
+    return fail(
+      'Il PDF selezionato non contiene un bilancio leggibile. Se il documento include una mail, una copertina o immagini scansionate, carica il PDF del bilancio con testo selezionabile.',
+    );
+  }
+
   const codiceAteco = await getPracticeAteco(practice_id) ?? bilData.codice_ateco ?? null;
   const sector = await getSectorContext(codiceAteco);
   const previousRows = await fetchJson<BalanceSnapshot[]>(
