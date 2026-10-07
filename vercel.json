@@ -39,6 +39,10 @@
   ],
   "rewrites": [
     {
+      "source": "/api/client-visura",
+      "destination": "/api/track-bank-document"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/$1"
     },

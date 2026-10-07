@@ -1,6 +1,5 @@
-// Conserva la visura usata per censire un cliente.
-// L'upload passa dal backend perché il cliente può non avere ancora pratiche
-// e quindi non esiste un percorso pratica autorizzabile nelle policy Storage.
+// Handler backend per conservare la visura usata durante il censimento cliente.
+// Vive fuori da api/ per non aggiungere una Serverless Function Vercel dedicata.
 
 const SUPABASE_URL = process.env.SUPABASE_URL
   || process.env.VITE_SUPABASE_URL
@@ -12,11 +11,6 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
      'tM0B5OyxF1-w9ed1-eEX09S_d5gehZnFUZEJCnXMVBQ';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
-
-export const config = {
-  api: { bodyParser: false },
-  maxDuration: 60,
-};
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -62,7 +56,7 @@ async function readBody(req) {
   return Buffer.concat(chunks);
 }
 
-export default async function handler(req, res) {
+export async function handleClientVisura(req, res) {
   Object.entries(corsHeaders).forEach(([key, value]) => res.setHeader(key, value));
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return reply(res, { success: false, error: 'Metodo non consentito' }, 405);

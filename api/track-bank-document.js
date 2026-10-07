@@ -1,8 +1,15 @@
 // Tracker per i link ai documenti inviati alle banche.
 // Registra l'evento e poi reindirizza al signed URL temporaneo di Supabase Storage.
 
+import { handleClientVisura } from '../src/lib/clientVisuraHandler.js';
+
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://fhieppjqlefdlanvrpik.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+export const config = {
+  api: { bodyParser: false },
+  maxDuration: 60,
+};
 
 function json(res, status, payload) {
   res.status(status).setHeader('Content-Type', 'application/json');
@@ -14,10 +21,13 @@ function firstHeader(value) {
 }
 
 export default async function handler(req, res) {
+  // La route /api/client-visura viene riscritta qui per restare sotto il
+  // limite di 12 Serverless Functions del piano Hobby. Questo endpoint
+  // storico accetta solo GET, quindi i metodi POST/OPTIONS sono non ambigui.
   if (req.method !== 'GET') {
-    res.setHeader('Allow', 'GET');
-    return json(res, 405, { success: false, error: 'Method not allowed' });
+    return handleClientVisura(req, res);
   }
+
   const token = String(req.query?.token ?? '').trim();
   if (!token || !SUPABASE_KEY) {
     return json(res, 400, { success: false, error: 'Link documento non valido' });
