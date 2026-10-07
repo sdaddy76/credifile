@@ -687,9 +687,13 @@ Deno.serve(async (req) => {
 
   const saved = await saveRes.json();
   return ok({
-    bilancio_id: saved?.[0]?.id,
+    // In caso di una risposta PATCH senza representation, l'id cercato
+    // prima del salvataggio resta comunque il riferimento corretto.
+    bilancio_id: saved?.[0]?.id ?? existingId,
+    uploaded_file_id: uploaded_file_id ?? null,
     anno: bilData.anno_esercizio,
     ragione_sociale: bilData.ragione_sociale,
+    totale_patrimonio_netto: bilData.totale_patrimonio_netto,
     kpi,
     is_holding,
     dscr_source,

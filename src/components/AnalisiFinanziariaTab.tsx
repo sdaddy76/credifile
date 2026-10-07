@@ -47,6 +47,7 @@ interface KpiResult {
 interface BilancioRecord {
   id: string;
   anno_esercizio: number;
+  uploaded_file_id: string | null;
   ragione_sociale: string;
   is_holding: boolean;
   totale_attivo: number;
@@ -946,7 +947,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     }
   }, [practiceId]);
 
-  const loadData = async (preferredBilancioId: string | null = null) => {
+  const loadData = async (
+    preferredBilancioId: string | null = null,
+    preferredUploadedFileId: string | null = null,
+  ) => {
     setLoading(true);
     // Codice ATECO della pratica (per benchmark settoriale)
     const { data: practiceData } = await supabase
@@ -977,6 +981,20 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       if (preferredBilancioId) {
         const preferred = list.find(item => item.id === preferredBilancioId);
         if (preferred) return preferred;
+      }
+      // La risposta dell'Edge Function può non contenere l'id del record
+      // (ad esempio quando una versione precedente della funzione è ancora
+      // in cache). Il file appena analizzato è comunque un riferimento
+      // univoco e ci consente di selezionare il KPI aggiornato.
+      if (preferredUploadedFileId) {
+        const preferredByFile = list.find(item => item.uploaded_file_id === preferredUploadedFileId);
+        if (preferredByFile) return preferredByFile;
+      }
+      // Dopo un'analisi non conserviamo mai l'oggetto precedente: se il
+      // record preferito non è ancora visibile, mostriamo il primo risultato
+      // ricaricato invece di lasciare sullo schermo dati stantii.
+      if (preferredBilancioId || preferredUploadedFileId) {
+        return list[0] ?? null;
       }
       if (current) {
         const refreshed = list.find(item => item.id === current.id);
@@ -1333,7 +1351,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
         pdf.id.startsWith('segnalazione:') ? null : pdf.id,
       );
       toast.success(`Bilancio ${result.anno ?? ''} analizzato — KPI calcolati`);
-      await loadData(typeof result.bilancio_id === 'string' ? result.bilancio_id : null);
+      await loadData(
+        typeof result.bilancio_id === 'string' ? result.bilancio_id : null,
+        pdf.id.startsWith('segnalazione:') ? null : pdf.id,
+      );
     } catch (err: unknown) {
       toast.error('Errore: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -1360,7 +1381,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       const pdfText = await extractPdfText(file);
       const result = await runAnalysis(pdfText, ufRow?.id ?? null);
       toast.success(`Bilancio ${result.anno ?? ''} analizzato — KPI calcolati`);
-      await loadData(typeof result.bilancio_id === 'string' ? result.bilancio_id : null);
+      await loadData(
+        typeof result.bilancio_id === 'string' ? result.bilancio_id : null,
+        ufRow?.id ?? null,
+      );
     } catch (err: unknown) {
       toast.error('Errore: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
