@@ -1350,7 +1350,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
         pdfText,
         pdf.id.startsWith('segnalazione:') ? null : pdf.id,
       );
-      toast.success(`Bilancio ${result.anno ?? ''} analizzato — KPI calcolati`);
+      const patrimonioNetto = parseLocalizedNumber(result.totale_patrimonio_netto);
+      toast.success(
+        `Bilancio ${result.anno ?? ''} analizzato — Patrimonio netto: ${fmt(patrimonioNetto, true)}`,
+      );
       await loadData(
         typeof result.bilancio_id === 'string' ? result.bilancio_id : null,
         pdf.id.startsWith('segnalazione:') ? null : pdf.id,
@@ -1380,7 +1383,10 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       toast.info('Analisi XBRL e calcolo KPI...');
       const pdfText = await extractPdfText(file);
       const result = await runAnalysis(pdfText, ufRow?.id ?? null);
-      toast.success(`Bilancio ${result.anno ?? ''} analizzato — KPI calcolati`);
+      const patrimonioNetto = parseLocalizedNumber(result.totale_patrimonio_netto);
+      toast.success(
+        `Bilancio ${result.anno ?? ''} analizzato — Patrimonio netto: ${fmt(patrimonioNetto, true)}`,
+      );
       await loadData(
         typeof result.bilancio_id === 'string' ? result.bilancio_id : null,
         ufRow?.id ?? null,
