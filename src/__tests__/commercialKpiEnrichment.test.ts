@@ -26,8 +26,8 @@ describe('commercialKpiEnrichment', () => {
     ]);
 
     expect(result.kpi.redditivita.roi.valore).toBeCloseTo(24.64, 2);
-    expect(result.kpi.redditivita.ros.valore).toBeCloseTo(15.17, 2);
-    expect(result.kpi.redditivita.ebitda_margin.valore).toBeCloseTo(17.30, 2);
+    expect(result.kpi.redditivita.ros.valore).toBeCloseTo(16.49, 2);
+    expect(result.kpi.redditivita.ebitda_margin.valore).toBeCloseTo(18.81, 2);
     expect(result.kpi.indebitamento.pfn_ebitda.valore).toBeCloseTo(0.38, 2);
     expect(result.kpi.copertura.interest_coverage.valore).toBeCloseTo(30.02, 2);
     expect(result.kpi.copertura.dscr.valore).toBeNull();
@@ -87,14 +87,41 @@ describe('commercialKpiEnrichment', () => {
 
     expect(result.kpi.liquidita.current_ratio.valore).toBeCloseTo(2, 5);
     expect(result.kpi.liquidita.quick_ratio.valore).toBeCloseTo(1.5, 5);
-    expect(result.kpi.liquidita.acid_test.valore).toBeCloseTo(0.5, 5);
+    expect(result.kpi.liquidita.acid_test.valore).toBeCloseTo(1.4, 5);
     expect(result.kpi.solidita.debt_equity.valore).toBeCloseTo(1, 5);
     expect(result.kpi.solidita.leverage.valore).toBeCloseTo(2, 5);
     expect(result.kpi.solidita.pn_su_ta.valore).toBeCloseTo(50, 5);
+    expect(result.kpi.solidita.grado_indebitamento.valore).toBeCloseTo(0.4, 5);
     expect(result.kpi.redditivita.roe.valore).toBeCloseTo(16, 5);
     expect(result.kpi.efficienza.dso.valore).toBeCloseTo(73, 0);
     expect(result.kpi.efficienza.dpo.valore).toBeCloseTo(36.5, 0);
     expect(result.kpi.efficienza.dsi.valore).toBeCloseTo(100, 0);
+  });
+
+  it('calcola correttamente i KPI patrimoniali del bilancio Fruttanuda 2025', () => {
+    const result = enrichCommercialKpis({
+      totale_attivo: 92_116,
+      totale_attivo_circolante: 81_551,
+      rimanenze: 38_080,
+      crediti_circolante: 19_290,
+      totale_debiti: 76_116,
+      totale_patrimonio_netto: 10_316,
+      totale_valore_produzione: 77_021,
+      ricavi_vendite: 76_544,
+      differenza_ab: 226,
+      ammortamenti: 2_682,
+      costi_materie: 35_449,
+      disponibilita_liquide: 24_181,
+      utile_netto: 166,
+      kpi: {},
+    });
+
+    expect(result.kpi.solidita.pn_su_ta.valore).toBeCloseTo(11.1989, 3);
+    expect(result.kpi.solidita.leverage.valore).toBeCloseTo(8.9294, 3);
+    expect(result.kpi.solidita.debt_equity.valore).toBeCloseTo(7.3784, 3);
+    expect(result.kpi.redditivita.ros.valore).toBeCloseTo(0.2952, 3);
+    expect(result.kpi.redditivita.ebitda_margin.valore).toBeCloseTo(3.7991, 3);
+    expect(result.kpi.liquidita.acid_test.valore).toBeNull();
   });
 
   it('lascia non disponibili i ratio di liquidità quando mancano le passività correnti', () => {

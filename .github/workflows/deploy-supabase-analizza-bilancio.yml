@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "supabase/functions/analizza-bilancio/**"
+      - "supabase/functions/analisi-reputazione/**"
       - "supabase/functions/_shared/**"
       - "supabase/config.toml"
       - ".github/workflows/deploy-supabase-analizza-bilancio.yml"
@@ -37,3 +38,6 @@ jobs:
 
       - name: Deploy analizza-bilancio
         run: supabase functions deploy analizza-bilancio --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy analisi-reputazione
+        run: supabase functions deploy analisi-reputazione --project-ref "$SUPABASE_PROJECT_REF"

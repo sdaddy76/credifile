@@ -45,6 +45,14 @@ interface ReputationEvent {
 interface SubjectResult {
   nome: string; tipo: string; score: number;
   news: NewsItem[]; signals: Signal[]; newsRischio: NewsItem[];
+  linkedCompanies?: Array<{
+    nome: string;
+    relazione: string;
+    evidenza: 'forte' | 'media';
+    titolo: string;
+    link: string;
+    fonte: string;
+  }>;
   totalNewsFetched?: number;
   relevantNews?: number;
   coverage?: number;
@@ -404,6 +412,31 @@ function SubjectCard({
                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                 {result.identityAssessment.reason}
               </p>
+            )}
+
+            {(result.linkedCompanies ?? []).length > 0 && (
+              <div className="mt-2 rounded border border-indigo-200 bg-indigo-50/60 p-2">
+                <p className="text-[10px] font-semibold uppercase text-indigo-700">
+                  Società collegate rilevate da approfondire
+                </p>
+                <div className="mt-1 space-y-1">
+                  {result.linkedCompanies?.map((company, index) => (
+                    <div key={`${company.nome}-${index}`} className="flex items-start gap-2 text-[11px] text-indigo-950">
+                      <Briefcase className="mt-0.5 h-3 w-3 shrink-0 text-indigo-600" />
+                      <div className="min-w-0">
+                        <a href={company.link} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-700 hover:underline">
+                          {company.nome}
+                        </a>
+                        <span className="ml-1 text-indigo-800/70">({company.evidenza})</span>
+                        <p className="text-[10px] text-indigo-900/70">{company.relazione} · {company.fonte}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1 text-[10px] text-indigo-800/70">
+                  La citazione web non sostituisce una visura: verificare sempre denominazione, codice fiscale e ruolo.
+                </p>
+              </div>
             )}
 
             {/* Segnali negativi per categoria */}

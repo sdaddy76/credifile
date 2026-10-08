@@ -426,18 +426,31 @@ function calcolaKpi(
 
   const currentRatio = ac !== null && passCorr !== null && passCorr > 0 ? ac / passCorr : null;
   const quickRatio = ac !== null && rim !== null && passCorr !== null && passCorr > 0 ? (ac - rim) / passCorr : null;
-  const acidTest = liq !== null && passCorr !== null && passCorr > 0 ? liq / passCorr : null;
+  // Acid test: liquidità immediate + crediti a breve / passività correnti.
+  // Non include rimanenze, immobilizzazioni o ratei attivi.
+  const acidQuickAssets = liq !== null || d.crediti_circolante !== null
+    ? (liq ?? 0) + (d.crediti_circolante ?? 0)
+    : null;
+  const acidTest = acidQuickAssets !== null && passCorr !== null && passCorr > 0
+    ? acidQuickAssets / passCorr
+    : null;
   const debtEquity = pn && pn > 0 && td !== null ? td / pn : null;
   const leverage = pn && pn > 0 && ta !== null ? ta / pn : null;
   const pnSuTa = ta && ta > 0 && pn !== null ? pn / ta * 100 : null;
-  const gradoIndebit = pn && pn > 0 && financialDebtFromBalance !== null
-    ? financialDebtFromBalance / pn
+  const gradoIndebit = pn && pn > 0 && debitoResidualeTot !== null
+    ? (hasFinancingDebt ? debitoResidualeTot : financialDebtFromBalance)! / pn
     : null;
   const netIncome = d.utile_netto ?? d.utile_perdita_esercizio;
   const roe = pn && pn > 0 && netIncome !== null ? netIncome / pn * 100 : null;
   const roi = ta && ta > 0 && ebit !== null ? ebit / ta * 100 : null;
-  const ros = tvp && tvp > 0 && ebit !== null ? ebit / tvp * 100 : null;
-  const ebitdaMargin = tvp && tvp > 0 && ebitda !== null ? ebitda / tvp * 100 : null;
+  // ROS ed EBITDA Margin sono margini sulle vendite: il fatturato è il
+  // denominatore principale. Il valore della produzione resta un fallback
+  // solo per bilanci che non espongono i ricavi delle vendite.
+  const marginBase = d.ricavi_vendite && d.ricavi_vendite > 0
+    ? d.ricavi_vendite
+    : tvp && tvp > 0 ? tvp : null;
+  const ros = marginBase !== null && ebit !== null ? ebit / marginBase * 100 : null;
+  const ebitdaMargin = marginBase !== null && ebitda !== null ? ebitda / marginBase * 100 : null;
   const pfnEbitda = pfn !== null && ebitda && ebitda > 0 ? pfn / ebitda : null;
   const pfnPn = pfn !== null && pn && pn > 0 ? pfn / pn : null;
   const dso = d.ricavi_vendite && d.ricavi_vendite > 0 && d.crediti_circolante !== null
@@ -467,7 +480,7 @@ function calcolaKpi(
         acid_test: kpi('Acid Test', acidTest, fmtRatio(acidTest),
           acidTest === null ? 'nd' : acidTest >= 0.5 ? 'verde' : acidTest >= 0.2 ? 'giallo' : 'rosso',
           acidTest === null ? 'Non disponibile' : 'Bilancio',
-          acidTest === null ? 'Passività correnti non presenti' : undefined),
+          acidTest === null ? 'Servono liquidità, crediti a breve e passività correnti' : undefined),
       },
       solidita: {
         debt_equity: kpi('Debt/Equity', debtEquity, fmtRatio(debtEquity),

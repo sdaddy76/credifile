@@ -215,6 +215,7 @@ interface SourceCoverage {
 interface SubjectResult {
   nome: string; tipo: string; score: number;
   news: NewsItem[]; signals: Signal[]; newsRischio: NewsItem[];
+  linkedCompanies: LinkedCompanyResult[];
   totalNewsFetched: number;
   relevantNews: number;
   coverage: number;
@@ -233,6 +234,14 @@ interface SubjectResult {
     reason: string;
   };
   cessato?: boolean;
+}
+interface LinkedCompanyResult {
+  nome: string;
+  relazione: string;
+  evidenza: 'forte' | 'media';
+  titolo: string;
+  link: string;
+  fonte: string;
 }
 interface AddressResult {
   indirizzo: string;
@@ -406,6 +415,42 @@ function identityRelevance(item: NewsItem, name: string, discriminator?: string,
   const cleanCity = canonicalText(city ?? '')
   if (cleanCity && text.includes(cleanCity)) score += 0.12
   return Math.min(1, Math.round(score * 100) / 100)
+}
+
+function extractLinkedCompanies(
+  news: NewsItem[],
+  subjectName: string,
+  tipo: string,
+): LinkedCompanyResult[] {
+  const subject = canonicalText(subjectName);
+  const results: LinkedCompanyResult[] = [];
+  const seen = new Set<string>();
+  const relationRe = /(?:amministratore(?:\s+unico|\s+delegato)?|socio(?:\s+unico)?|presidente|legale rappresentante|titolare|fondatore|dirigente|gruppo|controllata?|collegata?|partecipata?)\s+(?:di|della|dell['’])\s+([\p{L}][^,.|;:]{2,100}?\b(?:S\.?\s*R\.?\s*L\.?|S\.?\s*P\.?\s*A\.?|S\.?\s*N\.?\s*C\.?|S\.?\s*A\.?\s*S\.?|cooperativa|società))\b/giu;
+  const companyRe = /\b([\p{L}][\p{L}0-9&'’.\- ]{2,90}\s+(?:S\.?\s*R\.?\s*L\.?|S\.?\s*P\.?\s*A\.?|S\.?\s*N\.?\s*C\.?|S\.?\s*A\.?\s*S\.?|cooperativa|società))\b/gu;
+  for (const item of news) {
+    const text = `${item.title} ${item.snippet}`;
+    const add = (raw: string, relazione: string, evidenza: 'forte' | 'media') => {
+      const nome = raw.replace(/\s+/g, ' ').replace(/^[\s"'“”]+|[\s"'“”]+$/g, '').trim();
+      const key = canonicalText(nome);
+      if (!nome || key.length < 5 || key === subject || key.includes(subject) || subject.includes(key)) return;
+      if (/^(la|una|questa|societa|società|azienda|impresa)\b/i.test(nome)) return;
+      if (seen.has(key)) return;
+      seen.add(key);
+      results.push({
+        nome,
+        relazione,
+        evidenza,
+        titolo: item.title,
+        link: item.link,
+        fonte: item.source,
+      });
+    };
+    for (const match of text.matchAll(relationRe)) add(match[1], tipo === 'societa'
+      ? 'Gruppo/partecipazione rilevata da ricerca web'
+      : 'Carica/partecipazione rilevata da ricerca web', 'forte');
+    for (const match of text.matchAll(companyRe)) add(match[1], 'Società citata nella ricerca sul soggetto', 'media');
+  }
+  return results.slice(0, 12);
 }
 
 function assessIdentityEvidence(
@@ -632,6 +677,11 @@ async function analyzeSubject(
     run: () => Promise<NewsItem[]>;
   }> = [
     { label: 'Notizie generali', provider: 'Google News', run: () => fetchGoogleNews(name) },
+    ...(discriminator ? [{
+      label: 'Identità CF/P.IVA',
+      provider: 'Google News' as const,
+      run: () => fetchGoogleNews(`${nameQ} ${discriminator}`),
+    }] : []),
     {
       label: 'Procedimenti e tribunali',
       provider: 'Google News',
@@ -667,12 +717,31 @@ async function analyzeSubject(
         ? `${nameQ} ${discriminator} fallimento indagato protesto condanna frode`
         : `${nameQ} fallimento indagato protesto condanna frode`),
     },
+    ...(discriminator ? [{
+      label: 'Riscontro web CF/P.IVA',
+      provider: 'DuckDuckGo' as const,
+      run: () => fetchDuckDuckGo(`${nameQ} ${discriminator}`),
+    }] : []),
     {
       label: 'Riscontro web sanzioni',
       provider: 'DuckDuckGo',
       run: () => fetchDuckDuckGo(discriminator
         ? `${nameQ} ${discriminator} sanzione multa violazione`
         : `${nameQ} sanzione multa violazione`),
+    },
+    {
+      label: tipo === 'societa' ? 'Gruppo e società collegate' : 'Società collegate e cariche',
+      provider: 'Google News',
+      run: () => fetchGoogleNews(tipo === 'societa'
+        ? `${nameQ} gruppo società collegate controllate partecipate`
+        : `${nameQ} ${discriminator} (amministratore OR socio OR presidente OR "legale rappresentante") (società OR srl OR spa)`),
+    },
+    {
+      label: 'Riscontro web società collegate',
+      provider: 'DuckDuckGo',
+      run: () => fetchDuckDuckGo(tipo === 'societa'
+        ? `${nameQ} gruppo società collegate controllate partecipate`
+        : `${nameQ} ${discriminator} amministratore socio presidente società srl spa`),
     },
   ]
   const results = await Promise.allSettled(queryConfigs.map(config => config.run()))
@@ -730,6 +799,7 @@ async function analyzeSubject(
   }
 
   const { signals, scoreDelta, events } = analyzeTextWithNews(allNews)
+  const linkedCompanies = extractLinkedCompanies(allNews, name, tipo)
 
   // Assenza di notizie non è un segnale positivo: parte da una base neutrale.
   const score = Math.max(0, Math.min(100, 70 + scoreDelta))
@@ -794,6 +864,7 @@ async function analyzeSubject(
     nome: name, tipo, score,
     news: displayedNews,
     signals,
+    linkedCompanies,
     newsRischio: riskNews,
     totalNewsFetched: allNewsRaw.length,
     relevantNews: allNews.length,

@@ -148,10 +148,13 @@ export function enrichCommercialKpis(
   const roi = ebit !== null && finite(balance.totale_attivo) && balance.totale_attivo > 0
     ? (ebit / balance.totale_attivo) * 100
     : null;
-  const rosBase = finite(balance.totale_valore_produzione) && balance.totale_valore_produzione > 0
-    ? balance.totale_valore_produzione
-    : finite(balance.ricavi_vendite) && balance.ricavi_vendite > 0
-      ? balance.ricavi_vendite
+  // ROS ed EBITDA Margin sono margini sulle vendite. Usiamo il fatturato
+  // quando disponibile e il valore della produzione solo come fallback per
+  // bilanci privi dei ricavi delle vendite.
+  const rosBase = finite(balance.ricavi_vendite) && balance.ricavi_vendite > 0
+    ? balance.ricavi_vendite
+    : finite(balance.totale_valore_produzione) && balance.totale_valore_produzione > 0
+      ? balance.totale_valore_produzione
       : null;
   const ros = ebit !== null && rosBase !== null ? (ebit / rosBase) * 100 : null;
   const ebitdaMargin = ebitda !== null && rosBase !== null ? (ebitda / rosBase) * 100 : null;
@@ -249,8 +252,12 @@ export function enrichCommercialKpis(
   const quickRatio = currentAssets !== null && inventories !== null && currentLiabilities !== null
     ? (currentAssets - inventories) / currentLiabilities
     : null;
-  const acidTest = finite(balance.disponibilita_liquide) && currentLiabilities !== null
-    ? balance.disponibilita_liquide / currentLiabilities
+  const acidQuickAssets = finite(balance.disponibilita_liquide) || finite(balance.crediti_circolante)
+    ? (finite(balance.disponibilita_liquide) ? balance.disponibilita_liquide! : 0)
+      + (finite(balance.crediti_circolante) ? balance.crediti_circolante! : 0)
+    : null;
+  const acidTest = acidQuickAssets !== null && currentLiabilities !== null
+    ? acidQuickAssets / currentLiabilities
     : null;
   const debtEquity = finite(balance.totale_debiti) && finite(balance.totale_patrimonio_netto) && balance.totale_patrimonio_netto > 0
     ? balance.totale_debiti / balance.totale_patrimonio_netto
@@ -260,6 +267,11 @@ export function enrichCommercialKpis(
     : null;
   const pnSuTa = finite(balance.totale_attivo) && balance.totale_attivo > 0 && finite(balance.totale_patrimonio_netto)
     ? (balance.totale_patrimonio_netto / balance.totale_attivo) * 100
+    : null;
+  const gradoIndebitamento = financialDebt !== null
+    && finite(balance.totale_patrimonio_netto)
+    && balance.totale_patrimonio_netto > 0
+    ? financialDebt / balance.totale_patrimonio_netto
     : null;
   const netProfit = finite(balance.utile_netto)
     ? balance.utile_netto
@@ -300,10 +312,11 @@ export function enrichCommercialKpis(
   });
   setRatio('liquidita', 'current_ratio', 'Current Ratio', currentRatio, ratio(currentRatio), false, 1.5, 1, 'Passività correnti non disponibili; non viene usato il totale debiti come proxy');
   setRatio('liquidita', 'quick_ratio', 'Quick Ratio', quickRatio, ratio(quickRatio), false, 1, 0.8, 'Servono attivo circolante, rimanenze e passività correnti');
-  setRatio('liquidita', 'acid_test', 'Acid Test', acidTest, ratio(acidTest), false, 0.5, 0.2, 'Passività correnti non disponibili');
+  setRatio('liquidita', 'acid_test', 'Acid Test', acidTest, ratio(acidTest), false, 1, 0.8, 'Servono liquidità, crediti a breve e passività correnti');
   setRatio('solidita', 'debt_equity', 'Debt/Equity', debtEquity, ratio(debtEquity), true, 1.5, 3, 'Servono totale debiti e patrimonio netto');
   setRatio('solidita', 'leverage', 'Leverage', leverage, ratio(leverage), true, 2.5, 4, 'Servono totale attivo e patrimonio netto');
   setRatio('solidita', 'pn_su_ta', 'PN / Totale Attivo', pnSuTa, percent(pnSuTa), false, 40, 25, 'Servono patrimonio netto e totale attivo');
+  setRatio('solidita', 'grado_indebitamento', 'Grado Indebitamento', gradoIndebitamento, ratio(gradoIndebitamento), true, 1, 2, 'Servono debiti finanziari attendibili e patrimonio netto');
   setRatio('efficienza', 'dso', 'DSO (giorni crediti)', dso, dso === null ? 'N/D' : `${Math.round(dso)} gg`, true, 60, 90, 'Servono crediti dell’attivo circolante e ricavi');
   setRatio('efficienza', 'dpo', 'DPO (giorni debiti)', dpo, dpo === null ? 'N/D' : `${Math.round(dpo)} gg`, true, 60, 90, 'Servono debiti verso fornitori e costi per materie');
   setRatio('efficienza', 'dsi', 'DSI (giorni magazzino)', dsi, dsi === null ? 'N/D' : `${Math.round(dsi)} gg`, true, 60, 90, 'Servono rimanenze e costi per materie');
