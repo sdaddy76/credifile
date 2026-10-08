@@ -57,6 +57,7 @@ export interface BalanceLineItem {
 
 export interface BalanceSnapshot {
   anno_esercizio?: number | null;
+  is_provvisorio?: boolean | null;
   totale_attivo?: number | null;
   totale_immobilizzazioni?: number | null;
   imm_immateriali?: number | null;
@@ -95,6 +96,22 @@ export interface BalanceSnapshot {
   utile_netto?: number | null;
   utile_perdita_esercizio?: number | null;
   is_holding?: boolean;
+}
+
+/**
+ * Returns only a comparable prior-year annual balance. Provisional balances
+ * and years later than the balance under analysis are never historical data.
+ */
+export function selectPreviousAnnualBalance<T extends BalanceSnapshot>(
+  rows: T[],
+  currentYear: number | null | undefined,
+): T | null {
+  if (currentYear === null || currentYear === undefined) return null;
+  return rows.find(row =>
+    typeof row.anno_esercizio === 'number'
+    && row.anno_esercizio < currentYear
+    && row.is_provvisorio !== true,
+  ) ?? null;
 }
 
 export interface AnalyzeBalanceAnomaliesInput {

@@ -876,6 +876,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const [bilanci, setBilanci] = useState<BilancioRecord[]>([]);
   const [uploadedPdfs, setUploadedPdfs] = useState<UploadedPdf[]>([]);
   const [selectedPdfId, setSelectedPdfId] = useState<string>('');
+  const [unlinkedBalanceCount, setUnlinkedBalanceCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [selectedBilancio, setSelectedBilancio] = useState<BilancioRecord | null>(null);
@@ -975,25 +976,39 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       .eq('practice_id', practiceId)
       .order('anno_esercizio', { ascending: false })
       .order('created_at', { ascending: false });
-    const list = (kpiData ?? []) as BilancioRecord[];
+    const storedList = (kpiData ?? []) as BilancioRecord[];
+    // A KPI row can outlive its PDF if that file is removed (the historical
+    // FK behavior sets uploaded_file_id to null). Such rows are not safe to
+    // display as current financial data or include in generated reports.
+    const { data: sourceFiles } = await supabase
+      .from('uploaded_files')
+      .select('id')
+      .eq('practice_id', practiceId);
+    const sourceIds = new Set((sourceFiles ?? []).map(file => file.id));
+    const list = storedList.filter(item =>
+      item.uploaded_file_id !== null && sourceIds.has(item.uploaded_file_id),
+    );
+    setUnlinkedBalanceCount(storedList.length - list.length);
     setBilanci(list);
+    const preferredSourceRecord = preferredUploadedFileId
+      ? list.find(item => item.uploaded_file_id === preferredUploadedFileId) ?? null
+      : null;
+    if (preferredUploadedFileId && !preferredSourceRecord) {
+      toast.error('Analisi non verificata: i KPI salvati non risultano collegati al PDF selezionato. Non mostro un record precedente come se fosse aggiornato.');
+    }
     setSelectedBilancio(current => {
+      // When an explicit source file was just analyzed, only that exact file
+      // may be selected. A matching year/record id is not enough: otherwise a
+      // stale KPI row can look like the result of the current analysis.
+      if (preferredUploadedFileId) return preferredSourceRecord;
       if (preferredBilancioId) {
         const preferred = list.find(item => item.id === preferredBilancioId);
         if (preferred) return preferred;
       }
-      // La risposta dell'Edge Function può non contenere l'id del record
-      // (ad esempio quando una versione precedente della funzione è ancora
-      // in cache). Il file appena analizzato è comunque un riferimento
-      // univoco e ci consente di selezionare il KPI aggiornato.
-      if (preferredUploadedFileId) {
-        const preferredByFile = list.find(item => item.uploaded_file_id === preferredUploadedFileId);
-        if (preferredByFile) return preferredByFile;
-      }
       // Dopo un'analisi non conserviamo mai l'oggetto precedente: se il
       // record preferito non è ancora visibile, mostriamo il primo risultato
       // ricaricato invece di lasciare sullo schermo dati stantii.
-      if (preferredBilancioId || preferredUploadedFileId) {
+      if (preferredBilancioId) {
         return list[0] ?? null;
       }
       if (current) {
@@ -1060,7 +1075,12 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
         })
         .filter((file): file is UploadedPdf => file !== null);
     });
-    setUploadedPdfs([...practicePdfs, ...publicPdfs]);
+    const nextPdfs = [...practicePdfs, ...publicPdfs]
+      .sort((left, right) => right.created_at.localeCompare(left.created_at));
+    setUploadedPdfs(nextPdfs);
+    setSelectedPdfId(current =>
+      nextPdfs.some(file => file.id === current) ? current : nextPdfs[0]?.id ?? '',
+    );
     setLoading(false);
   };
 
@@ -1296,7 +1316,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     // Carica finanziamenti in essere dalla pratica
     const { data: finData } = await supabase
       .from('client_financing')
-      .select('rata, debito_residuo, durata_mesi, tipologia, fonte')
+      .select('rata, debito_residuo, durata_mesi, tipologia, fonte, data_riferimento')
       .eq('practice_id', practiceId);
     const { data: statementData } = await supabase
       .from('estratto_conto_transactions')
@@ -1308,6 +1328,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       durata_mesi: parseLocalizedNumber(f.durata_mesi) ?? 0,
       tipologia: f.tipologia ?? '',
       fonte: f.fonte ?? '',
+      data_riferimento: f.data_riferimento ?? null,
     }));
 
     const { data: result, error: fnErr } = await supabase.functions.invoke('analizza-bilancio', {
@@ -1322,6 +1343,9 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     if (fnErr || result?.error) {
       throw new Error(fnErr?.message ?? result?.error ?? 'Errore sconosciuto');
     }
+    if (uploadedFileId && result?.uploaded_file_id !== uploadedFileId) {
+      throw new Error('Analisi non collegata al PDF selezionato: aggiorna la pagina e ripeti l’analisi prima di usare questi KPI.');
+    }
     return result;
   };
 
@@ -1329,7 +1353,11 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const handleAnalyzeExisting = async () => {
     if (!selectedPdfId) { toast.error('Seleziona un file PDF dalla lista'); return; }
     const pdf = uploadedPdfs.find(p => p.id === selectedPdfId);
-    if (!pdf) return;
+    if (!pdf) {
+      toast.error('Il documento selezionato non è più presente nella pratica. Aggiorna l’elenco e seleziona il bilancio corretto.');
+      await loadData();
+      return;
+    }
     setAnalyzing(true);
     toast.info('Download e analisi del bilancio in corso...');
     try {
@@ -1344,19 +1372,39 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       const blob = await response.blob();
       const file = new File([blob], pdf.nome_file, { type: 'application/pdf' });
 
+      // Public-referral PDFs may exist in storage and in the signal payload
+      // without a row in uploaded_files. Materialize that source before
+      // analysis so the resulting KPI record has durable, verifiable lineage.
+      let sourceFileId = pdf.id;
+      if (pdf.id.startsWith('segnalazione:')) {
+        const { data: sourceFile, error: sourceFileError } = await supabase
+          .from('uploaded_files')
+          .insert({
+            practice_id: practiceId,
+            nome_file: pdf.nome_file,
+            storage_path: pdf.storage_path,
+            mime_type: 'application/pdf',
+            dimensione: blob.size,
+            uploaded_by: 'segnalatore',
+          })
+          .select('id')
+          .single();
+        if (sourceFileError || !sourceFile?.id) {
+          throw new Error('Il PDF ricevuto tramite segnalazione non è stato registrato nella pratica: ' + (sourceFileError?.message ?? 'ID documento non disponibile'));
+        }
+        sourceFileId = sourceFile.id;
+      }
+
       toast.info('Analisi XBRL e calcolo KPI...');
       const pdfText = await extractPdfText(file);
-      const result = await runAnalysis(
-        pdfText,
-        pdf.id.startsWith('segnalazione:') ? null : pdf.id,
-      );
+      const result = await runAnalysis(pdfText, sourceFileId);
       const patrimonioNetto = parseLocalizedNumber(result.totale_patrimonio_netto);
       toast.success(
         `Bilancio ${result.anno ?? ''} analizzato — Patrimonio netto: ${fmt(patrimonioNetto, true)}`,
       );
       await loadData(
         typeof result.bilancio_id === 'string' ? result.bilancio_id : null,
-        pdf.id.startsWith('segnalazione:') ? null : pdf.id,
+        sourceFileId,
       );
     } catch (err: unknown) {
       toast.error('Errore: ' + (err instanceof Error ? err.message : String(err)));
@@ -1376,10 +1424,13 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       const storagePath = `bilanci/${practiceId}/${Date.now()}_${file.name}`;
       const { error: upErr } = await supabase.storage.from('practice-files').upload(storagePath, file);
       if (upErr) throw new Error('Errore upload: ' + upErr.message);
-      const { data: ufRow } = await supabase.from('uploaded_files').insert({
+      const { data: ufRow, error: fileRowErr } = await supabase.from('uploaded_files').insert({
         practice_id: practiceId, nome_file: file.name,
         storage_path: storagePath, mime_type: 'application/pdf', dimensione: file.size,
       }).select('id').single();
+      if (fileRowErr || !ufRow?.id) {
+        throw new Error('PDF caricato, ma non registrato nella pratica: ' + (fileRowErr?.message ?? 'ID documento non disponibile'));
+      }
       toast.info('Analisi XBRL e calcolo KPI...');
       const pdfText = await extractPdfText(file);
       const result = await runAnalysis(pdfText, ufRow?.id ?? null);
@@ -1428,6 +1479,13 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             Seleziona un bilancio già caricato nella pratica oppure carica un nuovo PDF
           </p>
         </div>
+        {unlinkedBalanceCount > 0 && (
+          <div role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {unlinkedBalanceCount === 1
+              ? 'Un’analisi salvata non è più collegata a un documento presente nella pratica e non viene mostrata. Seleziona il bilancio corretto e clicca “Analizza” per rigenerare i KPI.'
+              : `${unlinkedBalanceCount} analisi salvate non sono più collegate a documenti presenti nella pratica e non vengono mostrate. Seleziona i bilanci corretti e clicca “Analizza” per rigenerare i KPI.`}
+          </div>
+        )}
 
         {/* Sezione selezione PDF esistenti */}
         {uploadedPdfs.length > 0 && (
@@ -1515,6 +1573,11 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                     <div className="font-semibold text-sm">{b.anno_esercizio ?? '—'}</div>
                     <div className="text-xs text-muted-foreground truncate mt-0.5">{b.ragione_sociale}</div>
                     {b.is_holding && <Badge variant="outline" className="text-xs mt-1.5 py-0">Holding</Badge>}
+                    {b.uploaded_file_id && (
+                      <div className="text-[10px] text-muted-foreground truncate mt-1">
+                        Fonte: {uploadedPdfs.find(file => file.id === b.uploaded_file_id)?.nome_file ?? 'documento collegato'}
+                      </div>
+                    )}
                     <div className="flex gap-2 mt-2 text-xs">
                       <span className="text-green-700">🟢 {s.verde}</span>
                       <span className="text-amber-600">🟡 {s.giallo}</span>
@@ -1938,6 +2001,18 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                       <CheckCircle2 className="w-4 h-4 text-green-600" />
                       Scheda KPI Bancari — Esercizio {selectedBilancio.anno_esercizio}
                     </CardTitle>
+                    {(() => {
+                      const sourcePdf = uploadedPdfs.find(file => file.id === selectedBilancio.uploaded_file_id);
+                      return (
+                        <p className={`text-xs ${sourcePdf ? 'text-muted-foreground' : 'text-amber-700'}`}>
+                          {sourcePdf
+                            ? `Documento analizzato: ${sourcePdf.nome_file}`
+                            : selectedBilancio.uploaded_file_id
+                              ? 'Documento sorgente non presente nell’elenco della pratica: verifica il collegamento.'
+                              : 'Documento sorgente non associato: questi KPI potrebbero provenire da un’analisi precedente. Seleziona il PDF 2025 corretto e rianalizzalo.'}
+                        </p>
+                      );
+                    })()}
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {/* Header colonne */}

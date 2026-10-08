@@ -2,6 +2,7 @@ import {
   analyzeBalanceAnomalies,
   extractBalanceLineItems,
   inferAtecoSectorKey,
+  selectPreviousAnnualBalance,
   type BalanceSnapshot,
 } from '../../supabase/functions/_shared/balance-anomaly-engine';
 import {
@@ -60,6 +61,16 @@ describe('balance anomaly engine', () => {
     expect(inferAtecoSectorKey('69.20.11')).toBe('professionali');
   });
 
+  it('per un bilancio annuale ignora il provvisorio futuro come confronto storico', () => {
+    const rows: BalanceSnapshot[] = [
+      { anno_esercizio: 2026, is_provvisorio: true, totale_patrimonio_netto: 25_000 },
+      { anno_esercizio: 2024, is_provvisorio: false, totale_patrimonio_netto: -20_150 },
+    ];
+
+    expect(selectPreviousAnnualBalance(rows, 2025)).toEqual(rows[1]);
+    expect(selectPreviousAnnualBalance([rows[0]], 2025)).toBeNull();
+  });
+
   it('separa etichetta, valore corrente e valore precedente per ogni voce', () => {
     expect(extractBalanceLineItems('Altri crediti e partite diverse 180.000 45.000')).toEqual([
       {
@@ -96,6 +107,25 @@ describe('balance anomaly engine', () => {
 
     expect(extractBalanceValue(sections.attivo, ['Totale attivo'])).toBe(2_126_798);
     expect(extractBalanceValue(sections.attivo, ['Totale attivo circolante (C)'])).toBe(1_916_705);
+  });
+
+  it('legge i valori 2025 dalla prima colonna senza scambiare i comparativi 2024', () => {
+    const text = [
+      'Stato patrimoniale micro',
+      'Stato patrimoniale',
+      'Attivo',
+      'Totale attivo 92.116 78.710',
+      'Passivo',
+      'Totale patrimonio netto 10.316 (20.150)',
+      'Totale debiti 76.116 93.685',
+      'Totale passivo 92.116 78.710',
+      'Conto economico',
+    ].join('\n');
+    const sections = splitBalanceDocument(text);
+
+    expect(extractBalanceValue(sections.attivo, ['Totale attivo'])).toBe(92_116);
+    expect(extractBalanceValue(sections.passivo, ['Totale patrimonio netto'])).toBe(10_316);
+    expect(extractBalanceValue(sections.passivo, ['Totale debiti'])).toBe(76_116);
   });
 
   it('mantiene separate le voci dello stato patrimoniale e del conto economico', () => {

@@ -1,6 +1,7 @@
 import {
   analyzeBalanceAnomalies,
   inferAtecoSectorKey,
+  selectPreviousAnnualBalance,
   type BalanceSnapshot,
 } from '../_shared/balance-anomaly-engine.ts';
 import {
@@ -11,6 +12,10 @@ import {
   parseItalianBalanceNumber,
   splitBalanceDocument,
 } from '../_shared/balance-parser.ts';
+import {
+  financingForBalanceYear,
+  transactionsForBalanceYear,
+} from '../_shared/balance-period.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -262,6 +267,7 @@ interface FinRow {
   durata_mesi: number | string | null;
   tipologia: string;
   fonte?: string;
+  data_riferimento?: string | null;
 }
 
 interface StatementRow {
@@ -542,10 +548,12 @@ Deno.serve(async (req) => {
   if (bilancio_testo) {
     if (bilancio_testo.trim().length < 50) return fail('Contenuto bilancio troppo breve o non leggibile');
     const bilData = parseBilancio(bilancio_testo);
+    const periodFinancing = financingForBalanceYear(financing ?? [], bilData.anno_esercizio);
+    const periodTransactions = transactionsForBalanceYear(transactions ?? [], bilData.anno_esercizio);
     const { is_holding, kpi, dscr_source, servizio_debito_annuo } = calcolaKpi(
       bilData,
-      financing ?? [],
-      transactions ?? [],
+      periodFinancing,
+      periodTransactions,
     );
     const codiceAteco: string | null = body.codice_ateco ?? bilData.codice_ateco ?? null;
     const sector = await getSectorContext(codiceAteco);
@@ -573,6 +581,8 @@ Deno.serve(async (req) => {
 
   // Parse bilancio
   const bilData = parseBilancio(pdf_text);
+  const periodFinancing = financingForBalanceYear(financing ?? [], bilData.anno_esercizio);
+  const periodTransactions = transactionsForBalanceYear(transactions ?? [], bilData.anno_esercizio);
   const {
     is_holding,
     ebit: _ebit,
@@ -581,7 +591,7 @@ Deno.serve(async (req) => {
     kpi,
     dscr_source,
     servizio_debito_annuo,
-  } = calcolaKpi(bilData, financing ?? [], transactions ?? []);
+  } = calcolaKpi(bilData, periodFinancing, periodTransactions);
 
   // Non creare un record KPI vuoto quando l'utente seleziona un allegato
   // generico, una scansione illeggibile oppure un PDF che contiene solo una
@@ -600,15 +610,27 @@ Deno.serve(async (req) => {
       'Il PDF selezionato non contiene un bilancio leggibile. Se il documento include una mail, una copertina o immagini scansionate, carica il PDF del bilancio con testo selezionabile.',
     );
   }
+  // Verifica che il file passato dal selettore esista e appartenga proprio
+  // alla pratica analizzata; altrimenti non sovrascrivere i KPI con una fonte
+  // non tracciabile o appartenente a un'altra pratica.
+  if (uploaded_file_id) {
+    const sourceFile = await fetchJson<Array<{ id: string }>>(
+      `uploaded_files?id=eq.${encodeURIComponent(uploaded_file_id)}&practice_id=eq.${encodeURIComponent(practice_id)}&select=id&limit=1`,
+    );
+    if (!sourceFile?.length) {
+      return fail('Il documento selezionato non risulta collegato a questa pratica. Aggiorna l’elenco documenti e ripeti l’analisi.');
+    }
+  }
 
   const codiceAteco = await getPracticeAteco(practice_id) ?? bilData.codice_ateco ?? null;
   const sector = await getSectorContext(codiceAteco);
   const previousRows = await fetchJson<BalanceSnapshot[]>(
     `bilanci_kpi?practice_id=eq.${encodeURIComponent(practice_id)}&select=*&order=anno_esercizio.desc.nullslast&limit=5`,
   );
-  const previousBalance = previousRows?.find(row =>
-    row.anno_esercizio !== bilData.anno_esercizio,
-  ) ?? null;
+  const previousBalance = selectPreviousAnnualBalance(
+    previousRows ?? [],
+    bilData.anno_esercizio,
+  );
   const anomalyAnalysis = analyzeBalanceAnomalies({
     current: { ...bilData, is_holding } as BalanceSnapshot,
     previous: previousBalance,
