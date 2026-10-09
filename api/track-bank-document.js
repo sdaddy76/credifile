@@ -1,10 +1,13 @@
 // Tracker per i link ai documenti inviati alle banche.
-// Registra l'evento e poi reindirizza al signed URL temporaneo di Supabase Storage.
+// Il token dell'email è stabile: a ogni accesso viene verificata l'appartenenza
+// del documento alla pratica e viene generato un nuovo signed URL breve.
 
 import { handleClientVisura } from '../src/lib/clientVisuraHandler.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://fhieppjqlefdlanvrpik.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const PRACTICE_FILES_BUCKET = 'practice-files';
+const FRESH_SIGNED_URL_TTL_SECONDS = 10 * 60;
 
 export const config = {
   api: { bodyParser: false },
@@ -18,6 +21,130 @@ function json(res, status, payload) {
 
 function firstHeader(value) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function encodeStoragePath(path) {
+  return String(path)
+    .split('/')
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+}
+
+function normalizeSignedUrl(value) {
+  const url = String(value ?? '').trim();
+  if (!url) return null;
+  if (/^https:\/\//i.test(url)) return url;
+  if (url.startsWith('/storage/v1/')) return `${SUPABASE_URL}${url}`;
+  if (url.startsWith('/object/')) return `${SUPABASE_URL}/storage/v1${url}`;
+  return null;
+}
+
+export function extractPracticeFileStoragePath(value) {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue) return null;
+  if (!/^https?:\/\//i.test(rawValue)) {
+    return rawValue.replace(/^\/+/, '') || null;
+  }
+
+  try {
+    const url = new URL(rawValue);
+    const prefixes = [
+      `/storage/v1/object/sign/${PRACTICE_FILES_BUCKET}/`,
+      `/storage/v1/object/public/${PRACTICE_FILES_BUCKET}/`,
+      `/storage/v1/object/${PRACTICE_FILES_BUCKET}/`,
+    ];
+    const prefix = prefixes.find(candidate => url.pathname.startsWith(candidate));
+    if (!prefix) return null;
+    return url.pathname
+      .slice(prefix.length)
+      .split('/')
+      .map(segment => decodeURIComponent(segment))
+      .join('/');
+  } catch {
+    return null;
+  }
+}
+
+async function readFirstRow(url, headers) {
+  const response = await fetch(url, { headers });
+  if (!response.ok) return null;
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function createFreshSignedUrl(storagePath, fileName, forceDownload, headers) {
+  const encodedPath = encodeStoragePath(storagePath);
+  if (!encodedPath) return null;
+  const body = { expiresIn: FRESH_SIGNED_URL_TTL_SECONDS };
+  if (forceDownload) body.download = String(fileName || 'documento');
+
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/sign/${PRACTICE_FILES_BUCKET}/${encodedPath}`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    },
+  );
+  if (!response.ok) return null;
+  const payload = await response.json().catch(() => ({}));
+  return normalizeSignedUrl(payload?.signedUrl ?? payload?.signedURL);
+}
+
+async function resolveCurrentDocumentUrl(link, headers) {
+  let storagePath = null;
+  let fileName = null;
+
+  if (link.uploaded_file_id) {
+    const uploadedFile = await readFirstRow(
+      `${SUPABASE_URL}/rest/v1/uploaded_files?id=eq.${encodeURIComponent(link.uploaded_file_id)}&practice_id=eq.${encodeURIComponent(link.practice_id)}&select=id,practice_id,practice_document_id,nome_file,storage_path&limit=1`,
+      headers,
+    );
+    if (!uploadedFile) return null;
+    if (
+      link.practice_document_id
+      && uploadedFile.practice_document_id
+      && uploadedFile.practice_document_id !== link.practice_document_id
+    ) {
+      return null;
+    }
+    storagePath = extractPracticeFileStoragePath(uploadedFile.storage_path);
+    fileName = uploadedFile.nome_file;
+  } else if (link.relation_id) {
+    const relation = await readFirstRow(
+      `${SUPABASE_URL}/rest/v1/relazioni_commerciali?id=eq.${encodeURIComponent(link.relation_id)}&practice_id=eq.${encodeURIComponent(link.practice_id)}&select=id,practice_id,bank_id,pdf_url&limit=1`,
+      headers,
+    );
+    if (!relation) return null;
+    if (relation.bank_id && relation.bank_id !== link.bank_id) return null;
+
+    storagePath = extractPracticeFileStoragePath(relation.pdf_url);
+    fileName = 'Relazione_Commerciale.pdf';
+    if (!storagePath && /^https:\/\//i.test(String(relation.pdf_url ?? ''))) {
+      return relation.pdf_url;
+    }
+  }
+
+  if (storagePath) {
+    return createFreshSignedUrl(
+      storagePath,
+      fileName,
+      link.event_type === 'downloaded',
+      headers,
+    );
+  }
+
+  // Compatibilità per eventuali vecchi link esterni non ospitati nello
+  // Storage Credifile. I vecchi signed URL Supabase non vengono riutilizzati.
+  const legacyTarget = String(link.target_url ?? '').trim();
+  if (
+    /^https:\/\//i.test(legacyTarget)
+    && !extractPracticeFileStoragePath(legacyTarget)
+  ) {
+    return legacyTarget;
+  }
+  return null;
 }
 
 export default async function handler(req, res) {
@@ -48,8 +175,15 @@ export default async function handler(req, res) {
   const links = await linkResponse.json().catch(() => []);
   const link = Array.isArray(links) ? links[0] : null;
   if (!link) return json(res, 404, { success: false, error: 'Link documento non trovato' });
-  if (new Date(link.expires_at).getTime() <= Date.now()) {
-    return json(res, 410, { success: false, error: 'Link documento scaduto' });
+
+  // expires_at apparteneva al vecchio signed URL creato durante l'invio.
+  // Non limita più il token dell'email: il file viene rifirmato a ogni clic.
+  const currentDocumentUrl = await resolveCurrentDocumentUrl(link, headers);
+  if (!currentDocumentUrl) {
+    return json(res, 404, {
+      success: false,
+      error: 'Documento non più disponibile nella pratica',
+    });
   }
 
   const logPayload = {
@@ -120,7 +254,7 @@ export default async function handler(req, res) {
   }
 
   res.statusCode = 302;
-  res.setHeader('Location', link.target_url);
+  res.setHeader('Location', currentDocumentUrl);
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   return res.end();
 }

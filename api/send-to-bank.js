@@ -487,7 +487,9 @@ export default async function handler(req, res) {
     );
     const archiveCopyRequired = primaryRecipient !== ARCHIVE_CC;
 
-    // 3b. URL firmati in parallelo (tutti i file contemporaneamente)
+    // 3b. Verifica in parallelo che tutti i file siano ancora presenti nello
+    // Storage. Gli URL generati qui non vengono esposti nell'email: il link
+    // Credifile stabile li rigenererà a ogni apertura o download.
     const files = integrationMode
       ? (Array.isArray(filesRaw) ? filesRaw : []).flatMap(document =>
           (document.uploaded_files ?? []).map(file => ({
@@ -524,7 +526,7 @@ export default async function handler(req, res) {
           try {
             const signRes = await fetch(
               `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
-              { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
+              { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 600 }) },
             );
             if (!signRes.ok) return null;
             const signData = await signRes.json();
@@ -550,7 +552,7 @@ export default async function handler(req, res) {
           const encodedPath = relationPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
           const signRes = await fetch(
             `${SUPABASE_URL}/storage/v1/object/sign/practice-files/${encodedPath}`,
-            { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 604800 }) },
+            { method: 'POST', headers: H, body: JSON.stringify({ expiresIn: 600 }) },
           );
           if (!signRes.ok) throw new Error('Impossibile firmare il PDF della relazione');
           const signData = await signRes.json();
@@ -575,13 +577,16 @@ export default async function handler(req, res) {
       }
     }
 
-    // Avvolge ogni signed URL con un link di tracking per la banca. In questo
-    // modo apertura e download restano distinti e associati a quel documento,
-    // alla pratica e alla singola banca destinataria.
+    // Avvolge ogni signed URL con un link Credifile permanente e tracciato.
+    // Il tracker non riutilizza questo URL temporaneo: verifica il documento
+    // e ne genera uno nuovo a ogni clic. Apertura e download restano distinti
+    // e associati alla pratica e alla singola banca destinataria.
     if (docLinks.length > 0) {
       const accessRows = [];
       const accessByKey = new Map();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      // Colonna legacy NOT NULL: il tracker non usa più questa data per
+      // invalidare il token. Il link può essere revocato cancellando la riga.
+      const expiresAt = '9999-12-31T23:59:59.999Z';
       for (const document of docLinks) {
         for (const eventType of ['opened', 'downloaded']) {
           const token = crypto.randomBytes(24).toString('hex');
