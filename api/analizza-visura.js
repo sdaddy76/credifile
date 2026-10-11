@@ -50,19 +50,47 @@ function parseSoci(text) {
 }
 
 // ── Storico sedi ──────────────────────────────────────────────────────────
+const ADDRESS_MARKER_RE = /\b(?:VIA|VIALE|PIAZZA|PIAZZALE|CORSO|LARGO|STRADA|VICOLO|LOCALIT[AÀ]|FRAZIONE|CAP)\b/i;
+const MUNICIPALITY_RE = /\b[A-ZÀ-Ù][A-ZÀ-Ù\s'’.-]{1,60}\s*\([A-Z]{2}\)\b/;
+const ACTIVITY_DESCRIPTION_RE = /\b(?:COMMERCIO|ATTIVIT[AÀ]|PRODUZIONE|VENDITA|SERVIZI|CONSULENZA|LAVORAZIONE|FABBRICAZIONE|SOMMINISTRAZIONE|NOLEGGIO|INTERMEDIAZIONE|GESTIONE|RIPARAZIONE|INSTALLAZIONE|TRASPORTO|IMPORTAZIONE|ESPORTAZIONE)\b/i;
+
+/**
+ * Una descrizione ATECO o dell'oggetto sociale non è una sede. Per essere
+ * analizzato come indirizzo il testo deve contenere un indicatore stradale,
+ * CAP oppure comune con sigla provincia; una descrizione operativa isolata
+ * viene così scartata prima di alimentare l'analisi reputazionale.
+ */
+export function isPlausibleAddress(value) {
+  const address = String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (address.length < 5 || address.length > 220) return false;
+
+  const hasStreetMarker = ADDRESS_MARKER_RE.test(address);
+  const hasCap = /\b\d{5}\b/.test(address);
+  const hasMunicipality = MUNICIPALITY_RE.test(address);
+  if (!hasStreetMarker && !hasCap && !hasMunicipality) return false;
+
+  const words = address.split(/\s+/).filter(Boolean);
+  const geographicEvidence = Number(hasStreetMarker) + Number(hasCap) + Number(hasMunicipality);
+  const activityLikeOnly = ACTIVITY_DESCRIPTION_RE.test(address)
+    && geographicEvidence < 2
+    && words.length > 6;
+  return !activityLikeOnly;
+}
+
 export function parseSedi(text) {
   const lines = String(text ?? '').split(/[\n\r]+/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
   const currentAddresses = [];
   const variations = [];
   const transferSummary = text.match(/\bTrasferimenti\s+di\s+sede\s*[:\-]?\s*(\d+)\b/i);
   const explicitTransferCount = transferSummary ? Number.parseInt(transferSummary[1], 10) : null;
-  const addressPattern = /\b(?:VIA|VIALE|PIAZZA|PIAZZALE|CORSO|STRADA|LOCALIT[AÀ]|FRAZIONE|CAP)\b|[A-ZÀ-Ù]{2,}\s*\([A-Z]{2}\)/i;
 
   const addCurrentAddress = (rawAddress, date = null) => {
     const address = String(rawAddress ?? '')
       .replace(/\s+(?:Domicilio\s+digitale|PEC|Partita\s+IVA|Numero\s+REA).*$/i, '')
       .trim();
-    if (address.length < 5 || !addressPattern.test(address)) return;
+    if (!isPlausibleAddress(address)) return;
 
     const normalized = address.toLocaleLowerCase('it-IT').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
     const relatedIndex = currentAddresses.findIndex(candidate => {
@@ -89,7 +117,7 @@ export function parseSedi(text) {
     if (!variationMatch || /^trasferimenti\s+di\s+sede\b/i.test(line)) continue;
     const date = variationMatch[1].match(/(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/)?.[1] ?? null;
     const address = variationMatch[1].trim();
-    if (addressPattern.test(address)) variations.push({ indirizzo: address, data_inizio: date, tipo: 'variazione' });
+    if (isPlausibleAddress(address)) variations.push({ indirizzo: address, data_inizio: date, tipo: 'variazione' });
   }
 
   const uniqueVariations = variations.filter((record, index, list) => {

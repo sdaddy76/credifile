@@ -332,6 +332,22 @@ function extractAddressParts(indirizzo: string): { comune: string; cap: string; 
   return { comune, cap, via }
 }
 
+function isPlausibleAddress(indirizzo: unknown): indirizzo is string {
+  const address = String(indirizzo ?? '').replace(/\s+/g, ' ').trim()
+  if (address.length < 5 || address.length > 220) return false
+
+  const hasStreetMarker = /\b(?:VIA|VIALE|PIAZZA|PIAZZALE|CORSO|LARGO|STRADA|VICOLO|LOCALIT[AÀ]|FRAZIONE|CAP)\b/i.test(address)
+  const hasCap = /\b\d{5}\b/.test(address)
+  const hasMunicipality = /\b[A-ZÀ-Ù][A-ZÀ-Ù\s'’.-]{1,60}\s*\([A-Z]{2}\)\b/.test(address)
+  if (!hasStreetMarker && !hasCap && !hasMunicipality) return false
+
+  const geographicEvidence = Number(hasStreetMarker) + Number(hasCap) + Number(hasMunicipality)
+  const activityLikeOnly = /\b(?:COMMERCIO|ATTIVIT[AÀ]|PRODUZIONE|VENDITA|SERVIZI|CONSULENZA|LAVORAZIONE|FABBRICAZIONE|SOMMINISTRAZIONE|NOLEGGIO|INTERMEDIAZIONE|GESTIONE|RIPARAZIONE|INSTALLAZIONE|TRASPORTO|IMPORTAZIONE|ESPORTAZIONE)\b/i.test(address)
+    && geographicEvidence < 2
+    && address.split(/\s+/).length > 6
+  return !activityLikeOnly
+}
+
 function addressRelevance(
   item: NewsItem,
   indirizzo: string,
@@ -1147,7 +1163,7 @@ Deno.serve(async (req) => {
       tipo: 'sede_legale' | 'sede_collegata',
       dataInizio?: string | null,
     ) => {
-      if (typeof indirizzo !== 'string' || indirizzo.trim().length < 5) return
+      if (!isPlausibleAddress(indirizzo)) return
       const normalized = canonicalAddress(indirizzo)
       if (!normalized || addressCandidates.some(candidate => canonicalAddress(candidate.indirizzo) === normalized)) return
       addressCandidates.push({ indirizzo: indirizzo.trim(), tipo, data_inizio: dataInizio })
