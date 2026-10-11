@@ -144,6 +144,23 @@ function getStructuralSignalId(signal: Pick<StructuralSignal, 'tipo' | 'categori
     .join('|');
 }
 
+function isPlausibleAddress(value: unknown): value is string {
+  const address = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (address.length < 5 || address.length > 220) return false;
+
+  const hasStreetMarker = /\b(?:VIA|VIALE|PIAZZA|PIAZZALE|CORSO|LARGO|STRADA|VICOLO|LOCALIT[AÀ]|FRAZIONE|CAP)\b/i.test(address);
+  const hasCap = /\b\d{5}\b/.test(address);
+  const hasMunicipality = /\b[A-ZÀ-Ù][A-ZÀ-Ù\s'’.-]{1,60}\s*\([A-Z]{2}\)\b/.test(address);
+  if (!hasStreetMarker && !hasCap && !hasMunicipality) return false;
+
+  const geographicEvidence = Number(hasStreetMarker) + Number(hasCap) + Number(hasMunicipality);
+  return !(
+    /\b(?:COMMERCIO|ATTIVIT[AÀ]|PRODUZIONE|VENDITA|SERVIZI|CONSULENZA|LAVORAZIONE|FABBRICAZIONE|SOMMINISTRAZIONE|NOLEGGIO|INTERMEDIAZIONE|GESTIONE|RIPARAZIONE|INSTALLAZIONE|TRASPORTO|IMPORTAZIONE|ESPORTAZIONE)\b/i.test(address)
+    && geographicEvidence < 2
+    && address.split(/\s+/).length > 6
+  );
+}
+
 interface AnalysisRecord {
   id: string; created_at: string;
   score_globale: number; score_societa: number; score_amm: number; score_soci: number;
@@ -1054,6 +1071,19 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
 
   const r = selected?.risultati;
   const excludedSignals: ExcludedSignal[] = selected?.excluded_signals ?? [];
+  const displayedVisuraData = visuraData
+    ? {
+      ...visuraData,
+      storico_sedi: (visuraData.storico_sedi ?? []).filter(sede => isPlausibleAddress(sede.indirizzo)),
+    }
+    : null;
+  const displayedStructuralSignals = (displayedVisuraData?.segnali_strutturali ?? []).filter(signal =>
+    !(
+      signal.categoria === 'Stabilità'
+      && /variazioni di sede|trasferimento sede/i.test(signal.titolo)
+      && (visuraData?.storico_sedi?.length ?? 0) !== (displayedVisuraData?.storico_sedi?.length ?? 0)
+    )
+  );
 
   // Segnali negativi aggregati (solo attivi — non esclusi)
   const isExcluded = (s: Signal, subjectName: string) =>
@@ -1119,7 +1149,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
       </div>
 
       {/* ── Sezione segnali da visura camerale ── */}
-      {visuraData && visuraData.segnali_strutturali && visuraData.segnali_strutturali.length > 0 && (
+      {displayedVisuraData && displayedStructuralSignals.length > 0 && (
         <Card className="border-blue-200 bg-blue-50/30">
           <CardHeader className="pb-2 pt-3 px-4">
             <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
@@ -1127,7 +1157,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
               <div className="flex items-center gap-3 text-[10px] font-normal">
                 <span className="flex items-center gap-1">
                   <MapPin className="w-3 h-3" />
-                  {visuraData.storico_sedi?.length ?? 0} sedi · {visuraData.trasferimenti_sede ?? visuraData.storico_sedi?.filter(sede => sede.tipo === 'variazione').length ?? 0} trasferimenti
+                  {displayedVisuraData.storico_sedi?.length ?? 0} sedi · {displayedVisuraData.storico_sedi?.filter(sede => sede.tipo === 'variazione').length ?? 0} trasferimenti
                 </span>
                 <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {visuraData.storico_amministratori?.length ?? 0} cariche</span>
                 <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" /> {visuraData.passaggi_rami?.length ?? 0} rami</span>
@@ -1142,7 +1172,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
             </CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-3 space-y-2">
-            {visuraData.segnali_strutturali.map((s, i) => {
+            {displayedStructuralSignals.map((s, i) => {
               const excludedFromBankEmail = (visuraData.excluded_from_bank_email ?? []).includes(getStructuralSignalId(s));
               return (
               <div key={i} className={`flex items-start gap-2 rounded-lg px-3 py-2 border ${
