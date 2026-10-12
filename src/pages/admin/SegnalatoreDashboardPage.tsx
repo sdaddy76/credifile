@@ -5,9 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   FileText, CheckCircle2, XCircle, Clock, RefreshCw,
-  TrendingUp, BarChart3, Activity, Banknote,
+  TrendingUp, BarChart3, Activity, Banknote, Inbox, Paperclip,
 } from 'lucide-react';
 import { STATUS_LABELS, STATUS_COLORS, type PracticeStatus } from '@/lib/types';
+import { formatRomeDateTime } from '@/lib/dateTime';
 
 // ── Tipi ────────────────────────────────────────────────────────────────────
 interface PraticaRiepilogo {
@@ -15,6 +16,7 @@ interface PraticaRiepilogo {
   numero_pratica: string;
   status: PracticeStatus;
   created_at: string;
+  updated_at?: string | null;
   clients: { ragione_sociale: string } | null;
 }
 
@@ -27,6 +29,17 @@ interface Commissione {
   data_liquidazione?: string;
   note?: string;
   practices?: { numero_pratica: string; clients?: { ragione_sociale: string } | null } | null;
+}
+
+interface SegnalazioneRiepilogo {
+  id: string;
+  ragione_sociale: string;
+  stato: string;
+  created_at: string;
+  updated_at?: string | null;
+  practice_id?: string | null;
+  piva?: string | null;
+  file_urls?: { nome?: string | null }[] | null;
 }
 
 interface StatusCount {
@@ -59,6 +72,38 @@ const BAR_COLORS: Record<string, string> = {
   erogata:                '#22c55e',
   declinata:              '#f43f5e',
 };
+
+const SIGNAL_STATUS_LABELS: Record<string, string> = {
+  nuova: 'Segnalazione ricevuta',
+  assegnata: 'Assegnata',
+  lavorazione: 'In lavorazione',
+  chiusa: 'Chiusa',
+  annullata: 'Annullata',
+};
+
+const SIGNAL_STATUS_COLORS: Record<string, string> = {
+  nuova: 'bg-orange-100 text-orange-800',
+  assegnata: 'bg-blue-100 text-blue-800',
+  lavorazione: 'bg-purple-100 text-purple-800',
+  chiusa: 'bg-green-100 text-green-800',
+  annullata: 'bg-gray-100 text-gray-600',
+};
+
+const PROGRESS_STATUSES: PracticeStatus[] = [
+  'bozza',
+  'raccolta_documenti',
+  'inviata_banca',
+  'istruttoria',
+  'in_delibera',
+  'deliberata',
+  'erogata',
+];
+
+function practiceProgress(status: PracticeStatus): number {
+  const index = PROGRESS_STATUSES.indexOf(status);
+  if (index < 0) return status === 'declinata' || status === 'rifiutata' ? 100 : 0;
+  return Math.round(((index + 1) / PROGRESS_STATUSES.length) * 100);
+}
 
 // ── Componente Barra SVG ─────────────────────────────────────────────────────
 function BarChart({ data, maxVal }: { data: StatusCount[]; maxVal: number }) {
@@ -138,16 +183,22 @@ function BarChart({ data, maxVal }: { data: StatusCount[]; maxVal: number }) {
 export default function SegnalatoreDashboardPage() {
   const { user } = useAuth();
   const [pratiche, setPratiche] = useState<PraticaRiepilogo[]>([]);
+  const [segnalazioni, setSegnalazioni] = useState<SegnalazioneRiepilogo[]>([]);
+  const [segnalazioniError, setSegnalazioniError] = useState<string | null>(null);
   const [commissioni, setCommissioni] = useState<Commissione[]>([]);
   const [loading,  setLoading]  = useState(true);
 
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const [{ data, error }, { data: comm }] = await Promise.all([
+    const [
+      { data: practiceData, error: practiceError },
+      { data: comm },
+      { data: signalData, error: signalError },
+    ] = await Promise.all([
       supabase
         .from('practices')
-        .select('id, numero_pratica, status, created_at, clients(ragione_sociale)')
+        .select('id, numero_pratica, status, created_at, updated_at, clients(ragione_sociale)')
         .eq('segnalatore_id', user.id)
         .order('created_at', { ascending: false }),
       supabase
@@ -155,9 +206,16 @@ export default function SegnalatoreDashboardPage() {
         .select('id, practice_id, importo, stato, data_maturazione, data_liquidazione, note, practices(numero_pratica, clients(ragione_sociale))')
         .eq('segnalatore_id', user.id)
         .order('data_maturazione', { ascending: false }),
+      supabase
+        .from('segnalazioni_pubbliche')
+        .select('id, ragione_sociale, stato, created_at, updated_at, practice_id, piva, file_urls')
+        .eq('segnalatore_id', user.id)
+        .order('created_at', { ascending: false }),
     ]);
 
-    if (!error) setPratiche((data ?? []) as unknown as PraticaRiepilogo[]);
+    if (!practiceError) setPratiche((practiceData ?? []) as unknown as PraticaRiepilogo[]);
+    setSegnalazioniError(signalError?.message ?? null);
+    setSegnalazioni((signalData ?? []) as unknown as SegnalazioneRiepilogo[]);
     setCommissioni((comm ?? []) as unknown as Commissione[]);
     setLoading(false);
   }, [user]);
@@ -196,6 +254,13 @@ export default function SegnalatoreDashboardPage() {
 
   // Ultime 5 pratiche
   const ultime5 = pratiche.slice(0, 5);
+
+  // Una segnalazione collegata a una pratica è già rappresentata dalla pratica:
+  // non deve comparire due volte nel menu del segnalatore.
+  const praticaIds = new Set(pratiche.map(pratica => pratica.id));
+  const segnalazioniDaMostrare = segnalazioni.filter(
+    segnalazione => !segnalazione.practice_id || !praticaIds.has(segnalazione.practice_id),
+  );
 
   // Calcoli commissioni
   const totaleMaturato = commissioni.reduce((s, c) => s + (c.importo ?? 0), 0);
@@ -338,6 +403,92 @@ export default function SegnalatoreDashboardPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* ── Pratiche e segnalazioni ──────────────────────────────────── */}
+          <Card className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Inbox className="w-4 h-4 text-primary" />
+                Pratiche e segnalazioni
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Stato di avanzamento delle pratiche e delle segnalazioni inviate
+              </p>
+            </CardHeader>
+            <CardContent className="pb-4">
+              {segnalazioniError && (
+                <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Le segnalazioni non sono momentaneamente disponibili. Riprova tra poco.
+                </div>
+              )}
+              {pratiche.length === 0 && segnalazioniDaMostrare.length === 0 ? (
+                <div className="py-8 text-center border-2 border-dashed rounded-xl">
+                  <Inbox className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
+                  <p className="text-sm text-muted-foreground">Nessuna pratica o segnalazione disponibile.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pratiche.map(pratica => {
+                    const progress = practiceProgress(pratica.status);
+                    return (
+                      <div key={`practice-${pratica.id}`} className="rounded-lg border border-border bg-card px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <FileText className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold truncate">{pratica.clients?.ragione_sociale ?? 'Azienda non indicata'}</p>
+                              <p className="text-xs text-muted-foreground font-mono">{pratica.numero_pratica}</p>
+                            </div>
+                          </div>
+                          <Badge className={`text-[10px] shrink-0 ${STATUS_COLORS[pratica.status] ?? 'bg-gray-100 text-gray-700'}`}>
+                            {STATUS_LABELS[pratica.status] ?? pratica.status}
+                          </Badge>
+                        </div>
+                        <div className="mt-3 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+                          </div>
+                          <span className="text-[10px] font-semibold text-muted-foreground">{progress}%</span>
+                        </div>
+                        <p className="mt-1.5 text-[10px] text-muted-foreground">
+                          Ultimo aggiornamento: {formatRomeDateTime(pratica.updated_at ?? pratica.created_at, { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </p>
+                      </div>
+                    );
+                  })}
+
+                  {segnalazioniDaMostrare.map(segnalazione => {
+                    const documenti = (segnalazione.file_urls ?? []).length;
+                    return (
+                      <div key={`signal-${segnalazione.id}`} className="rounded-lg border border-orange-200 bg-orange-50/40 px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <Inbox className="w-4 h-4 text-orange-600 mt-0.5 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold truncate">{segnalazione.ragione_sociale}</p>
+                              <p className="text-xs text-muted-foreground">Segnalazione senza pratica collegata</p>
+                            </div>
+                          </div>
+                          <Badge className={`text-[10px] shrink-0 ${SIGNAL_STATUS_COLORS[segnalazione.stato] ?? 'bg-gray-100 text-gray-700'}`}>
+                            {SIGNAL_STATUS_LABELS[segnalazione.stato] ?? segnalazione.stato}
+                          </Badge>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                          <span>Ricevuta il {formatRomeDateTime(segnalazione.created_at, { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                          {documenti > 0 && (
+                            <span className="inline-flex items-center gap-1">
+                              <Paperclip className="w-3 h-3" />
+                              {documenti} {documenti === 1 ? 'documento caricato' : 'documenti caricati'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* ── Commissioni ──────────────────────────────────────────────── */}
           <Card className="border-border">

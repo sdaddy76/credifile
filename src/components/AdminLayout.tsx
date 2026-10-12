@@ -74,7 +74,7 @@ const NAV_AGENTE = [
 
 const NAV_SEGNALATORE = [
   { to: '/admin/nuova-segnalazione',    icon: Send,          label: 'Nuova Segnalazione' },
-  { to: '/admin/segnalatore-dashboard', icon: TrendingUp,    label: 'Le Mie Statistiche' },
+  { to: '/admin/segnalatore-dashboard', icon: TrendingUp,    label: 'Pratiche e Segnalazioni' },
   { to: '/admin/kanban-banche',         icon: Columns2,      label: 'Kanban Banche' },
   { to: '/admin/tasks',                 icon: CheckSquare,   label: 'Task' },
   { to: '/admin/profilo',               icon: UserCircle,    label: 'Profilo' },
