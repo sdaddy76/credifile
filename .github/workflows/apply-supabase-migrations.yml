@@ -1,0 +1,35 @@
+name: Apply Supabase migrations
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "supabase/migrations/20261012100000_segnalatore_read_own_segnalazioni.sql"
+      - ".github/workflows/apply-supabase-migrations.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Apply segnalatore RLS policy
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: fhieppjqlefdlanvrpik
+        run: |
+          set -euo pipefail
+          sql="$(cat supabase/migrations/20261012100000_segnalatore_read_own_segnalazioni.sql)"
+          payload="$(jq -n --arg query "$sql" '{query: $query, read_only: false}')"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query" \
+            --header "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data "$payload"
