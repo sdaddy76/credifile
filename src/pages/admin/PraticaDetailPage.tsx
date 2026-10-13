@@ -1508,7 +1508,9 @@ export default function PraticaDetailPage() {
     }
   };
 
-  // Genera codice accesso cliente + invia email
+  // Genera o rigenera il codice accesso cliente senza inviare la richiesta
+  // documentale. L’email con l’elenco dei documenti parte solo da
+  // sendDocumentRequest, richiamata dal pulsante esplicito.
   const generateAccessCode = async () => {
     if (!practice) return;
     const client = (practice as Practice & { clients?: { email: string } }).clients;
@@ -1526,40 +1528,7 @@ export default function PraticaDetailPage() {
       });
     }
     await load();
-    toast.success('Codice accesso generato!');
-
-    // Recupera nome consulente
-    const { data: profile } = await supabase.from('admin_profiles').select('nome').eq('id', user?.id ?? '').maybeSingle();
-    const consultantName = profile?.nome ?? user?.email ?? 'Il tuo consulente';
-
-    // Costruisci link
-    const link = buildAppUrl(`/accesso?p=${practice.id}`);
-
-    // Lista documenti richiesti
-    const { data: docs } = await supabase.from('practice_documents').select('nome').eq('practice_id', practice.id);
-    const docNames = (docs ?? []).map((d: { nome: string }) => d.nome);
-
-    // Invia email via edge function
-    const { data: emailData2, error: emailError2 } = await supabase.functions.invoke('send-client-email', {
-      body: {
-        to: client.email,
-        consultant_name: consultantName,
-        documents: docNames,
-        link,
-        code: codice,
-        practice_number: practice.numero_pratica,
-        company_name: (practice as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? undefined,
-        // La copia e le risposte del cliente devono arrivare all'agente assegnato.
-        cc: getAssignedAgentEmail(practice),
-        reply_to: getAssignedAgentEmail(practice),
-      },
-    });
-    if (emailError2 || emailData2?.success === false) {
-      const msg = emailData2?.error ? JSON.stringify(emailData2.error) : emailError2?.message ?? 'Errore sconosciuto';
-      toast.warning('Codice generato ma email non inviata: ' + msg);
-    } else {
-      toast.success(`Email inviata a ${client.email}!`);
-    }
+    toast.success('Codice accesso generato. Clicca “Invia Richiesta Documenti” per inviare l’elenco al cliente.');
   };
 
   // Propaga un documento (stesso storage_path) a tutte le altre pratiche della stessa società

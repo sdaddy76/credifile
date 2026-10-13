@@ -5,7 +5,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { buildAppUrl } from '@/lib/appUrl';
 import { sanitizeFileName } from '@/lib/uploadFile';
 import { useAuth } from '@/hooks/useAuth';
 import { initializePracticeDocuments } from '@/lib/clientVisura';
@@ -495,13 +494,6 @@ export default function SegnalazioniRicevutePage() {
 
       const year = new Date().getFullYear();
       const numeroPratica = `PRA-${year}-${Date.now().toString(36).slice(-6).toUpperCase()}`;
-      const consultantNameResult = await supabase
-        .from('admin_profiles')
-        .select('nome,email')
-        .eq('id', user?.id ?? '')
-        .maybeSingle();
-      const consultantName = consultantNameResult.data?.nome || consultantNameResult.data?.email || user?.email || 'Credifile';
-
       const { data: practice, error: practiceError } = await supabase
         .from('practices')
         .insert({
@@ -635,68 +627,29 @@ export default function SegnalazioniRicevutePage() {
         created_by: user?.id ?? null,
       });
 
-      let access: { id: string; codice: string } | null = null;
       if (email) {
         const accessCode = `CF${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
         const expiry = new Date();
         expiry.setDate(expiry.getDate() + 30);
-        const { data: accessData, error: accessError } = await supabase
+        const { error: accessError } = await supabase
           .from('practice_access_codes')
           .insert({
             practice_id: practice.id,
             codice: accessCode,
             email_cliente: email,
             scadenza: expiry.toISOString(),
-          })
-          .select('id,codice')
-          .single();
+          });
         if (accessError) throw accessError;
-        access = accessData as { id: string; codice: string };
       }
 
-      const receivedDocumentNames = receivedFiles.map(file => normalizeName(file.nome));
-      const pendingDocuments = (practiceDocuments ?? [])
-        .filter(document => !receivedDocumentNames.some(fileName =>
-          fileName.includes(normalizeName(document.nome)) || normalizeName(document.nome).includes(fileName)
-        ))
-        .map(document => document.nome);
-      let agentEmail: string | null = null;
-      if (seg.agente_id) {
-        const { data: agent } = await supabase
-          .from('admin_profiles')
-          .select('email')
-          .eq('id', seg.agente_id)
-          .maybeSingle();
-        agentEmail = agent?.email ?? null;
-      }
-
-      if (email) {
-        const { data: emailData, error: emailError } = await supabase.functions.invoke('send-client-email', {
-          body: {
-            to: email,
-            consultant_name: consultantName,
-            documents: pendingDocuments,
-            questions: [],
-            link: buildAppUrl(`/accesso?p=${practice.id}`),
-            code: access?.codice ?? '',
-            practice_number: practice.numero_pratica,
-            company_name: seg.ragione_sociale,
-            subject_override: `Valutazione di bancabilità avviata — ${seg.ragione_sociale}`,
-            cc: agentEmail,
-            reply_to: agentEmail,
-          },
-        });
-        if (emailError || emailData?.success === false) {
-          const message = emailData?.error
-            ? JSON.stringify(emailData.error)
-            : emailError?.message ?? 'email non inviata';
-          toast.warning(`Pratica ${practice.numero_pratica} creata, ma l'email non è stata inviata: ${message}`);
-        } else {
-          toast.success(`Valutazione avviata: ${practice.numero_pratica}. Link inviato a ${email}.`);
-        }
-      } else {
-        toast.success(`Segnalazione trasferita nella pratica ${practice.numero_pratica}. Email cliente non presente: il link non è stato inviato.`);
-      }
+      // Il trasferimento/assegnazione crea la pratica e, se possibile, il
+      // codice di accesso, ma non invia la richiesta documentale. L’elenco
+      // dei documenti deve partire soltanto dall’azione esplicita
+      // “Invia Richiesta Documenti” nella pratica.
+      const accessMessage = email
+        ? 'Il link cliente è pronto: invia la richiesta documentale dalla pratica quando necessario.'
+        : 'Email cliente non presente: il link potrà essere configurato in seguito dal Super Admin.';
+      toast.success(`Valutazione avviata: ${practice.numero_pratica}. ${accessMessage}`);
 
       const { error: requestUpdateError } = await supabase
         .from('segnalazioni_pubbliche')
