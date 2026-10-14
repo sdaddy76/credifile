@@ -28,6 +28,14 @@ interface UploadedPdf {
   source?: 'pratica' | 'segnalatore';
 }
 
+interface SignalSourceFile {
+  nome_file: string;
+  storage_path: string;
+  mime_type: string;
+  dimensione: number;
+  uploaded_by: 'segnalatore';
+}
+
 interface KpiEntry {
   valore: number | null;
   formatted: string;
@@ -1312,7 +1320,11 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   };
 
   // Logica core: dato il testo PDF + metadati, chiama l'edge function
-  const runAnalysis = async (pdfText: string, uploadedFileId: string | null) => {
+  const runAnalysis = async (
+    pdfText: string,
+    uploadedFileId: string | null,
+    sourceFile: SignalSourceFile | null = null,
+  ) => {
     // Carica finanziamenti in essere dalla pratica
     const { data: finData } = await supabase
       .from('client_financing')
@@ -1336,6 +1348,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
         practice_id: practiceId,
         pdf_text: pdfText,
         uploaded_file_id: uploadedFileId,
+        source_file: sourceFile,
         financing,
         transactions: statementData ?? [],
       },
@@ -1345,6 +1358,9 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     }
     if (uploadedFileId && result?.uploaded_file_id !== uploadedFileId) {
       throw new Error('Analisi non collegata al PDF selezionato: aggiorna la pagina e ripeti l’analisi prima di usare questi KPI.');
+    }
+    if (sourceFile && !result?.uploaded_file_id) {
+      throw new Error('Il PDF ricevuto tramite segnalazione non è stato registrato nella pratica: ID documento non disponibile');
     }
     return result;
   };
@@ -1375,36 +1391,51 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       // Public-referral PDFs may exist in storage and in the signal payload
       // without a row in uploaded_files. Materialize that source before
       // analysis so the resulting KPI record has durable, verifiable lineage.
-      let sourceFileId = pdf.id;
+      let sourceFileId: string | null = pdf.id;
+      let sourceFile: SignalSourceFile | null = null;
       if (pdf.id.startsWith('segnalazione:')) {
-        const { data: sourceFile, error: sourceFileError } = await supabase
+        // Le segnalazioni storiche possono avere il file nello storage e nel
+        // payload pubblico, ma non ancora nella tabella uploaded_files.
+        // Riutilizziamo la riga se esiste; altrimenti la materializzazione
+        // viene completata dalla Edge Function con una verifica server-side,
+        // evitando un insert frontend soggetto a una policy RLS non aggiornata.
+        const { data: existingSourceFile } = await supabase
           .from('uploaded_files')
-          .insert({
-            practice_id: practiceId,
+          .select('id')
+          .eq('practice_id', practiceId)
+          .eq('storage_path', pdf.storage_path)
+          .maybeSingle();
+
+        if (existingSourceFile?.id) {
+          sourceFileId = existingSourceFile.id;
+        } else {
+          sourceFileId = null;
+          sourceFile = {
             nome_file: pdf.nome_file,
             storage_path: pdf.storage_path,
             mime_type: 'application/pdf',
             dimensione: blob.size,
             uploaded_by: 'segnalatore',
-          })
-          .select('id')
-          .single();
-        if (sourceFileError || !sourceFile?.id) {
-          throw new Error('Il PDF ricevuto tramite segnalazione non è stato registrato nella pratica: ' + (sourceFileError?.message ?? 'ID documento non disponibile'));
+          };
         }
-        sourceFileId = sourceFile.id;
       }
 
       toast.info('Analisi XBRL e calcolo KPI...');
       const pdfText = await extractPdfText(file);
-      const result = await runAnalysis(pdfText, sourceFileId);
+      const result = await runAnalysis(pdfText, sourceFileId, sourceFile);
+      const linkedSourceFileId = typeof result?.uploaded_file_id === 'string'
+        ? result.uploaded_file_id
+        : sourceFileId;
+      if (!linkedSourceFileId) {
+        throw new Error('Il PDF ricevuto tramite segnalazione non è stato registrato nella pratica: ID documento non disponibile');
+      }
       const patrimonioNetto = parseLocalizedNumber(result.totale_patrimonio_netto);
       toast.success(
         `Bilancio ${result.anno ?? ''} analizzato — Patrimonio netto: ${fmt(patrimonioNetto, true)}`,
       );
       await loadData(
         typeof result.bilancio_id === 'string' ? result.bilancio_id : null,
-        sourceFileId,
+        linkedSourceFileId,
       );
     } catch (err: unknown) {
       toast.error('Errore: ' + (err instanceof Error ? err.message : String(err)));

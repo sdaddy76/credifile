@@ -19,6 +19,16 @@ import {
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')
+  ?? Deno.env.get('SUPABASE_PUBLISHABLE_KEY')
+  ?? '';
+
+const OPERATIONAL_ROLES = new Set([
+  'super_admin',
+  'agente',
+  'supervisore_segreteria',
+  'consulente',
+]);
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -47,6 +57,105 @@ async function fetchJson<T>(path: string): Promise<T | null> {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: serviceHeaders });
   if (!response.ok) return null;
   return await response.json() as T;
+}
+
+interface SignalSourceFile {
+  nome_file: string;
+  storage_path: string;
+  mime_type?: string | null;
+  dimensione?: number | null;
+  uploaded_by?: string | null;
+}
+
+interface AuthenticatedOperator {
+  id: string;
+  ruolo: string;
+}
+
+async function getAuthenticatedOperator(req: Request): Promise<AuthenticatedOperator | null> {
+  const authorization = req.headers.get('Authorization') ?? '';
+  const token = authorization.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return null;
+
+  const userResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY || SERVICE_ROLE,
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!userResponse.ok) return null;
+  const user = await userResponse.json() as { id?: string };
+  if (!user.id) return null;
+
+  const profiles = await fetchJson<Array<{ ruolo: string | null }>>(
+    `admin_profiles?id=eq.${encodeURIComponent(user.id)}&select=ruolo&limit=1`,
+  );
+  const ruolo = profiles?.[0]?.ruolo ?? '';
+  if (!OPERATIONAL_ROLES.has(ruolo)) return null;
+  return { id: user.id, ruolo };
+}
+
+async function materializeSignalSource(
+  req: Request,
+  practiceId: string,
+  sourceFile: SignalSourceFile,
+): Promise<{ id: string | null; error: string | null }> {
+  if (
+    !sourceFile
+    || typeof sourceFile.nome_file !== 'string'
+    || typeof sourceFile.storage_path !== 'string'
+    || !sourceFile.storage_path.trim()
+  ) {
+    return { id: null, error: 'Metadati del PDF ricevuto tramite segnalazione non validi' };
+  }
+  const operator = await getAuthenticatedOperator(req);
+  if (!operator) {
+    return { id: null, error: 'Autenticazione richiesta per registrare il PDF ricevuto tramite segnalazione' };
+  }
+
+  const signalRows = await fetchJson<Array<{
+    file_urls: Array<{ path?: string; nome?: string; mime_type?: string | null }> | null;
+  }>>(
+    `segnalazioni_pubbliche?practice_id=eq.${encodeURIComponent(practiceId)}&select=file_urls&limit=50`,
+  );
+  const sourcePath = sourceFile.storage_path.trim();
+  const isDeclaredBySignal = (signalRows ?? []).some(signal =>
+    Array.isArray(signal.file_urls)
+    && signal.file_urls.some(file => file?.path === sourcePath),
+  );
+  if (!isDeclaredBySignal) {
+    return { id: null, error: 'Il PDF non risulta tra i documenti della segnalazione associata alla pratica' };
+  }
+
+  const existingRows = await fetchJson<Array<{ id: string }>>(
+    `uploaded_files?practice_id=eq.${encodeURIComponent(practiceId)}&storage_path=eq.${encodeURIComponent(sourcePath)}&select=id&limit=1`,
+  );
+  if (existingRows?.[0]?.id) return { id: existingRows[0].id, error: null };
+
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/uploaded_files`, {
+    method: 'POST',
+    headers: {
+      ...serviceHeaders,
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
+      practice_id: practiceId,
+      nome_file: sourceFile.nome_file,
+      storage_path: sourcePath,
+      mime_type: sourceFile.mime_type ?? 'application/pdf',
+      dimensione: sourceFile.dimensione ?? null,
+      uploaded_by: 'segnalatore',
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    return { id: null, error: `registrazione DB non riuscita: ${detail}` };
+  }
+  const inserted = await response.json() as Array<{ id?: string }>;
+  const id = inserted?.[0]?.id;
+  return id
+    ? { id, error: null }
+    : { id: null, error: 'ID documento non disponibile dopo la registrazione' };
 }
 
 async function getSectorContext(codiceAteco?: string | null) {
@@ -552,7 +661,35 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const body = await req.json();
-  const { practice_id, pdf_text, uploaded_file_id, financing, transactions } = body;
+  const {
+    practice_id,
+    pdf_text,
+    uploaded_file_id,
+    source_file,
+    financing,
+    transactions,
+  } = body as {
+    practice_id?: string;
+    pdf_text?: string;
+    uploaded_file_id?: string | null;
+    source_file?: SignalSourceFile | null;
+    financing?: FinRow[];
+    transactions?: StatementRow[];
+  };
+  let effectiveUploadedFileId = uploaded_file_id ?? null;
+
+  // I PDF ricevuti tramite segnalazione possono essere presenti nello storage
+  // e nel payload della segnalazione senza una riga in uploaded_files. In
+  // questo caso la registrazione viene eseguita server-side, con service role,
+  // solo dopo aver autenticato un utente operativo e verificato che il path
+  // appartenga davvero alla segnalazione della pratica.
+  if (practice_id && source_file) {
+    const materialized = await materializeSignalSource(req, practice_id, source_file);
+    if (materialized.error || !materialized.id) {
+      return fail(`Il PDF ricevuto tramite segnalazione non è stato registrato nella pratica: ${materialized.error ?? 'ID documento non disponibile'}`);
+    }
+    effectiveUploadedFileId = materialized.id;
+  }
 
   // ── Branch consulente: bilancio_testo senza practice_id ──────────────────
   // Usato dal NuovoReportWizard quando carica un bilancio PDF o XBRL direttamente.
@@ -626,9 +763,9 @@ Deno.serve(async (req) => {
   // Verifica che il file passato dal selettore esista e appartenga proprio
   // alla pratica analizzata; altrimenti non sovrascrivere i KPI con una fonte
   // non tracciabile o appartenente a un'altra pratica.
-  if (uploaded_file_id) {
+  if (effectiveUploadedFileId) {
     const sourceFile = await fetchJson<Array<{ id: string }>>(
-      `uploaded_files?id=eq.${encodeURIComponent(uploaded_file_id)}&practice_id=eq.${encodeURIComponent(practice_id)}&select=id&limit=1`,
+      `uploaded_files?id=eq.${encodeURIComponent(effectiveUploadedFileId)}&practice_id=eq.${encodeURIComponent(practice_id)}&select=id&limit=1`,
     );
     if (!sourceFile?.length) {
       return fail('Il documento selezionato non risulta collegato a questa pratica. Aggiorna l’elenco documenti e ripeti l’analisi.');
@@ -661,7 +798,7 @@ Deno.serve(async (req) => {
   // precedente.
   const row = {
     practice_id,
-    uploaded_file_id: uploaded_file_id ?? null,
+    uploaded_file_id: effectiveUploadedFileId,
     anno_esercizio: bilData.anno_esercizio,
     periodo_inizio: bilData.periodo_inizio,
     periodo_fine: bilData.periodo_fine,
@@ -743,7 +880,7 @@ Deno.serve(async (req) => {
     // In caso di una risposta PATCH senza representation, l'id cercato
     // prima del salvataggio resta comunque il riferimento corretto.
     bilancio_id: saved?.[0]?.id ?? existingId,
-    uploaded_file_id: uploaded_file_id ?? null,
+    uploaded_file_id: effectiveUploadedFileId,
     anno: bilData.anno_esercizio,
     ragione_sociale: bilData.ragione_sociale,
     totale_patrimonio_netto: bilData.totale_patrimonio_netto,
