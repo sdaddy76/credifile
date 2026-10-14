@@ -36,6 +36,52 @@ interface SignalSourceFile {
   uploaded_by: 'segnalatore';
 }
 
+interface TesseractWorker {
+  setParameters(parameters: Record<string, string>): Promise<unknown>;
+  recognize(image: HTMLCanvasElement): Promise<{ data: { text: string } }>;
+  terminate(): Promise<unknown>;
+}
+
+interface TesseractApi {
+  createWorker(
+    language: string,
+    oem: number,
+    options: {
+      workerPath: string;
+      corePath: string;
+      langPath: string;
+      logger?: (message: { status: string; progress: number }) => void;
+    },
+  ): Promise<TesseractWorker>;
+}
+
+declare global {
+  interface Window {
+    Tesseract?: TesseractApi;
+  }
+}
+
+let tesseractLoader: Promise<TesseractApi> | null = null;
+
+function loadTesseract(): Promise<TesseractApi> {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (tesseractLoader) return tesseractLoader;
+
+  tesseractLoader = new Promise<TesseractApi>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
+    script.async = true;
+    script.onload = () => {
+      if (window.Tesseract) resolve(window.Tesseract);
+      else reject(new Error('Libreria OCR non disponibile'));
+    };
+    script.onerror = () => reject(new Error('Impossibile caricare la libreria OCR'));
+    document.head.appendChild(script);
+  });
+
+  return tesseractLoader;
+}
+
 interface KpiEntry {
   valore: number | null;
   formatted: string;
@@ -334,7 +380,7 @@ async function extractPdfText(file: File): Promise<string> {
   if (fullText.trim().length >= 200) return fullText;
 
   toast.info('PDF scansionato: avvio OCR delle pagine del bilancio...');
-  const { createWorker } = await import('tesseract.js');
+  const { createWorker } = await loadTesseract();
   const worker = await createWorker('ita', 1, {
     workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.min.js',
     corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0',
