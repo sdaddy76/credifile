@@ -328,6 +328,9 @@ export default async function handler(req, res) {
     const copyOnlyMode = Boolean(copy_only);
     // L'invio forzato vale solo per l'invio ordinario della pratica.
     const forceWithoutRelation = Boolean(force_without_relation) && !integrationMode && !copyOnlyMode;
+    // La copia al collaboratore della banca è volutamente documentale:
+    // non deve richiedere né allegare la Relazione Commerciale.
+    const requiresCommercialRelation = !integrationMode && !copyOnlyMode && !forceWithoutRelation;
 
     const H = {
       'apikey': SUPABASE_KEY,
@@ -423,24 +426,24 @@ export default async function handler(req, res) {
     if (!pb) return res.status(404).json({ success: false, error: 'Assegnazione banca non trovata' });
 
     const generatedRelations = Array.isArray(relazioniRaw) ? relazioniRaw : [];
-    const commercialRelation = !integrationMode && !forceWithoutRelation
+    const commercialRelation = requiresCommercialRelation
       ? generatedRelations.find(relation => relation.bank_id === bank_id)
         ?? generatedRelations.find(relation => relation.bank_id === null)
         ?? null
       : null;
-    if (!integrationMode && !forceWithoutRelation && !commercialRelation) {
+    if (requiresCommercialRelation && !commercialRelation) {
       return res.status(422).json({
         success: false,
         error: 'Prima di inviare la pratica alla banca devi generare la Relazione Commerciale con AI.',
       });
     }
-    if (!integrationMode && !forceWithoutRelation && !commercialRelation?.pdf_url) {
+    if (requiresCommercialRelation && !commercialRelation?.pdf_url) {
       return res.status(422).json({
         success: false,
         error: 'La Relazione Commerciale non dispone del PDF. Rigenera DOCX e PDF prima dell’invio alla banca.',
       });
     }
-    if (!integrationMode && !forceWithoutRelation) {
+    if (requiresCommercialRelation) {
       const savedSelection = commercialRelation?.risposte?.__selected_kpi_keys;
       const positiveOnly = commercialRelation?.risposte?.__bank_positive_only === 'true';
       if (!positiveOnly || !Array.isArray(savedSelection)) {
@@ -1195,6 +1198,28 @@ ${repSection}
 </p>
 </body></html>`;
 
+    const copyOnlyHtmlBody = `<!DOCTYPE html>
+<html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
+<div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
+  <h2 style="color:#1e3a5f;margin:0;">Credifile — Copia documenti pratica</h2>
+</div>
+<p>Gentile collaboratore,</p>
+<p>in riferimento alla pratica di <strong>${cliente}</strong>
+(rif. <code>${pratica.numero_pratica}</code>) condividiamo i soli documenti già associati alla banca
+<strong>${pb.banks?.nome ?? ''}</strong>.</p>
+<h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  📎 Documenti (${docLinks.length})
+</h3>
+<ul style="padding-left:20px;">${docsHtml}</ul>
+<div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #1e3a5f;">
+  ${agentNome ? `Pratica gestita da: <strong>${agentNome}</strong>${agentEmail ? ` — <a href="mailto:${agentEmail}" style="color:#2563eb;">${agentEmail}</a>` : ''}<br>` : ''}
+  Per rispondere a questa comunicazione utilizzare il pulsante "Rispondi" — la risposta verrà recapitata direttamente al referente della pratica.
+</div>
+<p style="margin-top:16px;font-size:11px;color:#94a3b8;">
+  Questa copia non contiene la Relazione Commerciale né il report di bancabilità.
+</p>
+</body></html>`;
+
     const integrationDocumentsHtml = docLinks.length > 0
       ? docLinks.map(document =>
           `<li style="margin:10px 0;">` +
@@ -1253,7 +1278,7 @@ ${integrationAnswersHtml}
       from: FROM,
       to: copyOnlyMode ? [copyEmail] : [bankEmail],
       subject: copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject,
-      html: integrationMode ? integrationHtmlBody : standardHtmlBody,
+      html: integrationMode ? integrationHtmlBody : copyOnlyMode ? copyOnlyHtmlBody : standardHtmlBody,
     };
     if (agentEmail) emailPayload.reply_to = agentEmail;
     if (ccList.length > 0) emailPayload.cc = ccList;
@@ -1276,7 +1301,7 @@ ${integrationAnswersHtml}
         from: FROM,
         to: [ARCHIVE_CC],
         subject: `Copia archivio — ${copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject}`,
-        html: integrationMode ? integrationHtmlBody : standardHtmlBody,
+        html: integrationMode ? integrationHtmlBody : copyOnlyMode ? copyOnlyHtmlBody : standardHtmlBody,
       };
       if (agentEmail) archivePayload.reply_to = agentEmail;
       try {
