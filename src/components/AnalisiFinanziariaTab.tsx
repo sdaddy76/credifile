@@ -326,7 +326,55 @@ async function extractPdfText(file: File): Promise<string> {
     }
     fullText += '\n';
   }
-  return fullText;
+
+  // Alcuni bilanci depositati sono PDF validi ma composti solo da immagini
+  // scansionate: pdfjs restituisce zero caratteri e il parser non può
+  // distinguerli da un documento non valido. In questo caso eseguiamo OCR
+  // locale nel browser, senza inviare il documento a servizi esterni.
+  if (fullText.trim().length >= 200) return fullText;
+
+  toast.info('PDF scansionato: avvio OCR delle pagine del bilancio...');
+  const { createWorker } = await import('tesseract.js');
+  const worker = await createWorker('ita', 1, {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.min.js',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0',
+    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+    logger: (message) => {
+      if (message.status === 'recognizing text' && message.progress >= 0.98) {
+        toast.info('OCR quasi completato...');
+      }
+    },
+  });
+
+  try {
+    await worker.setParameters({
+      preserve_interword_spaces: '1',
+      user_defined_dpi: '200',
+    });
+    const ocrPages: string[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1.8 });
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Canvas OCR non disponibile nel browser');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+      const result = await worker.recognize(canvas);
+      if (result.data.text.trim()) ocrPages.push(result.data.text);
+      canvas.width = 0;
+      canvas.height = 0;
+      page.cleanup();
+    }
+    const ocrText = ocrPages.join('\n\n');
+    if (ocrText.trim().length < 200) {
+      throw new Error('OCR completato ma il testo estratto è insufficiente per un’analisi affidabile');
+    }
+    return ocrText;
+  } finally {
+    await worker.terminate();
+  }
 }
 
 // ─── Helper colori semaforo per PDF ─────────────────────────────────────────
