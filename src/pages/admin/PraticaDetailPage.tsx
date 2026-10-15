@@ -1080,8 +1080,25 @@ export default function PraticaDetailPage() {
       // escludeva i documenti standard; così, se l'integrazione (ad esempio
       // Centrale Rischi) era già stata caricata, la richiesta risultava vuota
       // anche quando mancavano ancora i documenti d'identità.
-      const requestedDocs = docs ?? [];
-      const requestedQuestions = onlyFinancing ? [] : (questions ?? []);
+      // In caso di risposta vuota transitoria della query, usiamo il contenuto
+      // già caricato nella schermata: è la stessa pratica appena letta da load()
+      // e impedisce un falso "nessun documento" dopo l'aggiunta di una voce.
+      const loadedPendingDocs = documents
+        .filter(document => document.status === 'richiesto' || document.status === 'rifiutato')
+        .map(document => ({
+          nome: document.nome,
+          integration_request_id: document.integration_request_id ?? null,
+        }));
+      const loadedPendingQuestions = clientQuestions
+        .filter(question => question.stato === 'richiesta')
+        .map(question => ({
+          domanda: question.domanda,
+          integration_request_id: question.integration_request_id ?? null,
+        }));
+      const requestedDocs = (docs && docs.length > 0) ? docs : loadedPendingDocs;
+      const requestedQuestions = onlyFinancing
+        ? []
+        : ((questions && questions.length > 0) ? questions : loadedPendingQuestions);
       const filteredDocs = onlyFinancing
         ? requestedDocs.filter(document => isFinancingRequestDocument(document))
         : requestedDocs;
