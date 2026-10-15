@@ -1095,10 +1095,22 @@ export default function PraticaDetailPage() {
           domanda: question.domanda,
           integration_request_id: question.integration_request_id ?? null,
         }));
-      const requestedDocs = (docs && docs.length > 0) ? docs : loadedPendingDocs;
+      const requestedDocs = Array.from(new Map(
+        [...loadedPendingDocs, ...(docs ?? [])]
+          .map(document => [
+            `${document.nome}::${document.integration_request_id ?? ''}`,
+            document,
+          ] as const)
+      ).values());
       const requestedQuestions = onlyFinancing
         ? []
-        : ((questions && questions.length > 0) ? questions : loadedPendingQuestions);
+        : Array.from(new Map(
+          [...loadedPendingQuestions, ...(questions ?? [])]
+            .map(question => [
+              `${question.domanda}::${question.integration_request_id ?? ''}`,
+              question,
+            ] as const)
+        ).values());
       const filteredDocs = onlyFinancing
         ? requestedDocs.filter(document => isFinancingRequestDocument(document))
         : requestedDocs;
