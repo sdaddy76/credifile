@@ -1080,7 +1080,7 @@ export default function PraticaDetailPage() {
       // escludeva i documenti standard; così, se l'integrazione (ad esempio
       // Centrale Rischi) era già stata caricata, la richiesta risultava vuota
       // anche quando mancavano ancora i documenti d'identità.
-      const requestedDocs = onlyFinancing ? (docs ?? []) : (docs ?? []);
+      const requestedDocs = docs ?? [];
       const requestedQuestions = onlyFinancing ? [] : (questions ?? []);
       const filteredDocs = onlyFinancing
         ? requestedDocs.filter(document => isFinancingRequestDocument(document))
