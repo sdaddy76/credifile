@@ -1074,21 +1074,14 @@ export default function PraticaDetailPage() {
       if (docsError) throw docsError;
       if (questionsError) throw questionsError;
 
-      // Se esiste una richiesta di integrazione, l'email deve contenere
-      // esclusivamente gli elementi collegati a quel ciclo, non i documenti
-      // standard ancora mancanti della pratica.
-      const hasIntegrationItems = (docs ?? []).some(document => Boolean(document.integration_request_id))
-        || (questions ?? []).some(question => Boolean(question.integration_request_id));
-      const requestedDocs = onlyFinancing
-        ? (docs ?? [])
-        : hasIntegrationItems
-        ? (docs ?? []).filter(document => Boolean(document.integration_request_id))
-        : (docs ?? []);
-      const requestedQuestions = onlyFinancing
-        ? []
-        : hasIntegrationItems
-        ? (questions ?? []).filter(question => Boolean(question.integration_request_id))
-        : (questions ?? []);
+      // L'invio ordinario deve comprendere tutti gli elementi ancora mancanti:
+      // documenti standard, documenti richiesti dalla banca, integrazioni e
+      // domande. In precedenza, la presenza di un ciclo di integrazione
+      // escludeva i documenti standard; così, se l'integrazione (ad esempio
+      // Centrale Rischi) era già stata caricata, la richiesta risultava vuota
+      // anche quando mancavano ancora i documenti d'identità.
+      const requestedDocs = onlyFinancing ? (docs ?? []) : (docs ?? []);
+      const requestedQuestions = onlyFinancing ? [] : (questions ?? []);
       const filteredDocs = onlyFinancing
         ? requestedDocs.filter(document => isFinancingRequestDocument(document))
         : requestedDocs;
