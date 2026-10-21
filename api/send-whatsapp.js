@@ -9,6 +9,24 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, apikey, x-client-info',
 };
 
+export function normalizeWhatsAppAddress(value, defaultCountryCode = '') {
+  if (typeof value !== 'string') throw new Error('Numero WhatsApp non valido');
+  // Rimuovi il canale già presente prima di applicarlo una sola volta.
+  // From e To devono essere entrambi indirizzi WhatsApp, mai un misto SMS/WA.
+  let number = value.trim().replace(/^whatsapp:\s*/i, '');
+  if (!/^[+\d\s().-]+$/.test(number)) throw new Error('Numero WhatsApp non valido');
+  number = number.replace(/[\s().-]/g, '');
+  if (number.startsWith('00')) number = `+${number.slice(2)}`;
+  if (!number.startsWith('+')) {
+    if (!defaultCountryCode) {
+      throw new Error('Il mittente WhatsApp deve includere il prefisso internazionale (es. +39)');
+    }
+    number = `+${defaultCountryCode}${number}`;
+  }
+  if (!/^\+[1-9]\d{7,14}$/.test(number)) throw new Error('Numero WhatsApp non valido');
+  return `whatsapp:${number}`;
+}
+
 export default async function handler(req, res) {
   Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -23,7 +41,7 @@ export default async function handler(req, res) {
 
     const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
     const AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
-    const FROM        = process.env.TWILIO_WHATSAPP_FROM ?? 'whatsapp:+14155238886';
+    const configuredFrom = process.env.TWILIO_WHATSAPP_FROM ?? 'whatsapp:+14155238886';
 
     if (!ACCOUNT_SID || !AUTH_TOKEN) {
       return res.status(503).json({
@@ -32,10 +50,24 @@ export default async function handler(req, res) {
       });
     }
 
-    // Formatta il numero di telefono: rimuovi spazi, aggiungi +39 se mancante il +
-    let toNumber = to.replace(/\s+/g, '').replace(/^0/, '+390');
-    if (!toNumber.startsWith('+')) toNumber = '+39' + toNumber;
-    const toWhatsApp = `whatsapp:${toNumber}`;
+    let fromWhatsApp;
+    let toWhatsApp;
+    try {
+      fromWhatsApp = normalizeWhatsAppAddress(configuredFrom);
+    } catch {
+      return res.status(503).json({
+        success: false,
+        error: 'Mittente WhatsApp non valido: verifica TWILIO_WHATSAPP_FROM su Vercel. Deve essere un numero internazionale abilitato per WhatsApp su Twilio.',
+      });
+    }
+    try {
+      toWhatsApp = normalizeWhatsAppAddress(to, '39');
+    } catch {
+      return res.status(400).json({
+        success: false,
+        error: 'Numero del cliente non valido. Inserisci un numero internazionale, ad esempio +39 seguito dal numero.',
+      });
+    }
 
     // Componi messaggio
     const fullMessage = message
@@ -43,7 +75,7 @@ export default async function handler(req, res) {
 
     // Chiama Twilio REST API
     const params = new URLSearchParams();
-    params.append('From', FROM);
+    params.append('From', fromWhatsApp);
     params.append('To', toWhatsApp);
     params.append('Body', fullMessage);
 
@@ -64,7 +96,9 @@ export default async function handler(req, res) {
     if (!twilioRes.ok) {
       return res.status(502).json({
         success: false,
-        error: twilioData?.message ?? 'Errore Twilio',
+        error: Number(twilioData?.code) === 21910
+          ? 'Twilio non riconosce il canale WhatsApp configurato: verifica che il mittente sia abilitato per WhatsApp nell’account Twilio.'
+          : twilioData?.message ?? 'Errore Twilio',
         code: twilioData?.code,
       });
     }

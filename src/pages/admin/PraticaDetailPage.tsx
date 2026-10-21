@@ -1043,7 +1043,8 @@ export default function PraticaDetailPage() {
   };
 
   // Invia email richiesta documenti (senza rigenerare il codice)
-  const sendDocumentRequest = async (onlyFinancing = false) => {
+  const sendDocumentRequest = async (options: { onlyFinancing?: boolean } = {}) => {
+    const onlyFinancing = options.onlyFinancing === true;
     if (!practice || !accessCode) return;
     const client = (practice as Practice & { clients?: { email: string } }).clients;
     if (!client?.email) { toast.error('Il cliente non ha un email'); return; }
@@ -1226,7 +1227,7 @@ export default function PraticaDetailPage() {
         },
       });
       await load();
-      await sendDocumentRequest(true);
+      await sendDocumentRequest({ onlyFinancing: true });
     } catch (error) {
       toast.error('Errore aggiunta richiesta finanziamenti: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
@@ -2929,7 +2930,7 @@ export default function PraticaDetailPage() {
                   <Button
                     className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
                     size="sm"
-                    onClick={sendDocumentRequest}
+                    onClick={() => void sendDocumentRequest()}
                     disabled={sendingEmail}
                   >
                     {sendingEmail
@@ -2948,7 +2949,7 @@ export default function PraticaDetailPage() {
                           size="sm"
                           className="w-full gap-2 border-blue-300 text-blue-700 hover:bg-blue-50"
                           onClick={() => financingRequest
-                            ? sendDocumentRequest(true)
+                            ? sendDocumentRequest({ onlyFinancing: true })
                             : addFinancingRequest()}
                           disabled={addingFinancingRequest || sendingEmail || Boolean(financingCompleted)}
                         >
