@@ -81,19 +81,31 @@ export async function saveClientVisura(
   clientId: string,
   file: File,
 ): Promise<ClientVisuraReference> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const accessToken = sessionData.session?.access_token;
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  let accessToken = sessionData.session?.access_token;
   if (!accessToken) throw new Error('Sessione non valida. Accedi nuovamente.');
-  const response = await fetch('/api/client-visura', {
+  const upload = (token: string) => fetch('/api/client-visura', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': file.type || 'application/pdf',
       'X-Client-Id': clientId,
       'X-File-Name': encodeURIComponent(file.name),
     },
     body: file,
   });
+  let response = await upload(accessToken);
+  // Ritenta soltanto un rifiuto Auth, prima di qualunque scrittura server.
+  // Non ritentare errori di upload/salvataggio: potrebbero duplicare un file.
+  if (response.status === 401) {
+    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+    accessToken = refreshed.session?.access_token;
+    if (refreshError || !accessToken) {
+      throw new Error('Sessione scaduta. Accedi nuovamente; la visura non è stata salvata.');
+    }
+    response = await upload(accessToken);
+  }
   const result = await response.json().catch(() => null) as {
     success?: boolean;
     reference?: ClientVisuraReference;

@@ -4,11 +4,6 @@
 const SUPABASE_URL = process.env.SUPABASE_URL
   || process.env.VITE_SUPABASE_URL
   || 'https://fhieppjqlefdlanvrpik.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
-  || process.env.VITE_SUPABASE_ANON_KEY
-  || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJm' +
-     'aGllcHBqcWxlZmRsYW52cnBpayIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgwMDU2MTk5LCJleHAiOjIwOTU2MzIxOTl9.' +
-     'tM0B5OyxF1-w9ed1-eEX09S_d5gehZnFUZEJCnXMVBQ';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
@@ -88,9 +83,18 @@ export async function handleClientVisura(req, res) {
     }
 
     const callerResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+      // La chiave server autorizza l'accesso all'API, il Bearer del chiamante
+      // identifica l'utente. Non usare un fallback anon copiato o le variabili
+      // VITE_* (solo build) per decidere se la sessione del cliente è valida.
+      headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${accessToken}` },
     });
     const caller = await readJson(callerResponse);
+    if (!callerResponse.ok && callerResponse.status !== 401 && callerResponse.status !== 403) {
+      return reply(res, {
+        success: false,
+        error: 'Impossibile verificare la sessione in questo momento. Riprova tra poco.',
+      }, 502);
+    }
     if (!callerResponse.ok || !caller?.id) {
       return reply(res, { success: false, error: 'Sessione non riconosciuta. Accedi nuovamente.' }, 401);
     }
