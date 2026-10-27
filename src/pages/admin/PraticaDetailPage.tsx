@@ -26,6 +26,7 @@ import { AnalisiCostiBancari } from '@/components/AnalisiCostiBancari';
 import AmlReportTab from '@/components/AmlReportTab';
 import DocumentCoherenceTab from '@/components/DocumentCoherenceTab';
 import PracticeTimelineCalendar from '@/components/PracticeTimelineCalendar';
+import Partecipogramma from '@/components/Partecipogramma';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
@@ -2989,6 +2990,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="banche" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🏦 Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
               <TabsTrigger value="finanziamenti" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">💳 Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
               <TabsTrigger value="analisi" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📈 Analisi Finanziaria</TabsTrigger>
+              <TabsTrigger value="partecipogramma" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🌳 Partecipogramma</TabsTrigger>
               <TabsTrigger value="coerenza" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🔎 Coerenza Documentale</TabsTrigger>
               <TabsTrigger value="bancabilita" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">✅ Bancabilità</TabsTrigger>
               <TabsTrigger value="reputazione" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🛡️ Reputazione</TabsTrigger>
@@ -4390,6 +4392,10 @@ export default function PraticaDetailPage() {
 
             <TabsContent value="analisi" className="mt-3">
               {id && <AnalisiFinanziariaTab practiceId={id} />}
+            </TabsContent>
+
+            <TabsContent value="partecipogramma" className="mt-3">
+              {client && <Partecipogramma key={client.id} client={client} />}
             </TabsContent>
 
             <TabsContent value="coerenza" className="mt-3">

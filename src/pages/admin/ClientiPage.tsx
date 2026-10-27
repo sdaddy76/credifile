@@ -8,12 +8,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
   Plus, Search, Users, Pencil, Trash2, Mail, Phone,
-  FileText, Loader2, CheckCircle2, AlertCircle, Users2, Building2, X,
+  FileText, Loader2, CheckCircle2, AlertCircle, Users2, Building2, X, GitBranch,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Client, Socio, Amministratore } from '@/lib/types';
 import { extractPdfText, parseVisuraCompleta, type VisuraResult } from '@/lib/parseVisura';
 import { saveClientVisura } from '@/lib/clientVisura';
+import Partecipogramma from '@/components/Partecipogramma';
 
 // ═══════════════════════════════════════════════════════════
 //  TIPI VISURA
@@ -116,6 +117,7 @@ export default function ClientiPage() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [pendingVisura, setPendingVisura] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [ownershipClient, setOwnershipClient] = useState<Client | null>(null);
 
   // Sezione documenti per segnalatore
   const [segOpenClientId, setSegOpenClientId] = useState<string | null>(null);
@@ -377,7 +379,7 @@ export default function ClientiPage() {
           {filtered.map(c => (
             <Card key={c.id} className="border-border hover:border-primary/30 transition-colors">
               <CardContent className="py-3 px-4">
-                <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-4">
                   <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                     <span className="text-sm font-bold text-primary">{c.ragione_sociale.charAt(0)}</span>
                   </div>
@@ -400,6 +402,9 @@ export default function ClientiPage() {
                     </div>
                   </div>
                   <div className="flex gap-1 shrink-0">
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setOwnershipClient(c)}>
+                      <GitBranch className="w-3.5 h-3.5" /> Partecipogramma
+                    </Button>
                     {isSegnalatore ? (
                       <Button variant="outline" size="sm" className="text-xs gap-1 h-8 px-2 text-orange-700 border-orange-300 hover:bg-orange-50"
                         onClick={() => openSegDocs(c.id)}>
@@ -419,6 +424,13 @@ export default function ClientiPage() {
           ))}
         </div>
       )}
+
+      <Dialog open={Boolean(ownershipClient)} onOpenChange={open => { if (!open) setOwnershipClient(null); }}>
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[92vh] overflow-y-auto p-4 sm:p-6">
+          <DialogHeader><DialogTitle>Partecipazioni societarie</DialogTitle></DialogHeader>
+          {ownershipClient && <Partecipogramma key={ownershipClient.id} client={ownershipClient} />}
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog nuovo/modifica cliente */}
       <Dialog open={showForm} onOpenChange={v => {
