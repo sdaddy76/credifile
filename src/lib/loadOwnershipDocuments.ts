@@ -93,7 +93,11 @@ export async function loadOwnershipDocuments(client: Client, onProgress: (messag
         id: file.storage_path, name: file.nome_file, uploadedAt: file.created_at,
         documentDate: ownershipDocumentDate(text),
         companyName: matchesClient ? client.ragione_sociale : parsed.ragione_sociale || `Società CF ${identifiers[0]}`,
-        identifiers, soci: parsed.soci,
+        identifiers,
+        soci: parsed.soci,
+        piva: identifiers.find(id => /^\d{11}$/.test(id)) ?? parsed.piva,
+        capitaleSociale: parsed.capitale_sociale,
+        amministratori: parsed.amministratori,
       });
     } catch (error) {
       check();

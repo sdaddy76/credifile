@@ -41,6 +41,8 @@ const dateLabel = (date: string) => {
 };
 const percentageLabel = (percentage: number | null) =>
   percentage === null ? 'Quota n.d.' : `${new Intl.NumberFormat('it-IT', { maximumFractionDigits: 4 }).format(percentage)}%`;
+const moneyLabel = (value?: number) =>
+  value == null ? 'Non rilevato' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(value);
 
 export default function Partecipogramma({ client }: { client: Client }) {
   const [documents, setDocuments] = useState<OwnershipDocument[]>([]);
@@ -178,6 +180,56 @@ export default function Partecipogramma({ client }: { client: Client }) {
                     <p className="font-semibold">{selected.node.name}</p>
                     {selected.via && <p>Quota diretta: {percentageLabel(selected.via.percentage)} · Fonte: {selected.via.source.name} ({selected.via.source.companyName})</p>}
                     {selected.node.source && <p className="text-muted-foreground">Visura della società: {selected.node.source.name}</p>}
+                    {selected.node.kind === 'company' && selected.node.details && (
+                      <div className="mt-3 rounded-lg border bg-background p-3 space-y-3">
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">P.IVA</p>
+                            <p className="font-mono font-medium">{selected.node.details.piva || 'Non rilevata'}</p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Capitale sociale</p>
+                            <p className="font-medium">{moneyLabel(selected.node.details.capitaleSociale)}</p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Soci / amministratori</p>
+                            <p className="font-medium">{selected.node.details.soci.length} / {selected.node.details.amministratori.length}</p>
+                          </div>
+                        </div>
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <div>
+                            <p className="mb-1.5 font-semibold">Elenco soci</p>
+                            {selected.node.details.soci.length ? (
+                              <div className="overflow-x-auto rounded border">
+                                <table className="w-full text-xs text-left">
+                                  <thead className="bg-muted/50"><tr><th className="p-2">Nome</th><th className="p-2">CF/P.IVA</th><th className="p-2">Quota</th></tr></thead>
+                                  <tbody>{selected.node.details.soci.map((socio, index) => (
+                                    <tr key={`${socio.codice_fiscale || socio.nome}-${index}`} className="border-t">
+                                      <td className="p-2 font-medium">{socio.nome || 'Non rilevato'}</td>
+                                      <td className="p-2 font-mono text-muted-foreground">{socio.codice_fiscale || 'Non rilevato'}</td>
+                                      <td className="p-2 whitespace-nowrap">{socio.percentuale || 'n.d.'}</td>
+                                    </tr>
+                                  ))}</tbody>
+                                </table>
+                              </div>
+                            ) : <p className="text-xs text-muted-foreground">Elenco soci non rilevato nella visura selezionata.</p>}
+                          </div>
+                          <div>
+                            <p className="mb-1.5 font-semibold">Amministratori</p>
+                            {selected.node.details.amministratori.length ? (
+                              <div className="space-y-2">
+                                {selected.node.details.amministratori.map((amministratore, index) => (
+                                  <div key={`${amministratore.codice_fiscale || amministratore.nome}-${index}`} className="rounded border px-3 py-2">
+                                    <p className="font-medium">{amministratore.nome || 'Non rilevato'}</p>
+                                    <p className="text-xs text-muted-foreground">{amministratore.carica || 'Carica non rilevata'}{amministratore.codice_fiscale ? ` · CF ${amministratore.codice_fiscale}` : ''}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : <p className="text-xs text-muted-foreground">Amministratori non rilevati nella visura selezionata.</p>}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {selected.reference && <p className="text-muted-foreground">Soggetto già presente nell’albero: il riferimento evita di duplicare i rami o creare un ciclo infinito.</p>}
                     {selected.reference && <Button variant="outline" size="sm" onClick={() => {
                       const original = layout.nodes.find(item => item.tree.node.id === selected.node.id && !item.tree.reference);

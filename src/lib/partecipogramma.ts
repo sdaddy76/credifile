@@ -1,4 +1,11 @@
-import type { Socio } from './types';
+import type { Amministratore, Socio } from './types';
+
+export interface OwnershipCompanyDetails {
+  piva?: string;
+  capitaleSociale?: number;
+  soci: Socio[];
+  amministratori: Amministratore[];
+}
 
 export interface OwnershipDocument {
   id: string;
@@ -8,6 +15,9 @@ export interface OwnershipDocument {
   companyName: string;
   identifiers: string[];
   soci: Socio[];
+  piva?: string;
+  capitaleSociale?: number;
+  amministratori?: Amministratore[];
 }
 
 export interface OwnershipNode {
@@ -17,6 +27,7 @@ export interface OwnershipNode {
   kind: 'company' | 'person' | 'unknown';
   isClient: boolean;
   source?: OwnershipDocument;
+  details?: OwnershipCompanyDetails;
 }
 
 export interface OwnershipEdge {
@@ -72,7 +83,15 @@ export function ownershipDocumentDate(text: string): string | undefined {
 }
 
 export function buildOwnershipGraph(
-  client: { id: string; ragione_sociale: string; codice_fiscale?: string; piva?: string },
+  client: {
+    id: string;
+    ragione_sociale: string;
+    codice_fiscale?: string;
+    piva?: string;
+    capitale_sociale?: number;
+    soci?: Socio[];
+    amministratori?: Amministratore[];
+  },
   documents: OwnershipDocument[],
   preferred: string[] = [],
 ): OwnershipGraph {
@@ -114,6 +133,12 @@ export function buildOwnershipGraph(
   nodes.set(clientKey, {
     id: clientKey, name: client.ragione_sociale, identifier: clientIds[0] ?? '',
     kind: 'company', isClient: true,
+    details: {
+      piva: client.piva,
+      capitaleSociale: client.capitale_sociale,
+      soci: client.soci ?? [],
+      amministratori: client.amministratori ?? [],
+    },
   });
   activeDocuments.forEach(doc => {
     const key = find(identifiers(doc.identifiers)[0]);
@@ -121,6 +146,12 @@ export function buildOwnershipGraph(
       id: key, name: key === clientKey ? client.ragione_sociale : doc.companyName,
       identifier: identifiers(doc.identifiers)[0], kind: 'company',
       isClient: key === clientKey, source: doc,
+      details: {
+        piva: doc.piva ?? identifiers(doc.identifiers).find(id => /^\d{11}$/.test(id)),
+        capitaleSociale: doc.capitaleSociale,
+        soci: doc.soci,
+        amministratori: doc.amministratori ?? [],
+      },
     });
   });
   const edges: OwnershipEdge[] = [];
