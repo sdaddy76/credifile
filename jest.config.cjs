@@ -6,8 +6,8 @@ module.exports = {
   testMatch: ['**/*.test.ts'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^pdfjs-dist$': '<rootDir>/src/__mocks__/pdfjs.ts',
-    '^pdfjs-dist/build/pdf\\.worker\\.min\\.mjs\\?url$': '<rootDir>/src/__mocks__/pdfWorker.ts',
+    '^pdfjs-dist(?:/legacy/build/pdf\\.mjs)?$': '<rootDir>/src/__mocks__/pdfjs.ts',
+    '^pdfjs-dist/(?:legacy/)?build/pdf\\.worker\\.min\\.mjs\\?url$': '<rootDir>/src/__mocks__/pdfWorker.ts',
   },
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],

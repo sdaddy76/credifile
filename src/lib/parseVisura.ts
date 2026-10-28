@@ -1,7 +1,9 @@
-import * as pdfjs from 'pdfjs-dist';
+// Il bundle legacy include le compatibilità anche nel worker (es. Map.getOrInsertComputed).
+// Il bundle moderno può fallire con "Invalid Root reference" su browser ancora supportati.
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { Socio, Amministratore } from './types';
 import { pdfTextItemsToLines } from './pdfTextLines';
-import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import pdfWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -97,9 +99,9 @@ export function parseDataCostituzione(text: string): string | undefined {
 export function parseSoci(raw: string): SocioResult[] {
   // Le visure PDF non hanno un formato unico: a seconda del gestore le
   // colonne possono essere nell'ordine nome/CF/valore/% oppure CF/nome/%.
-  // Manteniamo quindi le righe e analizziamo una finestra di righe vicine,
-  // invece di affidarsi a una sola regex sul testo appiattito.
-  const normalized = raw
+  // Manteniamo le righe e delimitiamo ciascun record sul suo CF/P.IVA,
+  // senza condividere le quote tra identificativi adiacenti.
+  const normalized = stripVisuraPageFurniture(raw)
     .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n')
@@ -234,70 +236,47 @@ export function parseSoci(raw: string): SocioResult[] {
     ...Array.from(value.matchAll(CF_RE), m => m[1]),
     ...Array.from(value.matchAll(PIVA_RE), m => m[1]),
   ];
-  const contextFor = (index: number): string => lines
-    .slice(Math.max(0, index - 2), Math.min(lines.length, index + 3))
-    .join(' ');
-
-  // Nel formato BPER/CRIF il nominativo e il codice fiscale sono spesso su
-  // due righe consecutive. Gestiamo esplicitamente questa tabella prima
-  // della passata generica a finestre, che altrimenti può associare il CF
-  // alla nota legale della pagina successiva.
-  for (let index = 0; index < lines.length - 1; index++) {
-    const line = lines[index];
-    const next = lines[index + 1];
-    const cf = next.match(/\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/i)?.[0];
-    if (!cf || idMatches(line).length > 0) continue;
-    if (!/propriet[aà]|ammontare|%/i.test(line)) continue;
-    const pct = line.match(PCT_RE)?.[1] ?? '';
-    const value = line.match(/(?:€|eur|ammontare|quota|capitale)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)?.[1] ?? '';
-    const nome = nameFrom(line);
-    if (nome) add(nome, cf, value, pct ? `${pct}%` : '');
-  }
-
-  // Prima passata: righe tabellari e blocchi "Socio: ... / Codice fiscale: ...".
+  // Un solo record per identificativo: le finestre sovrapposte prendevano
+  // la quota della riga precedente e trasformavano il CF del piè di pagina
+  // in un socio della stessa società. Non attraversare mai un altro socio.
   lines.forEach((line, index) => {
-    const context = contextFor(index);
-    const ids = idMatches(context);
-    if (!ids.length) return;
-    const ownershipContext = /soci?|titolari?|quot[ae]|partecipazion|compagine|assetto\s+proprietario|%/i.test(context);
-    if (!ownershipContext) return;
+    const ids = idMatches(line);
+    if (ids.length !== 1) return;
     const administrationOnly = /amministrator|presidente|consigliere|sindaco|revisore|liquidatore|cariche\s+sociali/i.test(line)
       && !/soci?|titolari?|quot[ae]|partecipazion/i.test(line);
     if (administrationOnly) return;
-    // Se la riga contiene già l'identificativo, usiamo quello della riga:
-    // la finestra può includere anche il socio precedente/successivo.
-    const lineIds = idMatches(line);
-    const id = lineIds[0] ?? ids[0];
-    const source = lineIds.length ? line : context;
-    const idPos = source.indexOf(id);
-    const before = idPos >= 0 ? source.slice(0, idPos) : source;
-    const after = idPos >= 0 ? source.slice(idPos + id.length) : '';
-    const labeledName = context.match(/(?:socio|titolare|quotista|partecipante)\s*[:-]?\s*([^|;]+)/i)?.[1] ?? '';
-    const nome = nameFrom(before) || nameFrom(labeledName) || nameFrom(after);
-    const valueMatch = source.match(/(?:valore|quota|capitale|importo|€|eur)\s*[:-]?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)
-      ?? source.match(VALUE_RE)
-      ?? context.match(VALUE_RE);
-    const pctMatch = source.match(PCT_RE) ?? context.match(PCT_RE);
+    const id = ids[0];
+    const content = line.replace(id, ' ');
+    const previousIndex = /^(?:codice\s+fiscale|c\.?\s*f\.?|partita\s+iva|p\.?\s*iva)\s*:?\s*$/i.test(lines[index - 1] ?? '') ? index - 2 : index - 1;
+    const previous = lines[previousIndex] ?? '';
+    const next = lines[index + 1] ?? '';
+    const isData = (value: string) => /^(?:propriet[aà]['’]?|nuda\s+propriet[aà]|usufrutto|quota|valore|percentuale|tipo\s+di\s+diritto|di\s+cui|ammontare|€|eur\b|\d)/i.test(value);
+    const previousName = !idMatches(previous).length && !isData(previous) ? nameFrom(previous) : '';
+    const nextName = !idMatches(next).length && !isData(next) ? nameFrom(next) : '';
+    const inlineName = nameFrom(content);
+    const nome = inlineName || previousName || nextName;
+    if (!nome) return;
+    const nameLine = inlineName ? content : previousName ? previous : next;
+    const afterLines: string[] = [];
+    const start = !inlineName && !previousName && nextName ? index + 2 : index + 1;
+    for (const candidate of lines.slice(start, start + 5)) {
+      if (idMatches(candidate).length) break;
+      if (/^(?:socio|titolare|quotista)\s*:/i.test(candidate)) break;
+      if (nameFrom(candidate) && !isData(candidate)) break;
+      afterLines.push(candidate);
+    }
+    const source = [nameLine, content, ...afterLines].join(' ');
+    const valueMatch = source.match(/(?:valore|quota(?:\s+di\s+nominali)?|capitale|importo|ammontare|€|eur)\s*[:-]?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)
+      ?? source.replace(PCT_RE, '').match(VALUE_RE);
+    const pctMatch = source.match(PCT_RE);
     add(nome, id, valueMatch?.[1] ?? '', pctMatch?.[1] ? `${pctMatch[1]}%` : '');
   });
-
-  // Seconda passata: record societari con P.IVA e percentuale, incluse
-  // denominazioni con apostrofi/punti e ordine colonne variabile.
-  for (const line of lines) {
-    const piva = line.match(PIVA_RE)?.[1];
-    const pct = line.match(PCT_RE)?.[1];
-    if (!piva || !pct) continue;
-    const before = line.slice(0, line.indexOf(piva));
-    const after = line.slice(line.indexOf(piva) + piva.length);
-    const value = line.match(/(?:€|eur|valore|quota)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)?.[1] ?? '';
-    add(nameFrom(before) || nameFrom(after), piva, value, `${pct}%`);
-  }
 
   // Fallback per testi ancora appiattiti: copre il formato più comune
   // "NOME COGNOME CF VALORE PERCENTUALE" senza reintrodurre gli amministratori.
   const flat = s4.replace(/\n/g, ' ');
   const direct = /\b([A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}(?:\s+[A-ZÀÈÉÌÒÙ][A-ZÀÈÉÌÒÙ'’-]{1,24}){1,4})\s+(?:C(?:odice)?\s*F(?:iscale)?\s*[:-]?\s*)?([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])\b/gi;
-  for (const match of flat.matchAll(direct)) {
+  for (const match of results.length ? [] : flat.matchAll(direct)) {
     const after = flat.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 180);
     const pct = after.match(PCT_RE)?.[1] ?? '';
     const value = after.match(VALUE_RE)?.[1] ?? '';
@@ -307,6 +286,21 @@ export function parseSoci(raw: string): SocioResult[] {
   }
 
   return results;
+}
+
+/** Rimuove soltanto blocchi riconoscibili di intestazione/piè di pagina CCIAA. */
+export function stripVisuraPageFurniture(raw: string): string {
+  const lines = raw.replace(/\r\n?/g, '\n').split('\n');
+  const removed = new Set<number>();
+  const furniture = /^(?:registro\s+imprese|archivio\s+ufficiale\s+della|documento\s+n[.°]?\s|visura\s+(?:ordinaria|storica)|pagina\s+\d|page\s+\d|\d+\s*(?:di|\/)\s*\d+\s*$)/i;
+  lines.forEach((line, index) => {
+    if (!/^(?:registro\s+imprese|archivio\s+ufficiale\s+della|documento\s+n[.°]?\s)/i.test(line.trim())) return;
+    const nearby = lines.slice(index, index + 10);
+    const taxLine = nearby.findIndex(value => /^\s*codice\s+fiscale\s*:?\s*\d{11}\s*$/i.test(value));
+    if (taxLine < 0) return;
+    for (let offset = 0; offset <= taxLine; offset++) removed.add(index + offset);
+  });
+  return lines.filter((line, index) => !removed.has(index) && !furniture.test(line.trim())).join('\n');
 }
 
 const LEGAL_WORDS_AMM = new Set([

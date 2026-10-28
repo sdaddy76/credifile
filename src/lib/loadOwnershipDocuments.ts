@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import { getClientVisuraReference, isVisuraDocumentName } from './clientVisura';
 import { extractPdfText, parseVisuraCompleta } from './parseVisura';
-import { normalizeTaxId, ownershipCompanyIdentifiers, ownershipDocumentDate, type OwnershipDocument } from './partecipogramma';
+import { normalizeTaxId, ownershipCompanyIdentity, ownershipCompanyIdentifiers, ownershipDocumentDate, type OwnershipDocument } from './partecipogramma';
 import type { Client } from './types';
 
 interface VisuraFile {
@@ -95,7 +95,7 @@ export async function loadOwnershipDocuments(client: Client, onProgress: (messag
         companyName: matchesClient ? client.ragione_sociale : parsed.ragione_sociale || `Società CF ${identifiers[0]}`,
         identifiers,
         soci: parsed.soci,
-        piva: identifiers.find(id => /^\d{11}$/.test(id)) ?? parsed.piva,
+        piva: ownershipCompanyIdentity(text).piva || undefined,
         capitaleSociale: parsed.capitale_sociale,
         amministratori: parsed.amministratori,
       });

@@ -103,6 +103,20 @@ describe('lettura visure del cliente', () => {
     expect(result.fileCount).toBe(2);
   });
 
+  it('non presenta il CF numerico come partita IVA se questa non è indicata', async () => {
+    mockDatabase([clientFile]);
+    (extractPdfText as jest.Mock).mockResolvedValueOnce(`
+      Denominazione ALFA SRL
+      Codice fiscale 01234567890
+      ELENCO SOCI
+      ROSSI MARIO RSSMRA80A01H501Z 100%
+      ORGANI SOCIALI
+    `);
+    const result = await loadOwnershipDocuments(client, jest.fn(), new AbortController().signal);
+    expect(result.documents[0].identifiers).toEqual(['01234567890']);
+    expect(result.documents[0].piva).toBeUndefined();
+  });
+
   it('non legge file se la ricerca delle pratiche fallisce', async () => {
     (supabase.from as jest.Mock).mockReturnValue({
       select: () => ({ eq: () => ({ order: () => ({ range: () => ({ abortSignal: async () => ({ data: null as unknown[] | null, error: new Error('Accesso negato') }) }) }) }) }),

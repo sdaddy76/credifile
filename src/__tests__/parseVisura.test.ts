@@ -46,6 +46,44 @@ describe('parseSoci', () => {
     ]);
   });
 
+  it('non interpreta il piè pagina CCIAA come socio e non trasferisce la quota precedente', () => {
+    const soci = parseSoci(`
+      ELENCO SOCI
+      ROSSI MARIO
+      RSSMRA80A01H501Z
+      PROPRIETA' AMMONTARE 1.000,00 EURO 10%
+      Registro Imprese
+      Archivio ufficiale della CCIAA
+      Documento n. T 123 estratto il 01/10/2026
+      ALFA SRL
+      Codice Fiscale 01234567890
+      Visura ordinaria societa' di capitale
+      4 di 8
+      BETA HOLDING SRL
+      Codice fiscale
+      09876543210
+      PROPRIETA' AMMONTARE 9.000,00 EURO 90%
+      ORGANI SOCIALI
+    `);
+    expect(soci).toEqual([
+      expect.objectContaining({ nome: 'ROSSI MARIO', codice_fiscale: 'RSSMRA80A01H501Z', percentuale: '10%' }),
+      expect.objectContaining({ nome: 'BETA HOLDING SRL', codice_fiscale: '09876543210', percentuale: '90%' }),
+    ]);
+  });
+
+  it('non prende la percentuale dal socio successivo quando manca la quota', () => {
+    const soci = parseSoci(`
+      ELENCO SOCI
+      ROSSI MARIO
+      RSSMRA80A01H501Z
+      BIANCHI LUCA
+      BNCLCU82B02H501Y
+      PROPRIETA' 40%
+      ORGANI SOCIALI
+    `);
+    expect(soci.map(socio => socio.percentuale)).toEqual(['', '40%']);
+  });
+
   it('salta riepilogo e indice InfoCamere e legge la sezione soci effettiva', () => {
     const soci = parseSoci(`
       L'IMPRESA IN CIFRE

@@ -1,7 +1,7 @@
 import {
-  buildOwnershipForest, buildOwnershipGraph, normalizeTaxId,
-  ownershipCompanyIdentifiers, ownershipDocumentDate, parseOwnershipPercentage,
-  type OwnershipDocument, type OwnershipTreeNode,
+  buildOwnershipGraph, layoutOwnershipCompanies, normalizeTaxId, ownershipBreakdown,
+  ownershipCompanyIdentifiers, ownershipCompanyIdentity, ownershipDocumentDate, parseOwnershipPercentage,
+  type OwnershipDocument,
 } from '@/lib/partecipogramma';
 
 const client = { id: 'cliente', ragione_sociale: 'ALFA SRL', piva: '01234567890' };
@@ -12,7 +12,6 @@ const doc = (id: string, companyId: string, owners: [string, string, string][], 
   amministratori: [],
   ...overrides,
 });
-const flatten = (trees: OwnershipTreeNode[]): OwnershipTreeNode[] => trees.flatMap(tree => [tree, ...flatten(tree.children)]);
 
 describe('partecipogramma: identità e quote', () => {
   it('normalizza CF/P.IVA ma non fonde identificativi non riconoscibili', () => {
@@ -50,6 +49,13 @@ describe('partecipogramma: identità e quote', () => {
     `)).toEqual(['01234567890']);
   });
 
+  it('distingue codice fiscale numerico e partita IVA', () => {
+    expect(ownershipCompanyIdentity('Codice fiscale 01234567890\nPartita IVA 11111111111')).toEqual({
+      codiceFiscale: '01234567890', piva: '11111111111',
+    });
+    expect(ownershipCompanyIdentity('Codice fiscale 01234567890').piva).toBe('');
+  });
+
   it('non scambia data costituzione e data estrazione e rifiuta date inesistenti', () => {
     expect(ownershipDocumentDate('Data costituzione 01/01/2000\nVisura estratta il 20/10/2026')).toBe('2026-10-20');
     expect(ownershipDocumentDate('Data costituzione 01/01/2000')).toBeUndefined();
@@ -58,18 +64,20 @@ describe('partecipogramma: identità e quote', () => {
 });
 
 describe('partecipogramma: collegamenti e versioni', () => {
-  it('costruisce tre livelli e collega società con nomi diversi ma stesso CF', () => {
+  it('collega società con nomi diversi ma stesso CF e mostra i soci nella torta', () => {
     const graph = buildOwnershipGraph(client, [
       doc('ALFA SRL', client.piva, [['BETA HOLDING', '09876543210', '60%']]),
       doc('BETA HOLDING S.P.A.', '09876543210', [['ROSSI MARIO', 'RSSMRA80A01H501Z', '100%']]),
     ]);
     expect(graph.nodes).toHaveLength(3);
-    const forest = buildOwnershipForest(graph);
-    expect(forest).toHaveLength(1);
-    expect(forest[0].node.name).toBe('ROSSI MARIO');
-    expect(forest[0].children[0].node.name).toBe('BETA HOLDING S.P.A.');
-    expect(forest[0].children[0].children[0].node.isClient).toBe(true);
-    expect(forest[0].children[0].children[0].via.percentage).toBe(60);
+    const layout = layoutOwnershipCompanies(graph);
+    expect(layout.nodes).toHaveLength(2);
+    expect(layout.links).toHaveLength(1);
+    expect(layout.links[0].edge.percentage).toBe(60);
+    const holding = layout.nodes.find(item => item.node.identifier === '09876543210')!;
+    const alfa = layout.nodes.find(item => item.node.isClient)!;
+    expect(holding.y).toBeLessThan(alfa.y);
+    expect(ownershipBreakdown(holding.node).slices[0].name).toBe('ROSSI MARIO');
   });
 
   it('conserva i dati societari per il dettaglio del nodo', () => {
@@ -93,10 +101,12 @@ describe('partecipogramma: collegamenti e versioni', () => {
       doc('ALFA', client.piva, [['ROSSI', 'RSSMRA80A01H501Z', '100%']]),
       doc('BETA', '09876543210', [['ALFA', client.piva, '51%'], ['ROSSI', 'RSSMRA80A01H501Z', '49%']]),
     ]);
-    const entries = flatten(buildOwnershipForest(graph));
-    expect(entries.filter(entry => entry.node.identifier === '09876543210')).toHaveLength(2);
-    expect(entries.filter(entry => entry.reference)).toHaveLength(1);
-    expect(entries.filter(entry => entry.via)).toHaveLength(3);
+    const layout = layoutOwnershipCompanies(graph);
+    expect(layout.nodes).toHaveLength(2);
+    expect(layout.nodes.filter(entry => entry.node.identifier === '09876543210')).toHaveLength(1);
+    expect(layout.links).toHaveLength(1);
+    expect(layout.nodes.every(entry => ownershipBreakdown(entry.node).slices.some(slice => slice.name === 'ROSSI'))).toBe(true);
+    expect(graph.edges).toHaveLength(3);
   });
 
   it('non somma le visure storiche e consente la scelta di una versione', () => {
@@ -126,17 +136,57 @@ describe('partecipogramma: collegamenti e versioni', () => {
     expect(graph.nodes.filter(node => node.name === 'OMONIMO SRL')).toHaveLength(2);
     expect(graph.edges.every(edge => edge.percentage === null)).toBe(true);
     expect(graph.warnings.some(warning => warning.includes('percentuali'))).toBe(true);
-    expect(buildOwnershipForest(graph)).toHaveLength(2);
+    expect(layoutOwnershipCompanies(graph).nodes).toHaveLength(2);
   });
 
-  it('interrompe cicli e autoriferimenti senza perdere partecipazioni', () => {
+  it('esclude autoriferimenti sospetti e disegna cicli societari senza duplicare società', () => {
     const graph = buildOwnershipGraph(client, [
       doc('ALFA', client.piva, [['BETA', '09876543210', '60%'], ['ALFA', client.piva, '1%']]),
       doc('BETA', '09876543210', [['ALFA', client.piva, '40%']]),
     ]);
-    const entries = flatten(buildOwnershipForest(graph));
-    expect(entries).toHaveLength(4);
-    expect(entries.filter(entry => entry.cycle)).toHaveLength(2);
-    expect(entries.filter(entry => entry.via)).toHaveLength(3);
+    const layout = layoutOwnershipCompanies(graph);
+    expect(layout.nodes).toHaveLength(2);
+    expect(layout.links).toHaveLength(2);
+    expect(layout.links.filter(link => link.cycle)).toHaveLength(1);
+    expect(graph.edges).toHaveLength(2);
+    expect(graph.warnings.some(warning => warning.includes('società stessa'))).toBe(true);
+    expect(graph.nodes.find(node => node.isClient)?.details?.soci).toHaveLength(1);
+  });
+});
+
+describe('torte dei soci: quote esplicite, mai normalizzate', () => {
+  const breakdown = (shares: string[]) => {
+    const graph = buildOwnershipGraph(client, [doc('ALFA', client.piva,
+      shares.map((share, index) => [`Socio ${index}`, '', share]))]);
+    return ownershipBreakdown(graph.nodes.find(node => node.isClient)!);
+  };
+
+  it('mostra il totale esatto di 100% senza fetta aggiuntiva', () => {
+    const result = breakdown(['34,75%', '65,25%']);
+    expect(result.total).toBe(100);
+    expect(result.slices).toHaveLength(2);
+    expect(result.incomplete).toBe(false);
+    expect(result.invalid).toBe(false);
+  });
+
+  it('espone il residuo non determinato, conservando la quota reale', () => {
+    const result = breakdown(['25%', '']);
+    expect(result.slices.map(slice => slice.percentage)).toEqual([25, null, 75]);
+    expect(result.slices[2].missing).toBe(true);
+    expect(result.incomplete).toBe(true);
+  });
+
+  it('se il totale supera 100 non ridimensiona le percentuali', () => {
+    const result = breakdown(['60%', '60%']);
+    expect(result.total).toBe(120);
+    expect(result.invalid).toBe(true);
+    expect(result.slices.map(slice => slice.percentage)).toEqual([60, 60]);
+  });
+
+  it('conserva quote zero e gestisce assenza di soci e di visura', () => {
+    expect(breakdown(['0%', '100%']).slices[0].percentage).toBe(0);
+    expect(breakdown([]).slices[0]).toEqual(expect.objectContaining({ missing: true, percentage: 100 }));
+    const graph = buildOwnershipGraph(client, []);
+    expect(ownershipBreakdown(graph.nodes[0]).hasSource).toBe(false);
   });
 });

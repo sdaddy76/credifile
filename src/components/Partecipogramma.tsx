@@ -1,39 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Building2, GitBranch, Loader2, RefreshCw, UserRound, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertCircle, Building2, GitBranch, Loader2, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { loadOwnershipDocuments } from '@/lib/loadOwnershipDocuments';
-import { buildOwnershipForest, buildOwnershipGraph, type OwnershipDocument, type OwnershipTreeNode } from '@/lib/partecipogramma';
+import { buildOwnershipGraph, layoutOwnershipCompanies, ownershipBreakdown, type OwnershipDocument, type OwnershipNode } from '@/lib/partecipogramma';
 import type { Client } from '@/lib/types';
-
-function layoutForest(forest: OwnershipTreeNode[]) {
-  const widths = new Map<string, number>();
-  const measure = (tree: OwnershipTreeNode): number => {
-    const width = Math.max(272, tree.children.reduce((sum, child) => sum + measure(child), 0));
-    widths.set(tree.key, width);
-    return width;
-  };
-  const width = forest.reduce((sum, tree) => sum + measure(tree), 0) + 32;
-  const nodes: { tree: OwnershipTreeNode; x: number; y: number }[] = [];
-  const links: { tree: OwnershipTreeNode; x1: number; y1: number; x2: number; y2: number }[] = [];
-  let maxY = 0;
-  const place = (tree: OwnershipTreeNode, left: number, level: number) => {
-    const x = left + widths.get(tree.key)! / 2;
-    const y = 24 + level * 208;
-    maxY = Math.max(maxY, y);
-    nodes.push({ tree, x, y });
-    let childLeft = left;
-    tree.children.forEach(child => {
-      const childX = childLeft + widths.get(child.key)! / 2;
-      links.push({ tree: child, x1: x, y1: y + 120, x2: childX, y2: y + 208 });
-      place(child, childLeft, level + 1);
-      childLeft += widths.get(child.key)!;
-    });
-  };
-  let left = 16;
-  forest.forEach(tree => { place(tree, left, 0); left += widths.get(tree.key)!; });
-  return { nodes, links, width: Math.max(width, 304), height: maxY + 152 };
-}
 
 const dateLabel = (date: string) => {
   const parsed = new Date(date);
@@ -43,6 +14,50 @@ const percentageLabel = (percentage: number | null) =>
   percentage === null ? 'Quota n.d.' : `${new Intl.NumberFormat('it-IT', { maximumFractionDigits: 4 }).format(percentage)}%`;
 const moneyLabel = (value?: number) =>
   value == null ? 'Non rilevato' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(value);
+
+const slicePalette = ['#2563eb', '#0d9488', '#9333ea', '#d97706', '#e11d48', '#4f46e5', '#65a30d', '#0891b2', '#c026d3', '#a16207'];
+
+function CompanyOwnership({ node, colors }: { node: OwnershipNode; colors: Map<string, string> }) {
+  const breakdown = ownershipBreakdown(node);
+  let end = 0;
+  const color = (id: string, missing: boolean) => missing ? 'var(--muted-foreground)' : colors.get(id) ?? slicePalette[0];
+  const segments = breakdown.slices.filter(slice => (slice.percentage ?? 0) > 0).map(slice => {
+    const start = end;
+    end += slice.percentage!;
+    return `${color(slice.id, slice.missing)} ${start}% ${end}%`;
+  });
+  const unavailable = !breakdown.hasSource || breakdown.invalid;
+  return (
+    <span className="mt-3 flex items-start gap-4">
+      <span className="shrink-0 text-center">
+        <span role="img" aria-label={unavailable ? 'Quote non rappresentabili' : `Quote dei soci di ${node.name}, dettagli nella legenda`}
+          className="block h-28 w-28 rounded-full border border-border"
+          style={{ background: unavailable || !segments.length ? 'var(--muted)' : `conic-gradient(${segments.join(', ')})` }} />
+        <span className="mt-2 block text-[10px] text-muted-foreground">Quote dei soci</span>
+      </span>
+      <span className="min-w-0 flex-1">
+        {!breakdown.hasSource ? (
+          <span className="block text-xs text-muted-foreground">Visura della società non disponibile. Caricala per visualizzare i suoi soci.</span>
+        ) : (
+          <>
+            {breakdown.slices.map((slice, index) => (
+              <span key={`${slice.id}:${index}`} className="flex h-[25px] items-center gap-2 text-xs">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: color(slice.id, slice.missing) }} />
+                <span className={`min-w-0 flex-1 truncate ${slice.missing ? 'italic text-muted-foreground' : ''}`} title={slice.name}>{slice.name}</span>
+                <span className="shrink-0 font-semibold tabular-nums">{percentageLabel(slice.percentage)}</span>
+              </span>
+            ))}
+            {breakdown.invalid ? (
+              <span className="mt-1 block text-[11px] text-amber-700 dark:text-amber-400">Quote incoerenti: totale {percentageLabel(breakdown.total)}. Torta sospesa, verificare la visura.</span>
+            ) : breakdown.incomplete && (
+              <span className="mt-1 block text-[10px] text-muted-foreground">Il grigio indica quote non determinate, non un socio aggiuntivo.</span>
+            )}
+          </>
+        )}
+      </span>
+    </span>
+  );
+}
 
 export default function Partecipogramma({ client }: { client: Client }) {
   const [documents, setDocuments] = useState<OwnershipDocument[]>([]);
@@ -87,9 +102,12 @@ export default function Partecipogramma({ client }: { client: Client }) {
   }, [clientId, visuraJson, refresh]);
 
   const graph = useMemo(() => buildOwnershipGraph(client, documents, preferred), [client, documents, preferred]);
-  const forest = useMemo(() => buildOwnershipForest(graph), [graph]);
-  const layout = useMemo(() => layoutForest(forest), [forest]);
-  const selected = layout.nodes.find(item => item.tree.key === selectedKey)?.tree;
+  const layout = useMemo(() => layoutOwnershipCompanies(graph), [graph]);
+  const selected = layout.nodes.find(item => item.node.id === selectedKey);
+  const colors = useMemo(() => {
+    const ids = [...new Set(graph.nodes.flatMap(node => ownershipBreakdown(node).slices.filter(slice => !slice.missing).map(slice => slice.id)))].sort();
+    return new Map(ids.map((id, index) => [id, slicePalette[index % slicePalette.length]]));
+  }, [graph]);
   const activeIds = new Set(graph.activeDocuments.map(doc => doc.id));
 
   return (
@@ -137,8 +155,9 @@ export default function Partecipogramma({ client }: { client: Client }) {
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Dall’alto verso il basso: socio → società partecipata. La percentuale sul ramo è la quota diretta nella società sottostante, non una quota indiretta calcolata.
-                  {forest.length > 1 && ' I nodi “Rif.” indicano soggetti condivisi fra rami diversi. Non vengono dedotti legami assenti nelle visure.'}
+                  Dall’alto verso il basso: società socia → società partecipata, con la quota diretta sul ramo.
+                  Ogni società compare una sola volta; accanto trovi la torta con tutti i suoi soci, comprese le persone fisiche. Clicca sulla scheda per i dettagli.
+                  {layout.links.some(link => link.cycle) && ' I rami tratteggiati indicano partecipazioni circolari da verificare.'}
                 </p>
                 <div ref={viewport} tabIndex={0} role="region" aria-label="Grafico ad albero delle partecipazioni, scorribile. Seleziona un nodo per i dettagli."
                   className="max-h-[60vh] min-h-64 overflow-auto rounded-xl border bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -147,38 +166,36 @@ export default function Partecipogramma({ client }: { client: Client }) {
                       <svg width={layout.width} height={layout.height} className="absolute inset-0 text-primary/50" aria-hidden="true">
                         <defs><marker id={arrowId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>
                         {layout.links.map(link => (
-                          <g key={link.tree.key}>
-                            <path d={`M ${link.x1} ${link.y1} V ${link.y1 + 24} H ${link.x2} V ${link.y2 - 5}`} fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd={`url(#${arrowId})`} />
+                          <g key={link.edge.id}>
+                            <path d={link.cycle
+                              ? `M ${link.x1} ${link.y1} H ${layout.width - 12} V ${link.y2 - 18} H ${link.x2} V ${link.y2 - 5}`
+                              : `M ${link.x1} ${link.y1} V ${link.y1 + 40} H ${link.x2} V ${link.y2 - 5}`}
+                              fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray={link.cycle ? '6 4' : undefined} markerEnd={`url(#${arrowId})`} />
                             <rect x={link.x2 - 59} y={link.y2 - 42} width="118" height="26" rx="13" className="fill-background stroke-border" />
-                            <text x={link.x2} y={link.y2 - 24} textAnchor="middle" className="fill-foreground text-[12px] font-semibold">{percentageLabel(link.tree.via!.percentage)}</text>
+                            <text x={link.x2} y={link.y2 - 24} textAnchor="middle" className="fill-foreground text-[12px] font-semibold">{percentageLabel(link.edge.percentage)}</text>
                           </g>
                         ))}
                       </svg>
-                      {layout.nodes.map(({ tree, x, y }) => {
-                        const Icon = tree.node.kind === 'person' ? UserRound : Building2;
-                        return (
-                          <button key={tree.key} type="button" onClick={() => setSelectedKey(tree.key)}
-                            aria-pressed={selectedKey === tree.key}
-                            title={`${tree.node.name}${tree.via ? ` · quota ${percentageLabel(tree.via.percentage)}` : ''}`}
-                            className={`absolute rounded-xl border p-3 text-left shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:border-primary transition-colors ${tree.node.isClient ? 'border-primary bg-primary/10' : 'bg-card'} ${selectedKey === tree.key ? 'ring-2 ring-primary' : ''}`}
-                            style={{ left: x - 120, top: y, width: 240, height: 120 }}>
+                      {layout.nodes.map(({ node, x, y, width, height }) => (
+                          <button key={node.id} type="button" onClick={() => setSelectedKey(node.id)}
+                            aria-pressed={selectedKey === node.id}
+                            aria-label={`Dettagli di ${node.name}`}
+                            className={`absolute rounded-xl border p-4 text-left shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:border-primary transition-colors ${node.isClient ? 'border-primary bg-card' : 'bg-card'} ${selectedKey === node.id ? 'ring-2 ring-primary' : ''}`}
+                            style={{ left: x, top: y, width, height }}>
                             <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                              <Icon className="h-3.5 w-3.5 shrink-0" />{tree.node.isClient ? 'Cliente' : tree.node.kind === 'person' ? 'Persona fisica' : tree.node.kind === 'unknown' ? 'Soggetto da verificare' : 'Società'}
-                              {tree.reference && <span className="ml-auto normal-case text-primary">{tree.cycle ? 'Ciclo ↗' : 'Rif. ↗'}</span>}
+                              <Building2 className="h-3.5 w-3.5 shrink-0" />{node.isClient ? 'Società cliente' : 'Società collegata'}
                             </span>
-                            <span className="mt-1.5 block line-clamp-2 text-sm font-semibold leading-tight">{tree.node.name}</span>
-                            <span className="mt-1 block text-[11px] font-mono text-muted-foreground">{tree.node.identifier || 'CF/P.IVA non rilevato'}</span>
-                            <span className="mt-1 block text-[10px] text-muted-foreground">{tree.node.source ? 'Visura disponibile' : 'Dati dalla visura della partecipata'}</span>
+                            <span className="mt-1.5 block truncate text-sm font-semibold leading-tight" title={node.name}>{node.name}</span>
+                            <span className="mt-1 block text-[11px] font-mono text-muted-foreground">CF {node.identifier || 'non rilevato'}</span>
+                            <CompanyOwnership node={node} colors={colors} />
                           </button>
-                        );
-                      })}
+                      ))}
                     </div>
                   </div>
                 </div>
                 {selected && (
                   <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1" role="status">
                     <p className="font-semibold">{selected.node.name}</p>
-                    {selected.via && <p>Quota diretta: {percentageLabel(selected.via.percentage)} · Fonte: {selected.via.source.name} ({selected.via.source.companyName})</p>}
                     {selected.node.source && <p className="text-muted-foreground">Visura della società: {selected.node.source.name}</p>}
                     {selected.node.kind === 'company' && selected.node.details && (
                       <div className="mt-3 rounded-lg border bg-background p-3 space-y-3">
@@ -230,16 +247,6 @@ export default function Partecipogramma({ client }: { client: Client }) {
                         </div>
                       </div>
                     )}
-                    {selected.reference && <p className="text-muted-foreground">Soggetto già presente nell’albero: il riferimento evita di duplicare i rami o creare un ciclo infinito.</p>}
-                    {selected.reference && <Button variant="outline" size="sm" onClick={() => {
-                      const original = layout.nodes.find(item => item.tree.node.id === selected.node.id && !item.tree.reference);
-                      if (!original) return;
-                      setSelectedKey(original.tree.key);
-                      viewport.current?.scrollTo({
-                        left: original.x * zoom - viewport.current.clientWidth / 2,
-                        top: original.y * zoom - 24, behavior: 'smooth',
-                      });
-                    }}>Vai al nodo completo</Button>}
                   </div>
                 )}
               </>
