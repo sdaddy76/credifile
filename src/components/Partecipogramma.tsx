@@ -151,7 +151,10 @@ export default function Partecipogramma({ client }: { client: Client }) {
                     <Button variant="outline" size="sm" aria-label="Riduci grafico" disabled={zoom <= 0.25} onClick={() => setZoom(value => Math.max(0.25, value - 0.25))}><ZoomOut className="h-4 w-4" /></Button>
                     <span className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
                     <Button variant="outline" size="sm" aria-label="Ingrandisci grafico" disabled={zoom >= 1.5} onClick={() => setZoom(value => Math.min(1.5, value + 0.25))}><ZoomIn className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="sm" onClick={() => setZoom(Math.max(0.25, Math.min(1, (viewport.current?.clientWidth ?? 800) / layout.width)))}>Adatta</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setZoom(Math.max(0.25, Math.min(1,
+                      (viewport.current?.clientWidth ?? 800) / layout.width,
+                      (viewport.current?.clientHeight ?? 600) / layout.height,
+                    )))}>Adatta</Button>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">

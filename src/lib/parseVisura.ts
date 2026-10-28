@@ -247,16 +247,29 @@ export function parseSoci(raw: string): SocioResult[] {
     if (administrationOnly) return;
     const id = ids[0];
     const content = line.replace(id, ' ');
-    const previousIndex = /^(?:codice\s+fiscale|c\.?\s*f\.?|partita\s+iva|p\.?\s*iva)\s*:?\s*$/i.test(lines[index - 1] ?? '') ? index - 2 : index - 1;
-    const previous = lines[previousIndex] ?? '';
     const next = lines[index + 1] ?? '';
     const isData = (value: string) => /^(?:propriet[aà]['’]?|nuda\s+propriet[aà]|usufrutto|quota|valore|percentuale|tipo\s+di\s+diritto|di\s+cui|ammontare|€|eur\b|\d)/i.test(value);
-    const previousName = !idMatches(previous).length && !isData(previous) ? nameFrom(previous) : '';
-    const nextName = !idMatches(next).length && !isData(next) ? nameFrom(next) : '';
+    const idLabel = /^(?:codice\s+fiscale|c\.?\s*f\.?|partita\s+iva|p\.?\s*iva)\s*:?\s*$/i;
+    const prefix: string[] = [];
+    let previousName = '';
+    // In alcune tabelle CCIAA il nome è seguito da importo/quota e SOLO
+    // dopo arriva il CF. Risali nel record, ma mai oltre un altro CF.
+    for (let offset = index - 1; offset >= Math.max(0, index - 4); offset--) {
+      const candidate = lines[offset];
+      if (idMatches(candidate).length) break;
+      prefix.unshift(candidate);
+      if (isData(candidate) || idLabel.test(candidate)) continue;
+      previousName = nameFrom(candidate);
+      break;
+    }
+    // Non chiamare il socio corrente con il nome del prossimo record.
+    const nextHasOwnId = idMatches(lines[index + 2] ?? '').length > 0
+      || (idLabel.test(lines[index + 2] ?? '') && idMatches(lines[index + 3] ?? '').length > 0);
+    const nextName = !nextHasOwnId && !idMatches(next).length && !isData(next) ? nameFrom(next) : '';
     const inlineName = nameFrom(content);
     const nome = inlineName || previousName || nextName;
     if (!nome) return;
-    const nameLine = inlineName ? content : previousName ? previous : next;
+    const nameLine = inlineName ? content : next;
     const afterLines: string[] = [];
     const start = !inlineName && !previousName && nextName ? index + 2 : index + 1;
     for (const candidate of lines.slice(start, start + 5)) {
@@ -265,7 +278,7 @@ export function parseSoci(raw: string): SocioResult[] {
       if (nameFrom(candidate) && !isData(candidate)) break;
       afterLines.push(candidate);
     }
-    const source = [nameLine, content, ...afterLines].join(' ');
+    const source = [...(!inlineName && previousName ? prefix : [nameLine]), content, ...afterLines].join(' ');
     const valueMatch = source.match(/(?:valore|quota(?:\s+di\s+nominali)?|capitale|importo|ammontare|€|eur)\s*[:-]?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2}))/i)
       ?? source.replace(PCT_RE, '').match(VALUE_RE);
     const pctMatch = source.match(PCT_RE);

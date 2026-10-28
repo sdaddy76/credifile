@@ -84,6 +84,24 @@ describe('parseSoci', () => {
     expect(soci.map(socio => socio.percentuale)).toEqual(['', '40%']);
   });
 
+  it('mantiene il nome corretto quando la quota è tra nominativo e CF', () => {
+    const soci = parseSoci(`
+      ELENCO SOCI
+      ROSSI MARIO
+      3.475,00 34,75% proprieta'
+      RSSMRA80A01H501Z
+      BIANCHI LUCA
+      3.475,00 34,75% proprieta'
+      BNCLCU82B02H501Y
+      VERDI PAOLO
+      3.050,00 30,5% proprieta'
+      VRDPLA75C03H501X
+      ORGANI SOCIALI
+    `);
+    expect(soci.map(socio => socio.nome)).toEqual(['ROSSI MARIO', 'BIANCHI LUCA', 'VERDI PAOLO']);
+    expect(soci.map(socio => socio.percentuale)).toEqual(['34,75%', '34,75%', '30,5%']);
+  });
+
   it('salta riepilogo e indice InfoCamere e legge la sezione soci effettiva', () => {
     const soci = parseSoci(`
       L'IMPRESA IN CIFRE
