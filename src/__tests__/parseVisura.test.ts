@@ -102,6 +102,29 @@ describe('parseSoci', () => {
     expect(soci.map(socio => socio.percentuale)).toEqual(['34,75%', '34,75%', '30,5%']);
   });
 
+  it('ricongiunge nome e CF separati da un cambio pagina CCIAA e intestazioni ripetute', () => {
+    const soci = parseSoci(`
+      4 Soci e titolari di diritti su azioni e quote
+      Socio Valore % Tipo diritto
+      ROSSI MARIO 3.475,00 34,75 % proprieta'
+      Visura ordinaria societa' di capitale • 5 di 9
+      Registro Imprese ALFA SRL
+      Archivio ufficiale della CCIAA
+      Codice Fiscale 01234567890
+      Documento n . T 123456789
+      estratto dal Registro Imprese in data 01/09/2026
+      Socio Valore % Tipo diritto
+      RSSMRA80A01H501Z
+      BIANCHI LUCA 6.525,00 65,25 % proprieta'
+      BNCLCU82B02H501Y
+      5 Amministratori
+    `);
+    expect(soci).toEqual([
+      expect.objectContaining({ nome: 'ROSSI MARIO', codice_fiscale: 'RSSMRA80A01H501Z', percentuale: '34,75%' }),
+      expect.objectContaining({ nome: 'BIANCHI LUCA', codice_fiscale: 'BNCLCU82B02H501Y', percentuale: '65,25%' }),
+    ]);
+  });
+
   it('salta riepilogo e indice InfoCamere e legge la sezione soci effettiva', () => {
     const soci = parseSoci(`
       L'IMPRESA IN CIFRE

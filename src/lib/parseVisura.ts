@@ -305,9 +305,9 @@ export function parseSoci(raw: string): SocioResult[] {
 export function stripVisuraPageFurniture(raw: string): string {
   const lines = raw.replace(/\r\n?/g, '\n').split('\n');
   const removed = new Set<number>();
-  const furniture = /^(?:registro\s+imprese|archivio\s+ufficiale\s+della|documento\s+n[.°]?\s|visura\s+(?:ordinaria|storica)|pagina\s+\d|page\s+\d|\d+\s*(?:di|\/)\s*\d+\s*$)/i;
+  const furniture = /^(?:registro\s+imprese|archivio\s+ufficiale\s+della|documento\s+n\s*[.°]?\s|estratt[ao]\s+dal\s+registro\s+imprese\s+(?:il|in\s+data)\b|visura\s+(?:ordinaria|storica)|socio\s+valore\s*%\s*tipo\s+diritto\s*$|pagina\s+\d|page\s+\d|\d+\s*(?:di|\/)\s*\d+\s*$)/i;
   lines.forEach((line, index) => {
-    if (!/^(?:registro\s+imprese|archivio\s+ufficiale\s+della|documento\s+n[.°]?\s)/i.test(line.trim())) return;
+    if (!/^(?:registro\s+imprese|archivio\s+ufficiale\s+della|documento\s+n\s*[.°]?\s)/i.test(line.trim())) return;
     const nearby = lines.slice(index, index + 10);
     const taxLine = nearby.findIndex(value => /^\s*codice\s+fiscale\s*:?\s*\d{11}\s*$/i.test(value));
     if (taxLine < 0) return;
