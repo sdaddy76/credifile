@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Building2, Check, GitBranch, Loader2, RefreshCw, RotateCcw, Save, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertCircle, Building2, Check, GitBranch, Loader2, RefreshCw, RotateCcw, Save, UserRound, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -56,6 +56,7 @@ function CompanyOwnership({
   onReset: (key: string) => void;
 }) {
   const breakdown = ownershipBreakdown(node);
+  const administratorName = node.details?.amministratori[0]?.nome?.trim() || 'non rilevato';
   let end = 0;
   const color = (id: string, missing: boolean) => missing ? 'var(--muted-foreground)' : colors.get(id) ?? slicePalette[0];
   const segments = breakdown.slices.filter(slice => (slice.percentage ?? 0) > 0).map(slice => {
@@ -137,6 +138,14 @@ function CompanyOwnership({
             )}
           </>
         )}
+        <div
+          className="mt-2 flex min-h-8 items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1 text-[10px]"
+          title={`Amministratore Unico: ${administratorName}`}
+        >
+          <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="shrink-0 font-medium">Amministratore Unico</span>
+          <span className="min-w-0 truncate text-muted-foreground">{administratorName}</span>
+        </div>
       </div>
     </div>
   );
@@ -362,11 +371,6 @@ export default function Partecipogramma({ client, practiceId }: { client: Client
                               className="mt-1.5 block w-full truncate text-left text-sm font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               title={node.name}>{node.name}</button>
                             <span className="mt-1 block text-[11px] font-mono text-muted-foreground">CF {node.identifier || 'non rilevato'}</span>
-                            <span className="mt-1 block truncate text-[10px] text-muted-foreground" title={`Amministratore: ${node.details?.amministratori[0]?.nome || 'non rilevato'}`}>
-                              Amministratore: {node.details?.amministratori[0]?.nome || 'non rilevato'}
-                              {node.details?.amministratori[0]?.carica ? ` · ${node.details.amministratori[0].carica}` : ''}
-                              {(node.details?.amministratori.length ?? 0) > 1 ? ` +${(node.details?.amministratori.length ?? 1) - 1}` : ''}
-                            </span>
                             <span className="block truncate text-[10px] text-muted-foreground" title="Dato ricavato dai bilanci caricati nella pratica">
                               Fatturato{companyRevenues.get(companyNameKey(node.name))
                                 ? ` ${companyRevenues.get(companyNameKey(node.name))?.year}: ${moneyLabel(companyRevenues.get(companyNameKey(node.name))?.amount)}`
