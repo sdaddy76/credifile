@@ -14,6 +14,7 @@ export interface OwnershipDocument {
   documentDate?: string;
   companyName: string;
   identifiers: string[];
+  sourceText?: string;
   soci: Socio[];
   piva?: string;
   capitaleSociale?: number;

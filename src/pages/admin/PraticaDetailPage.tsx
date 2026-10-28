@@ -2579,7 +2579,7 @@ export default function PraticaDetailPage() {
   return (
     <div className="space-y-5 max-w-5xl">
       {/* Header */}
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         <Button variant="ghost" size="sm" className="mt-0.5" onClick={() => navigate('/admin/pratiche')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
@@ -2980,7 +2980,7 @@ export default function PraticaDetailPage() {
         </div>
 
         {/* Documenti + Log */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="lg:col-span-2 min-w-0 space-y-4">
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList
               aria-label="Sezioni della pratica"

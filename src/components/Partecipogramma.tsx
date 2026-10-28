@@ -200,6 +200,13 @@ export default function Partecipogramma({ client }: { client: Client }) {
                   <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1" role="status">
                     <p className="font-semibold">{selected.node.name}</p>
                     {selected.node.source && <p className="text-muted-foreground">Visura della società: {selected.node.source.name}</p>}
+                    {selected.node.source?.sourceText && (
+                      <details className="rounded border bg-background p-3">
+                        <summary className="cursor-pointer text-xs font-medium">Verifica il testo letto dalla visura</summary>
+                        <p className="mt-2 text-xs text-muted-foreground">Testo estratto dal PDF, senza modificare il documento originale. Utile per controllare nominativi e quote.</p>
+                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs font-mono">{selected.node.source.sourceText}</pre>
+                      </details>
+                    )}
                     {selected.node.kind === 'company' && selected.node.details && (
                       <div className="mt-3 rounded-lg border bg-background p-3 space-y-3">
                         <div className="grid gap-3 sm:grid-cols-3">

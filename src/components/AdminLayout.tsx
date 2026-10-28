@@ -173,7 +173,7 @@ export default function AdminLayout() {
         </div>
       </aside>
 
-      <div className="flex-1 lg:ml-64 flex flex-col min-h-screen">
+      <div className="flex-1 min-w-0 lg:ml-64 flex flex-col min-h-screen">
         {/* Header mobile */}
         <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card sticky top-0 z-10">
           <button className="lg:hidden text-muted-foreground hover:text-foreground" onClick={() => setSidebarOpen(true)}>

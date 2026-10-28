@@ -85,6 +85,7 @@ describe('lettura visure del cliente', () => {
     expect(result.documents).toHaveLength(2);
     expect(result.warnings).toEqual([]);
     expect(result.documents[0].identifiers).toEqual([client.piva]);
+    expect(result.documents[0].sourceText).toContain('BETA HOLDING SRL');
     expect(result.documents[0].soci[0].codice_fiscale).toBe('09876543210');
     expect(calls.find(call => call.table === 'practices').filters).toEqual([['client_id', client.id]]);
     expect(calls.filter(call => call.table !== 'practices').every(call => JSON.stringify(call.filters) === JSON.stringify([['practice_id', ['practice-one']]]))).toBe(true);

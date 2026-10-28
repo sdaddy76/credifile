@@ -94,6 +94,7 @@ export async function loadOwnershipDocuments(client: Client, onProgress: (messag
         documentDate: ownershipDocumentDate(text),
         companyName: matchesClient ? client.ragione_sociale : parsed.ragione_sociale || `Società CF ${identifiers[0]}`,
         identifiers,
+        sourceText: text,
         soci: parsed.soci,
         piva: ownershipCompanyIdentity(text).piva || undefined,
         capitaleSociale: parsed.capitale_sociale,
