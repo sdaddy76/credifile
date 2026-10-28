@@ -106,7 +106,7 @@ export async function saveClientVisura(
     }
     response = await upload(accessToken);
   }
-  const result = await response.json().catch(() => null) as {
+  const result = await response.json().catch((): null => null) as {
     success?: boolean;
     reference?: ClientVisuraReference;
     error?: string;

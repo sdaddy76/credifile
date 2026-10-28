@@ -62,7 +62,7 @@ export default function MfaChallengePage() {
       return;
     }
     await refreshMfaStatus();
-    await supabase.functions.invoke('log-access').catch(() => undefined);
+    await supabase.functions.invoke('log-access').catch((): undefined => undefined);
     toast.success('Identità verificata.');
     navigate(authenticatedHome(role), { replace: true });
   };

@@ -47,9 +47,18 @@ export interface OwnershipGraph {
   warnings: string[];
 }
 
+export type OwnershipShareOverrides = Record<string, string>;
+
 export function normalizeTaxId(value?: string): string {
   const normalized = (value ?? '').toUpperCase().replace(/[\s.-]/g, '').replace(/^IT(?=\d{11}$)/, '');
   return /^(?:\d{11}|[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])$/.test(normalized) ? normalized : '';
+}
+
+export function ownershipShareOverrideKey(companyIdentifier: string, socio: Pick<Socio, 'nome' | 'codice_fiscale'>, index = 0): string {
+  const companyId = normalizeTaxId(companyIdentifier);
+  const taxId = normalizeTaxId(socio.codice_fiscale);
+  const ownerId = taxId || `${socio.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')}:${index}`;
+  return `${companyId}:${ownerId}`;
 }
 
 export function parseOwnershipPercentage(raw: string): number | null {
@@ -100,7 +109,21 @@ export function buildOwnershipGraph(
   },
   documents: OwnershipDocument[],
   preferred: string[] = [],
+  shareOverrides: OwnershipShareOverrides = {},
 ): OwnershipGraph {
+  const effectiveDocuments = documents.map(doc => {
+    const companyId = doc.identifiers.map(normalizeTaxId).find(Boolean) ?? '';
+    if (!companyId) return doc;
+    return {
+      ...doc,
+      soci: doc.soci.map((socio, index) => {
+        const override = shareOverrides[ownershipShareOverrideKey(companyId, socio, index)];
+        if (override === undefined || parseOwnershipPercentage(socio.percentuale ?? '') !== null
+          || parseOwnershipPercentage(override) === null) return socio;
+        return { ...socio, percentuale: `${override}%` };
+      }),
+    };
+  });
   // Unione soltanto per identificativi fiscali, mai per semplice omonimia.
   const parents = new Map<string, string>();
   const find = (id: string): string => {
@@ -118,10 +141,10 @@ export function buildOwnershipGraph(
     ids.slice(1).forEach(id => parents.set(find(id), find(ids[0])));
   };
   union(clientIds);
-  documents.forEach(doc => union(doc.identifiers));
+  effectiveDocuments.forEach(doc => union(doc.identifiers));
   const clientKey = clientIds.length ? find(clientIds[0]) : `client:${client.id}`;
   const groups = new Map<string, OwnershipDocument[]>();
-  documents.forEach(doc => {
+  effectiveDocuments.forEach(doc => {
     const ids = identifiers(doc.identifiers);
     if (!ids.length) return;
     const key = find(ids[0]);
@@ -262,7 +285,7 @@ export function layoutOwnershipCompanies(graph: OwnershipGraph) {
   const nodes: { node: OwnershipNode; x: number; y: number; width: number; height: number }[] = [];
   let y = 24;
   [...rows.entries()].sort(([a], [b]) => a - b).forEach(([, row]) => {
-    const heights = row.map(node => Math.max(270, 164 + ownershipBreakdown(node).slices.length * 25));
+    const heights = row.map(node => Math.max(390, 290 + ownershipBreakdown(node).slices.length * 30));
     row.forEach((node, index) => nodes.push({
       node, x: (width - row.length * 560) / 2 + index * 560 + 20, y,
       width: 520, height: heights[index],

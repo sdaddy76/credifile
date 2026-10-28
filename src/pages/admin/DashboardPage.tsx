@@ -106,7 +106,7 @@ export default function DashboardPage() {
         supabase.from('banks').select('id').eq('attiva', true),
       ]);
 
-      const practices = pratiche.data ?? [];
+      const practices = (pratiche.data ?? []) as Practice[];
       const byStatus: Record<string, number> = {};
       practices.forEach(p => { byStatus[p.status] = (byStatus[p.status] ?? 0) + 1; });
 
@@ -114,7 +114,8 @@ export default function DashboardPage() {
         totalPractices: practices.length,
         activeClients: allowedPracticeIds === null
           ? clienti.data?.length ?? 0
-          : new Set((clienti.data ?? []).map(row => row.client_id).filter(Boolean)).size,
+          : new Set(((clienti.data ?? []) as Array<{ client_id?: string | null }>)
+              .map(row => row.client_id).filter(Boolean)).size,
         totalBanks: banche.data?.length ?? 0,
         byStatus,
       });

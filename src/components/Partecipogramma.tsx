@@ -1,10 +1,17 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Building2, GitBranch, Loader2, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertCircle, Building2, Check, GitBranch, Loader2, RefreshCw, RotateCcw, Save, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { loadOwnershipDocuments } from '@/lib/loadOwnershipDocuments';
-import { buildOwnershipGraph, layoutOwnershipCompanies, ownershipBreakdown, type OwnershipDocument, type OwnershipNode } from '@/lib/partecipogramma';
+import {
+  buildOwnershipGraph, layoutOwnershipCompanies, ownershipBreakdown,
+  ownershipShareOverrideKey, parseOwnershipPercentage,
+  type OwnershipDocument, type OwnershipNode, type OwnershipShareOverrides,
+} from '@/lib/partecipogramma';
+import { supabase } from '@/lib/supabase';
 import type { Client } from '@/lib/types';
+import { toast } from 'sonner';
 
 const dateLabel = (date: string) => {
   const parsed = new Date(date);
@@ -15,9 +22,39 @@ const percentageLabel = (percentage: number | null) =>
 const moneyLabel = (value?: number) =>
   value == null ? 'Non rilevato' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(value);
 
+interface CompanyRevenue {
+  amount: number;
+  year: number;
+}
+
+function readShareOverrides(value: Record<string, unknown> | null | undefined): OwnershipShareOverrides {
+  const candidate = value?.partecipogramma_quote_overrides;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
+  return Object.fromEntries(Object.entries(candidate)
+    .filter((entry): entry is [string, string | number] =>
+      typeof entry[1] === 'string' || typeof entry[1] === 'number')
+    .filter(([, percentage]) => parseOwnershipPercentage(String(percentage)) !== null)
+    .map(([key, percentage]) => [key, String(percentage)]));
+}
+
+function companyNameKey(name: string): string {
+  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 const slicePalette = ['#2563eb', '#0d9488', '#9333ea', '#d97706', '#e11d48', '#4f46e5', '#65a30d', '#0891b2', '#c026d3', '#a16207'];
 
-function CompanyOwnership({ node, colors }: { node: OwnershipNode; colors: Map<string, string> }) {
+function CompanyOwnership({
+  node, colors, overrides, drafts, savingKey, onDraftChange, onSave, onReset,
+}: {
+  node: OwnershipNode;
+  colors: Map<string, string>;
+  overrides: OwnershipShareOverrides;
+  drafts: Record<string, string>;
+  savingKey: string | null;
+  onDraftChange: (key: string, value: string) => void;
+  onSave: (key: string) => void;
+  onReset: (key: string) => void;
+}) {
   const breakdown = ownershipBreakdown(node);
   let end = 0;
   const color = (id: string, missing: boolean) => missing ? 'var(--muted-foreground)' : colors.get(id) ?? slicePalette[0];
@@ -28,38 +65,83 @@ function CompanyOwnership({ node, colors }: { node: OwnershipNode; colors: Map<s
   });
   const unavailable = !breakdown.hasSource || breakdown.invalid;
   return (
-    <span className="mt-3 flex items-start gap-4">
+    <div className="mt-3 flex items-start gap-4">
       <span className="shrink-0 text-center">
         <span role="img" aria-label={unavailable ? 'Quote non rappresentabili' : `Quote dei soci di ${node.name}, dettagli nella legenda`}
           className="block h-28 w-28 rounded-full border border-border"
           style={{ background: unavailable || !segments.length ? 'var(--muted)' : `conic-gradient(${segments.join(', ')})` }} />
         <span className="mt-2 block text-[10px] text-muted-foreground">Quote dei soci</span>
       </span>
-      <span className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1">
         {!breakdown.hasSource ? (
-          <span className="block text-xs text-muted-foreground">Visura della società non disponibile. Caricala per visualizzare i suoi soci.</span>
-        ) : (
-          <>
-            {breakdown.slices.map((slice, index) => (
-              <span key={`${slice.id}:${index}`} className="flex h-[25px] items-center gap-2 text-xs">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: color(slice.id, slice.missing) }} />
-                <span className={`min-w-0 flex-1 truncate ${slice.missing ? 'italic text-muted-foreground' : ''}`} title={slice.name}>{slice.name}</span>
-                <span className="shrink-0 font-semibold tabular-nums">{percentageLabel(slice.percentage)}</span>
-              </span>
-            ))}
+        <div className="block text-xs text-muted-foreground">Visura della società non disponibile. Caricala per visualizzare i suoi soci.</div>
+      ) : (
+        <>
+            {breakdown.slices.map((slice, index) => {
+              const socio = node.details?.soci[index];
+              const documentIndex = socio && node.source ? node.source.soci.indexOf(socio) : index;
+              const key = socio ? ownershipShareOverrideKey(node.identifier, socio, documentIndex) : '';
+              const editable = Boolean(socio && (
+                !(socio.percentuale ?? '').trim()
+                || parseOwnershipPercentage(socio.percentuale ?? '') === null
+              ));
+              const draft = key ? (drafts[key] ?? overrides[key] ?? '') : '';
+              const draftIsValid = parseOwnershipPercentage(draft) !== null;
+              return (
+                <div key={`${slice.id}:${index}`} className="flex min-h-[25px] items-center gap-2 text-xs">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: color(slice.id, slice.missing) }} />
+                  <span className={`min-w-0 flex-1 truncate ${slice.missing ? 'italic text-muted-foreground' : ''}`} title={slice.name}>{slice.name}</span>
+                  {editable ? (
+                    <>
+                      <Input
+                        aria-label={`Quota percentuale di ${socio?.nome || 'socio'} in ${node.name}`}
+                        type="text" inputMode="decimal"
+                        className="h-7 w-20 px-2 text-right text-xs"
+                        placeholder="n.d."
+                        value={draft}
+                        onChange={event => onDraftChange(key, event.target.value)}
+                      />
+                      <span className="shrink-0">%</span>
+                      <Button
+                        type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0"
+                        aria-label={`Salva quota di ${socio?.nome || 'socio'}`}
+                        title="Salva quota"
+                        disabled={!draftIsValid || savingKey !== null || draft === overrides[key]}
+                        onClick={() => onSave(key)}
+                      >
+                        {overrides[key] === undefined ? <Save className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+                      </Button>
+                      {overrides[key] !== undefined && (
+                        <Button
+                          type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0"
+                          aria-label={`Ripristina quota non determinata di ${socio?.nome || 'socio'}`}
+                          title="Ripristina n.d."
+                          disabled={savingKey !== null}
+                          onClick={() => onReset(key)}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <span className="shrink-0 font-semibold tabular-nums">{percentageLabel(slice.percentage)}</span>
+                  )}
+                </div>
+              );
+            })}
             {breakdown.invalid ? (
-              <span className="mt-1 block text-[11px] text-amber-700 dark:text-amber-400">Quote incoerenti: totale {percentageLabel(breakdown.total)}. Torta sospesa, verificare la visura.</span>
+              <div className="mt-1 block text-[11px] text-amber-700 dark:text-amber-400">Quote incoerenti: totale {percentageLabel(breakdown.total)}. Torta sospesa, verificare la visura.</div>
             ) : breakdown.incomplete && (
-              <span className="mt-1 block text-[10px] text-muted-foreground">Il grigio indica quote non determinate, non un socio aggiuntivo.</span>
+              <div className="mt-1 block text-[10px] text-muted-foreground">Il grigio indica quote non determinate, non un socio aggiuntivo.</div>
             )}
           </>
         )}
-      </span>
-    </span>
+      </div>
+    </div>
   );
 }
 
-export default function Partecipogramma({ client }: { client: Client }) {
+export default function Partecipogramma({ client, practiceId }: { client: Client; practiceId?: string }) {
   const [documents, setDocuments] = useState<OwnershipDocument[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [fileCount, setFileCount] = useState(0);
@@ -70,10 +152,26 @@ export default function Partecipogramma({ client }: { client: Client }) {
   const [preferred, setPreferred] = useState<string[]>([]);
   const [zoom, setZoom] = useState(1);
   const [selectedKey, setSelectedKey] = useState('');
+  const [shareOverrides, setShareOverrides] = useState<OwnershipShareOverrides>(() => readShareOverrides(client.visura_json));
+  const [shareDrafts, setShareDrafts] = useState<Record<string, string>>({});
+  const [savingShareKey, setSavingShareKey] = useState<string | null>(null);
+  const [companyRevenues, setCompanyRevenues] = useState<Map<string, CompanyRevenue>>(new Map());
+  const [revenueLoadError, setRevenueLoadError] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
   const arrowId = useId().replace(/:/g, '');
   const clientId = client.id;
   const visuraJson = client.visura_json;
+
+  useEffect(() => {
+    setShareOverrides(readShareOverrides(visuraJson));
+    setShareDrafts({});
+    let active = true;
+    supabase.from('clients').select('visura_json').eq('id', clientId).maybeSingle()
+      .then(({ data, error: readError }) => {
+        if (active && !readError && data) setShareOverrides(readShareOverrides(data.visura_json));
+      });
+    return () => { active = false; };
+  }, [clientId, visuraJson]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -101,7 +199,39 @@ export default function Partecipogramma({ client }: { client: Client }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, visuraJson, refresh]);
 
-  const graph = useMemo(() => buildOwnershipGraph(client, documents, preferred), [client, documents, preferred]);
+  useEffect(() => {
+    let active = true;
+    let query = supabase.from('bilanci_kpi')
+      .select('ragione_sociale,ricavi_vendite,anno_esercizio,created_at,uploaded_files!inner(id),practices!inner(client_id)')
+      .order('anno_esercizio', { ascending: false })
+      .order('created_at', { ascending: false });
+    query = practiceId
+      ? query.eq('practice_id', practiceId)
+      : query.eq('practices.client_id', client.id);
+    query.then(({ data, error: queryError }) => {
+      if (!active) return;
+      if (queryError) {
+        setRevenueLoadError(true);
+        setCompanyRevenues(new Map());
+        return;
+      }
+      const revenues = new Map<string, CompanyRevenue>();
+      (data ?? []).forEach(row => {
+        const nameKey = companyNameKey(row.ragione_sociale ?? '');
+        if (row.ricavi_vendite == null || row.ricavi_vendite === '') return;
+        const amount = Number(row.ricavi_vendite);
+        const year = Number(row.anno_esercizio);
+        if (nameKey && Number.isFinite(amount) && Number.isFinite(year) && !revenues.has(nameKey)) {
+          revenues.set(nameKey, { amount, year });
+        }
+      });
+      setRevenueLoadError(false);
+      setCompanyRevenues(revenues);
+    });
+    return () => { active = false; };
+  }, [client.id, practiceId]);
+
+  const graph = useMemo(() => buildOwnershipGraph(client, documents, preferred, shareOverrides), [client, documents, preferred, shareOverrides]);
   const layout = useMemo(() => layoutOwnershipCompanies(graph), [graph]);
   const selected = layout.nodes.find(item => item.node.id === selectedKey);
   const colors = useMemo(() => {
@@ -109,6 +239,45 @@ export default function Partecipogramma({ client }: { client: Client }) {
     return new Map(ids.map((id, index) => [id, slicePalette[index % slicePalette.length]]));
   }, [graph]);
   const activeIds = new Set(graph.activeDocuments.map(doc => doc.id));
+
+  const persistShareOverrides = async (nextOverrides: OwnershipShareOverrides, key: string) => {
+    setSavingShareKey(key);
+    try {
+      const { data: currentClient, error: readError } = await supabase.from('clients')
+        .select('visura_json').eq('id', client.id).single();
+      if (readError) throw readError;
+      const currentJson = currentClient.visura_json && typeof currentClient.visura_json === 'object'
+        && !Array.isArray(currentClient.visura_json)
+        ? currentClient.visura_json as Record<string, unknown> : {};
+      const { error: writeError } = await supabase.from('clients').update({
+        visura_json: { ...currentJson, partecipogramma_quote_overrides: nextOverrides },
+      }).eq('id', client.id);
+      if (writeError) throw writeError;
+      setShareOverrides(nextOverrides);
+      setShareDrafts(value => { const copy = { ...value }; delete copy[key]; return copy; });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setSavingShareKey(null);
+    }
+  };
+
+  const saveShare = async (key: string) => {
+    const raw = shareDrafts[key] ?? shareOverrides[key] ?? '';
+    const percentage = parseOwnershipPercentage(raw);
+    if (percentage === null) return;
+    const nextOverrides = { ...shareOverrides, [key]: String(percentage) };
+    if (await persistShareOverrides(nextOverrides, key)) toast.success('Quota salvata');
+    else toast.error('Quota non salvata. Verifica i permessi e riprova.');
+  };
+
+  const resetShare = async (key: string) => {
+    const nextOverrides = { ...shareOverrides };
+    delete nextOverrides[key];
+    if (await persistShareOverrides(nextOverrides, key)) toast.success('Quota ripristinata come non determinata');
+    else toast.error('Impossibile ripristinare la quota');
+  };
 
   return (
     <Card>
@@ -180,18 +349,35 @@ export default function Partecipogramma({ client }: { client: Client }) {
                         ))}
                       </svg>
                       {layout.nodes.map(({ node, x, y, width, height }) => (
-                          <button key={node.id} type="button" onClick={() => setSelectedKey(node.id)}
-                            aria-pressed={selectedKey === node.id}
-                            aria-label={`Dettagli di ${node.name}`}
-                            className={`absolute rounded-xl border p-4 text-left shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:border-primary transition-colors ${node.isClient ? 'border-primary bg-card' : 'bg-card'} ${selectedKey === node.id ? 'ring-2 ring-primary' : ''}`}
+                          <div key={node.id} role="group" aria-label={`Società ${node.name}`}
+                            className={`absolute rounded-xl border p-4 text-left shadow-sm hover:border-primary transition-colors ${node.isClient ? 'border-primary bg-card' : 'bg-card'} ${selectedKey === node.id ? 'ring-2 ring-primary' : ''}`}
                             style={{ left: x, top: y, width, height }}>
                             <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                               <Building2 className="h-3.5 w-3.5 shrink-0" />{node.isClient ? 'Società cliente' : 'Società collegata'}
                             </span>
-                            <span className="mt-1.5 block truncate text-sm font-semibold leading-tight" title={node.name}>{node.name}</span>
+                            <button type="button" onClick={() => setSelectedKey(node.id)}
+                              aria-pressed={selectedKey === node.id}
+                              aria-label={`Dettagli di ${node.name}`}
+                              className="mt-1.5 block w-full truncate text-left text-sm font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              title={node.name}>{node.name}</button>
                             <span className="mt-1 block text-[11px] font-mono text-muted-foreground">CF {node.identifier || 'non rilevato'}</span>
-                            <CompanyOwnership node={node} colors={colors} />
-                          </button>
+                            <span className="mt-1 block truncate text-[10px] text-muted-foreground" title={`Amministratore: ${node.details?.amministratori[0]?.nome || 'non rilevato'}`}>
+                              Amministratore: {node.details?.amministratori[0]?.nome || 'non rilevato'}
+                              {node.details?.amministratori[0]?.carica ? ` · ${node.details.amministratori[0].carica}` : ''}
+                              {(node.details?.amministratori.length ?? 0) > 1 ? ` +${(node.details?.amministratori.length ?? 1) - 1}` : ''}
+                            </span>
+                            <span className="block truncate text-[10px] text-muted-foreground" title="Dato ricavato dai bilanci caricati nella pratica">
+                              Fatturato{companyRevenues.get(companyNameKey(node.name))
+                                ? ` ${companyRevenues.get(companyNameKey(node.name))?.year}: ${moneyLabel(companyRevenues.get(companyNameKey(node.name))?.amount)}`
+                                : revenueLoadError ? ': non disponibile' : ': non rilevato'}
+                            </span>
+                            <CompanyOwnership
+                              node={node} colors={colors} overrides={shareOverrides} drafts={shareDrafts}
+                              savingKey={savingShareKey}
+                              onDraftChange={(key, value) => setShareDrafts(current => ({ ...current, [key]: value }))}
+                              onSave={saveShare} onReset={resetShare}
+                            />
+                          </div>
                       ))}
                     </div>
                   </div>

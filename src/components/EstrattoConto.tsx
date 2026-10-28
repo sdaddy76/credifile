@@ -642,11 +642,18 @@ export function EstrattoConto({ practiceId }: Props) {
       ...transaction,
       practice_id: practiceId,
       file_nome: fileName,
-      ...enrichBankCostTransaction(transaction),
+      ...enrichBankCostTransaction({
+        ...transaction,
+        bank_cost_type: transaction.bank_cost_type as import('@/lib/bankCostAnalysis').BankCostType | null | undefined,
+      }),
     }));
 
-    setTransazioni(withMeta);
-    setKpi(calcolaKpi(withMeta));
+    const savedTransactions = withMeta.map(transaction => ({
+      ...transaction,
+      importo: Number(transaction.importo) || 0,
+    })) as Transazione[];
+    setTransazioni(savedTransactions);
+    setKpi(calcolaKpi(savedTransactions));
     setFileNome(fileName);
     toast.success(successMessage);
 

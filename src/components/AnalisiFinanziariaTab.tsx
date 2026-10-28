@@ -406,7 +406,7 @@ async function extractPdfText(file: File): Promise<string> {
       if (!context) throw new Error('Canvas OCR non disponibile nel browser');
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
-      await page.render({ canvasContext: context, viewport }).promise;
+      await page.render({ canvas, canvasContext: context, viewport }).promise;
       const result = await worker.recognize(canvas);
       if (result.data.text.trim()) ocrPages.push(result.data.text);
       canvas.width = 0;
@@ -1175,7 +1175,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             source: 'segnalatore' as const,
           };
         })
-        .filter((file): file is UploadedPdf => file !== null);
+        .filter((file): file is NonNullable<typeof file> => file !== null);
     });
     const nextPdfs = [...practicePdfs, ...publicPdfs]
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
@@ -1642,7 +1642,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             <p className="text-xs text-muted-foreground">Nessun PDF presente nella pratica.</p>
           )}
           <div className="flex gap-2 ml-auto">
-            <Button variant="outline" size="sm" onClick={loadData} disabled={analyzing}>
+            <Button variant="outline" size="sm" onClick={() => { void loadData(); }} disabled={analyzing}>
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Aggiorna
             </Button>
             {bilanci.length > 0 && (

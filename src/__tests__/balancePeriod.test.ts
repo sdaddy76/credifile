@@ -8,8 +8,8 @@ describe('period filtering for balance analysis', () => {
     const rows = [
       { data_valuta: '2025-01-15', importo: 500 },
       { data_valuta: '2026-01-15', importo: 900 },
-      { data_valuta: null, data_contabile: '2025-12-20', importo: 200 },
-      { data_valuta: null, data_contabile: null, importo: 100 },
+      { data_valuta: null as string | null, data_contabile: '2025-12-20', importo: 200 },
+      { data_valuta: null as string | null, data_contabile: null, importo: 100 },
     ];
 
     expect(transactionsForBalanceYear(rows, 2025)).toEqual([rows[0], rows[2]]);

@@ -329,7 +329,7 @@ export function analyzeDocumentCoherence(input: DocumentCoherenceInput): Documen
     });
   }
 
-  const financialDebtFields = latestBalance
+  const financialDebtFields: readonly (readonly [string, number | null])[] = latestBalance
     ? [
         ['debiti_banche_breve', numberValue(latestBalance.debiti_banche_breve)],
         ['debiti_banche_lungo', numberValue(latestBalance.debiti_banche_lungo)],

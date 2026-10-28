@@ -1,6 +1,6 @@
 import {
   buildOwnershipGraph, layoutOwnershipCompanies, normalizeTaxId, ownershipBreakdown,
-  ownershipCompanyIdentifiers, ownershipCompanyIdentity, ownershipDocumentDate, parseOwnershipPercentage,
+  ownershipCompanyIdentifiers, ownershipCompanyIdentity, ownershipDocumentDate, ownershipShareOverrideKey, parseOwnershipPercentage,
   type OwnershipDocument,
 } from '@/lib/partecipogramma';
 
@@ -24,6 +24,15 @@ describe('partecipogramma: identità e quote', () => {
     expect(parseOwnershipPercentage('60,125%')).toBe(60.125);
     expect(parseOwnershipPercentage('0%')).toBe(0);
     ['', '10.000,00 Euro', '110%', '-5%', 'n.d.'].forEach(value => expect(parseOwnershipPercentage(value)).toBeNull());
+  });
+
+  it('crea chiavi stabili per le rettifiche manuali anche senza CF del socio', () => {
+    expect(ownershipShareOverrideKey('01234567890', {
+      nome: 'Società Èlite S.R.L.', codice_fiscale: '',
+    }, 2)).toBe('01234567890:societaelitesrl:2');
+    expect(ownershipShareOverrideKey('IT 01234567890', {
+      nome: 'Mario Rossi', codice_fiscale: 'RSSMRA80A01H501Z',
+    }, 2)).toBe('01234567890:RSSMRA80A01H501Z');
   });
 
   it('non associa il CF del socio alla P.IVA della partecipata', () => {
@@ -94,6 +103,21 @@ describe('partecipogramma: collegamenti e versioni', () => {
       soci: expect.arrayContaining([expect.objectContaining({ nome: 'BETA HOLDING' })]),
       amministratori: [expect.objectContaining({ carica: 'Amministratore unico' })],
     }));
+  });
+
+  it('applica le quote manuali solo quando la visura non ne determina una', () => {
+    const source = doc('ALFA SRL', client.piva, [
+      ['ROSSI MARIO', 'RSSMRA80A01H501Z', ''],
+      ['BIANCHI LUIGI', 'BNCLGU80A01H501X', '60%'],
+    ]);
+    const overrides = {
+      [ownershipShareOverrideKey(client.piva, source.soci[0])]: '40',
+      [ownershipShareOverrideKey(client.piva, source.soci[1])]: '50',
+    };
+    const graph = buildOwnershipGraph(client, [source], [], overrides);
+    const company = graph.nodes.find(node => node.isClient)!;
+    expect(company.source?.soci.map(socio => socio.percentuale)).toEqual(['40%', '60%']);
+    expect(ownershipBreakdown(company).slices.map(slice => slice.percentage)).toEqual([40, 60]);
   });
 
   it('mostra anche le società partecipate dal cliente e i soci comuni', () => {

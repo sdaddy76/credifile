@@ -4395,7 +4395,7 @@ export default function PraticaDetailPage() {
             </TabsContent>
 
             <TabsContent value="partecipogramma" className="mt-3">
-              {client && <Partecipogramma key={client.id} client={client} />}
+              {client && id && <Partecipogramma key={client.id} client={client} practiceId={id} />}
             </TabsContent>
 
             <TabsContent value="coerenza" className="mt-3">
