@@ -80,7 +80,8 @@ function CompanyOwnership({
             {breakdown.slices.map((slice, index) => {
               const socio = node.details?.soci[index];
               const documentIndex = socio && node.source ? node.source.soci.indexOf(socio) : index;
-              const key = socio ? ownershipShareOverrideKey(node.identifier, socio, documentIndex) : '';
+              const companyIdentifier = node.source?.identifiers.find(identifier => identifier.trim()) || node.identifier;
+              const key = socio ? ownershipShareOverrideKey(companyIdentifier, socio, documentIndex) : '';
               const editable = Boolean(socio && (
                 !(socio.percentuale ?? '').trim()
                 || parseOwnershipPercentage(socio.percentuale ?? '') === null
