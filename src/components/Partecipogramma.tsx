@@ -1,13 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Building2, Check, GitBranch, Loader2, RefreshCw, RotateCcw, Save, UserRound, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertCircle, Banknote, Building2, Check, GitBranch, Loader2, RefreshCw, RotateCcw, Save, UserRound, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { loadOwnershipDocuments } from '@/lib/loadOwnershipDocuments';
 import {
-  buildOwnershipGraph, layoutOwnershipCompanies, ownershipBreakdown,
+  buildCompanyRevenueHistory, buildOwnershipGraph, companyRevenueNameKey, layoutOwnershipCompanies, ownershipBreakdown,
   ownershipShareOverrideKey, parseOwnershipPercentage,
-  type OwnershipDocument, type OwnershipNode, type OwnershipShareOverrides,
+  type CompanyRevenue, type OwnershipDocument, type OwnershipNode, type OwnershipShareOverrides,
 } from '@/lib/partecipogramma';
 import { supabase } from '@/lib/supabase';
 import type { Client } from '@/lib/types';
@@ -22,11 +22,6 @@ const percentageLabel = (percentage: number | null) =>
 const moneyLabel = (value?: number) =>
   value == null ? 'Non rilevato' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(value);
 
-interface CompanyRevenue {
-  amount: number;
-  year: number;
-}
-
 function readShareOverrides(value: Record<string, unknown> | null | undefined): OwnershipShareOverrides {
   const candidate = value?.partecipogramma_quote_overrides;
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
@@ -35,10 +30,6 @@ function readShareOverrides(value: Record<string, unknown> | null | undefined): 
       typeof entry[1] === 'string' || typeof entry[1] === 'number')
     .filter(([, percentage]) => parseOwnershipPercentage(String(percentage)) !== null)
     .map(([key, percentage]) => [key, String(percentage)]));
-}
-
-function companyNameKey(name: string): string {
-  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 const slicePalette = ['#2563eb', '#0d9488', '#9333ea', '#d97706', '#e11d48', '#4f46e5', '#65a30d', '#0891b2', '#c026d3', '#a16207'];
@@ -165,7 +156,7 @@ export default function Partecipogramma({ client, practiceId }: { client: Client
   const [shareOverrides, setShareOverrides] = useState<OwnershipShareOverrides>(() => readShareOverrides(client.visura_json));
   const [shareDrafts, setShareDrafts] = useState<Record<string, string>>({});
   const [savingShareKey, setSavingShareKey] = useState<string | null>(null);
-  const [companyRevenues, setCompanyRevenues] = useState<Map<string, CompanyRevenue>>(new Map());
+  const [companyRevenues, setCompanyRevenues] = useState<Map<string, CompanyRevenue[]>>(new Map());
   const [revenueLoadError, setRevenueLoadError] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
   const arrowId = useId().replace(/:/g, '');
@@ -225,24 +216,20 @@ export default function Partecipogramma({ client, practiceId }: { client: Client
         setCompanyRevenues(new Map());
         return;
       }
-      const revenues = new Map<string, CompanyRevenue>();
-      (data ?? []).forEach(row => {
-        const nameKey = companyNameKey(row.ragione_sociale ?? '');
-        if (row.ricavi_vendite == null || row.ricavi_vendite === '') return;
-        const amount = Number(row.ricavi_vendite);
-        const year = Number(row.anno_esercizio);
-        if (nameKey && Number.isFinite(amount) && Number.isFinite(year) && !revenues.has(nameKey)) {
-          revenues.set(nameKey, { amount, year });
-        }
-      });
       setRevenueLoadError(false);
-      setCompanyRevenues(revenues);
+      setCompanyRevenues(buildCompanyRevenueHistory(data ?? []));
     });
     return () => { active = false; };
   }, [client.id, practiceId]);
 
   const graph = useMemo(() => buildOwnershipGraph(client, documents, preferred, shareOverrides), [client, documents, preferred, shareOverrides]);
-  const layout = useMemo(() => layoutOwnershipCompanies(graph), [graph]);
+  const revenueExtraHeights = useMemo(() => new Map(
+      graph.nodes.map(node => [
+        node.id,
+      Math.max(0, ((companyRevenues.get(companyRevenueNameKey(node.name))?.length ?? 0) - 1) * 18),
+      ]),
+  ), [companyRevenues, graph]);
+  const layout = useMemo(() => layoutOwnershipCompanies(graph, revenueExtraHeights), [graph, revenueExtraHeights]);
   const selected = layout.nodes.find(item => item.node.id === selectedKey);
   const colors = useMemo(() => {
     const ids = [...new Set(graph.nodes.flatMap(node => ownershipBreakdown(node).slices.filter(slice => !slice.missing).map(slice => slice.id)))].sort();
@@ -370,12 +357,23 @@ export default function Partecipogramma({ client, practiceId }: { client: Client
                               aria-label={`Dettagli di ${node.name}`}
                               className="mt-1.5 block w-full truncate text-left text-sm font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               title={node.name}>{node.name}</button>
+                            <div className="mt-1 space-y-0.5" title="Dati ricavati dai bilanci caricati nella pratica">
+                              {(companyRevenues.get(companyRevenueNameKey(node.name)) ?? []).length > 0 ? (
+                                companyRevenues.get(companyRevenueNameKey(node.name))!.map(revenue => (
+                                  <span key={revenue.year} className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground">
+                                    <Banknote className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                    <span className="shrink-0 font-medium">Fatturato {revenue.year}:</span>
+                                    <span className="truncate">{moneyLabel(revenue.amount)}</span>
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground">
+                                  <Banknote className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                  <span>{revenueLoadError ? 'Fatturato: non disponibile' : 'Fatturato: non rilevato'}</span>
+                                </span>
+                              )}
+                            </div>
                             <span className="mt-1 block text-[11px] font-mono text-muted-foreground">CF {node.identifier || 'non rilevato'}</span>
-                            <span className="block truncate text-[10px] text-muted-foreground" title="Dato ricavato dai bilanci caricati nella pratica">
-                              Fatturato{companyRevenues.get(companyNameKey(node.name))
-                                ? ` ${companyRevenues.get(companyNameKey(node.name))?.year}: ${moneyLabel(companyRevenues.get(companyNameKey(node.name))?.amount)}`
-                                : revenueLoadError ? ': non disponibile' : ': non rilevato'}
-                            </span>
                             <CompanyOwnership
                               node={node} colors={colors} overrides={shareOverrides} drafts={shareDrafts}
                               savingKey={savingShareKey}

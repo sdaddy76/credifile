@@ -49,6 +49,35 @@ export interface OwnershipGraph {
 
 export type OwnershipShareOverrides = Record<string, string>;
 
+export interface CompanyRevenue {
+  amount: number;
+  year: number;
+}
+
+export function companyRevenueNameKey(name: string): string {
+  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+export function buildCompanyRevenueHistory(
+  rows: { ragione_sociale?: string | null; ricavi_vendite: string | number | null; anno_esercizio: string | number | null }[],
+): Map<string, CompanyRevenue[]> {
+  const revenues = new Map<string, CompanyRevenue[]>();
+  rows.forEach(row => {
+    const nameKey = companyRevenueNameKey(row.ragione_sociale ?? '');
+    if (!nameKey || row.ricavi_vendite == null || row.ricavi_vendite === '') return;
+    const amount = Number(row.ricavi_vendite);
+    const year = Number(row.anno_esercizio);
+    if (!Number.isFinite(amount) || !Number.isFinite(year)) return;
+    const companyRevenuesForYear = revenues.get(nameKey) ?? [];
+    if (!companyRevenuesForYear.some(revenue => revenue.year === year)) {
+      companyRevenuesForYear.push({ amount, year });
+      companyRevenuesForYear.sort((left, right) => right.year - left.year);
+      revenues.set(nameKey, companyRevenuesForYear);
+    }
+  });
+  return revenues;
+}
+
 export function normalizeTaxId(value?: string): string {
   const normalized = (value ?? '').toUpperCase().replace(/[\s.-]/g, '').replace(/^IT(?=\d{11}$)/, '');
   return /^(?:\d{11}|[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])$/.test(normalized) ? normalized : '';
@@ -249,7 +278,7 @@ export function ownershipBreakdown(node: OwnershipNode) {
 }
 
 /** Una sola scheda per società; le persone fisiche sono nella torta e nella legenda. */
-export function layoutOwnershipCompanies(graph: OwnershipGraph) {
+export function layoutOwnershipCompanies(graph: OwnershipGraph, extraHeights: Map<string, number> = new Map()) {
   const companies = graph.nodes.filter(node => node.kind === 'company');
   const ids = new Set(companies.map(node => node.id));
   const relations = graph.edges.filter(edge => ids.has(edge.owner) && ids.has(edge.company));
@@ -285,7 +314,8 @@ export function layoutOwnershipCompanies(graph: OwnershipGraph) {
   const nodes: { node: OwnershipNode; x: number; y: number; width: number; height: number }[] = [];
   let y = 24;
   [...rows.entries()].sort(([a], [b]) => a - b).forEach(([, row]) => {
-    const heights = row.map(node => Math.max(390, 290 + ownershipBreakdown(node).slices.length * 30));
+    const heights = row.map(node =>
+      Math.max(390, 290 + ownershipBreakdown(node).slices.length * 30) + (extraHeights.get(node.id) ?? 0));
     row.forEach((node, index) => nodes.push({
       node, x: (width - row.length * 560) / 2 + index * 560 + 20, y,
       width: 520, height: heights[index],

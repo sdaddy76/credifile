@@ -1,5 +1,5 @@
 import {
-  buildOwnershipGraph, layoutOwnershipCompanies, normalizeTaxId, ownershipBreakdown,
+  buildCompanyRevenueHistory, buildOwnershipGraph, companyRevenueNameKey, layoutOwnershipCompanies, normalizeTaxId, ownershipBreakdown,
   ownershipCompanyIdentifiers, ownershipCompanyIdentity, ownershipDocumentDate, ownershipShareOverrideKey, parseOwnershipPercentage,
   type OwnershipDocument,
 } from '@/lib/partecipogramma';
@@ -14,6 +14,34 @@ const doc = (id: string, companyId: string, owners: [string, string, string][], 
 });
 
 describe('partecipogramma: identità e quote', () => {
+  it('raccoglie tutte le annualità dei bilanci, ordinate dalla più recente e senza duplicare l’anno', () => {
+    const revenues = buildCompanyRevenueHistory([
+      { ragione_sociale: 'Alfa S.r.l.', ricavi_vendite: 1200, anno_esercizio: 2023 },
+      { ragione_sociale: 'ALFA SRL', ricavi_vendite: 1500, anno_esercizio: 2024 },
+      { ragione_sociale: 'Alfa S.r.l.', ricavi_vendite: 1250, anno_esercizio: 2023 },
+      { ragione_sociale: 'Beta S.r.l.', ricavi_vendite: 800, anno_esercizio: 2024 },
+      { ragione_sociale: 'Alfa S.r.l.', ricavi_vendite: null, anno_esercizio: 2025 },
+    ]);
+
+    expect(companyRevenueNameKey('Alfa S.r.l.')).toBe(companyRevenueNameKey('ALFA SRL'));
+    expect(revenues.get(companyRevenueNameKey('Alfa S.r.l.'))).toEqual([
+      { amount: 1500, year: 2024 },
+      { amount: 1200, year: 2023 },
+    ]);
+    expect(revenues.get(companyRevenueNameKey('Beta S.r.l.'))).toEqual([{ amount: 800, year: 2024 }]);
+  });
+
+  it('aumenta la scheda societaria per ospitare più annualità di fatturato', () => {
+    const graph = buildOwnershipGraph(client, [
+      doc('ALFA SRL', client.piva, [['ROSSI MARIO', 'RSSMRA80A01H501Z', '100%']]),
+    ]);
+    const company = graph.nodes.find(node => node.isClient)!;
+    const baseHeight = layoutOwnershipCompanies(graph).nodes.find(item => item.node.id === company.id)!.height;
+    const expandedHeight = layoutOwnershipCompanies(graph, new Map([[company.id, 36]]))
+      .nodes.find(item => item.node.id === company.id)!.height;
+    expect(expandedHeight).toBe(baseHeight + 36);
+  });
+
   it('normalizza CF/P.IVA ma non fonde identificativi non riconoscibili', () => {
     expect(normalizeTaxId('IT 01234567890')).toBe('01234567890');
     expect(normalizeTaxId('rssmra80a01h501z')).toBe('RSSMRA80A01H501Z');
