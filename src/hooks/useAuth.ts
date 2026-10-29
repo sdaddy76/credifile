@@ -16,6 +16,10 @@ interface AuthProfile {
   nome?: string;
 }
 
+function normalizeAssuranceLevel(value: unknown): AssuranceLevel {
+  return value === 'aal1' || value === 'aal2' ? value : null;
+}
+
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -33,8 +37,11 @@ export function useAuth() {
       setCurrentAal(null);
       setNextAal(null);
     } else {
-      setCurrentAal(data.currentLevel);
-      setNextAal(data.nextLevel);
+      // Le tipizzazioni Supabase possono includere livelli futuri oltre a
+      // quelli gestiti dall'applicazione: normalizza invece di assegnarli
+      // direttamente allo stato ristretto AssuranceLevel.
+      setCurrentAal(normalizeAssuranceLevel(data.currentLevel));
+      setNextAal(normalizeAssuranceLevel(data.nextLevel));
     }
     setMfaLoading(false);
   }, []);
