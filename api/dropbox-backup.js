@@ -108,6 +108,42 @@ async function dropboxUploadBuffer(token, path, buffer) {
   if (!r.ok) throw new Error(`Dropbox upload error ${r.status}: ${await r.text()}`);
 }
 
+async function ensureDropboxFolder(token, path) {
+  if (!path || path === '/') return;
+  const r = await fetchWithRetry('https://api.dropboxapi.com/2/files/create_folder_v2', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ path, autorename: false }),
+  }, `Dropbox create folder ${path}`);
+  if (r.ok) return;
+  // La cartella già esistente è il risultato desiderato per un backup
+  // ripetibile: Dropbox risponde 409 path/conflict/folder.
+  if (r.status === 409) {
+    const body = await r.text();
+    if (/path\/conflict\/folder|already exists|conflict/i.test(body)) return;
+    throw new Error(`Dropbox create folder error ${r.status}: ${body}`);
+  }
+  throw new Error(`Dropbox create folder error ${r.status}: ${await r.text()}`);
+}
+
+async function ensureDropboxPath(token, path, cache) {
+  const segments = path.split('/').filter(Boolean);
+  let current = '';
+  for (const segment of segments) {
+    current += `/${segment}`;
+    if (cache.has(current)) {
+      await cache.get(current);
+      continue;
+    }
+    const promise = ensureDropboxFolder(token, current);
+    cache.set(current, promise);
+    await promise;
+  }
+}
+
 async function dropboxApi(token, endpoint, body) {
   const r = await fetchWithRetry(`https://api.dropboxapi.com/2/${endpoint}`, {
     method: 'POST',
@@ -669,6 +705,8 @@ export default async function handler(req, res) {
     const errors = [];
 
     let nextIndex = 0;
+    const ensuredDropboxFolders = new Map();
+    await ensureDropboxPath(token, FILES_ROOT, ensuredDropboxFolders);
     const workerCount = Math.min(4, Math.max(1, filePaths.length));
     const worker = async () => {
       while (true) {
@@ -678,6 +716,8 @@ export default async function handler(req, res) {
         try {
           const buf = await downloadStorageFile(storagePath);
           const dbxPath = `/Apps/Credifile/files/${storagePath}`;
+          const parentPath = dbxPath.slice(0, dbxPath.lastIndexOf('/'));
+          await ensureDropboxPath(token, parentPath, ensuredDropboxFolders);
           await dropboxUploadBuffer(token, dbxPath, buf);
           files_ok++;
           console.log(`OK: ${storagePath} (${Math.round(buf.length / 1024)} KB)`);

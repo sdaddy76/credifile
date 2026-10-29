@@ -356,6 +356,9 @@ export default function ImpostazioniPage() {
                 /Apps/Credifile/backups/backup_YYYY-MM-DD.json
               </code>
               <p className="text-xs text-muted-foreground mt-1">
+                Il JSON contiene i dati del database. I file fisici vengono salvati separatamente in{' '}
+                <code>/Apps/Credifile/files/</code> mantenendo la stessa struttura delle cartelle Storage.
+                <br />
                 Il file <code>backup_latest.json</code> contiene sempre l'ultimo backup disponibile.
               </p>
             </div>
