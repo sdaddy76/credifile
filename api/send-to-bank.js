@@ -89,6 +89,72 @@ function getStructuralSignalId(signal) {
     .join('|');
 }
 
+function formatPercentage(value) {
+  if (value == null || String(value).trim() === '') return 'n.d.';
+  const normalized = String(value).trim().replace(',', '.').replace(/%/g, '');
+  const number = Number(normalized);
+  return Number.isFinite(number)
+    ? `${number.toLocaleString('it-IT', { maximumFractionDigits: 4 })}%`
+    : `${String(value).trim()}%`;
+}
+
+function buildOwnershipEmailSection(client, clientDetails = {}) {
+  const source = { ...(clientDetails ?? {}), ...(client ?? {}) };
+  const soci = Array.isArray(source.soci) ? source.soci : [];
+  const amministratori = Array.isArray(source.amministratori) ? source.amministratori : [];
+  if (soci.length === 0 && amministratori.length === 0) return '';
+
+  const administratorRows = amministratori
+    .filter(administrator => administrator && (administrator.nome || administrator.carica))
+    .map((administrator, index) => `
+      <tr style="background:${index % 2 === 0 ? '#fff' : '#f8fafc'};">
+        <td style="padding:6px 10px;color:#64748b;width:38%;">${escapeHtml(administrator.carica || 'Amministratore')}</td>
+        <td style="padding:6px 10px;font-weight:600;color:#1e293b;">${escapeHtml(administrator.nome || 'Non indicato')}</td>
+      </tr>`)
+    .join('');
+
+  const shareholderRows = soci
+    .filter(shareholder => shareholder && shareholder.nome)
+    .map((shareholder, index) => `
+      <tr style="background:${index % 2 === 0 ? '#fff' : '#f8fafc'};">
+        <td style="padding:6px 10px;color:#374151;font-weight:600;">${escapeHtml(shareholder.nome)}</td>
+        <td style="padding:6px 10px;text-align:right;color:#1e3a5f;font-weight:700;white-space:nowrap;">${escapeHtml(formatPercentage(shareholder.percentuale))}</td>
+      </tr>`)
+    .join('');
+
+  const companyName = source.ragione_sociale || 'Società';
+  const companyIdentifier = source.piva || source.codice_fiscale;
+  const companyMeta = [
+    companyIdentifier ? `P.IVA/C.F. ${escapeHtml(companyIdentifier)}` : '',
+    source.capitale_sociale != null ? `Capitale sociale € ${safeFmt(source.capitale_sociale)}` : '',
+  ].filter(Boolean).join(' · ');
+
+  return `
+<h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
+  🧩 Partecipogramma societario
+</h3>
+<div style="margin-top:8px;border:1px solid #dbe4ee;border-radius:8px;overflow:hidden;">
+  <div style="background:#f8fafc;padding:10px 12px;border-bottom:1px solid #e2e8f0;">
+    <strong style="color:#1e293b;">${escapeHtml(companyName)}</strong>
+    ${companyMeta ? `<div style="margin-top:3px;font-size:11px;color:#64748b;">${companyMeta}</div>` : ''}
+  </div>
+  ${administratorRows ? `
+  <div style="padding:9px 12px 4px;font-size:12px;font-weight:700;color:#475569;">👤 Amministratori</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <tbody>${administratorRows}</tbody>
+  </table>` : ''}
+  ${shareholderRows ? `
+  <div style="padding:12px 12px 4px;font-size:12px;font-weight:700;color:#475569;">📊 Soci e quote</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead><tr style="background:#eff6ff;">
+      <th style="padding:6px 10px;text-align:left;color:#1e3a5f;font-weight:700;">Socio</th>
+      <th style="padding:6px 10px;text-align:right;color:#1e3a5f;font-weight:700;">Quota</th>
+    </tr></thead>
+    <tbody>${shareholderRows}</tbody>
+  </table>` : ''}
+</div>`;
+}
+
 // ── calcolaScore (replica IndiceBancabilita.tsx) ───────────────────────────
 function calcolaScoreNode(valore, ottimo, suff, critica, inverso) {
   if (ottimo === null || suff === null || critica === null) return 50;
@@ -381,7 +447,7 @@ export default async function handler(req, res) {
       structuredRequirementsRaw,
     ] = await Promise.all([
       fetch(
-        `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
+        `${SUPABASE_URL}/rest/v1/practices?id=eq.${encodeURIComponent(practice_id)}&select=*,clients(id,ragione_sociale,codice_fiscale,piva,soci,amministratori,capitale_sociale),agent:admin_profiles!practices_assigned_to_fkey(id,nome,email)&limit=1`,
         { headers: H },
       ).then(r => r.json()),
       fetch(
@@ -651,7 +717,7 @@ export default async function handler(req, res) {
     let clienteExt = {};
     if (!integrationMode && clientId) {
       const cExt = await fetch(
-        `${SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(clientId)}&select=data_costituzione,forma_giuridica,capitale_sociale,codice_ateco,ateco_descrizione,visura_json,indirizzo`,
+        `${SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(clientId)}&select=ragione_sociale,codice_fiscale,piva,soci,amministratori,data_costituzione,forma_giuridica,capitale_sociale,codice_ateco,ateco_descrizione,visura_json,indirizzo`,
         { headers: H },
       ).then(r => r.json()).catch(() => []);
       clienteExt = Array.isArray(cExt) && cExt[0] ? cExt[0] : {};
@@ -762,6 +828,9 @@ export default async function handler(req, res) {
   ${bankRequestReason ? `<p style="margin:4px 0;font-size:13px;white-space:pre-wrap;"><strong>Motivazione:</strong> ${escapeHtml(String(bankRequestReason))}</p>` : ''}
 </div>`
       : '';
+    const partecipogrammaSection = safeSection(
+      buildOwnershipEmailSection(pratica.clients, clienteExt),
+    );
 
     const docsHtml = docLinks.length > 0
       ? docLinks.map(d =>
@@ -1182,6 +1251,7 @@ ${bankRequestSection}
 ${structuredRequirementsSection}
 ${profiloSection}
 ${visuraSection}
+${partecipogrammaSection}
 ${kpiSection}
 ${generalSection}
 ${confrontoSection}

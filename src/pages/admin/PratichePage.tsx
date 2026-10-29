@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send, CheckCircle2, Clock, LayoutList, Columns, Download, Copy } from 'lucide-react';
+import { Plus, Search, FolderOpen, Eye, Calendar, Euro, Trash2, Building2, Send, CheckCircle2, Clock, LayoutList, Columns, Download, Copy, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { STATUS_LABELS, STATUS_COLORS, type Practice, type Client, type Bank } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -20,6 +20,25 @@ import {
   initializePracticeDocuments,
   isVisuraDocumentName,
 } from '@/lib/clientVisura';
+
+type PracticeAnomalyFinding = {
+  title?: string;
+  severity?: 'alta' | 'media' | 'bassa' | string;
+  evidence?: string[];
+};
+
+type PracticeAnomalyReport = {
+  id: string;
+  anno_esercizio?: number | null;
+  anomaly_score?: number | null;
+  anomaly_level?: string | null;
+  anomaly_analysis?: {
+    score?: number;
+    level?: string;
+    findings?: PracticeAnomalyFinding[];
+    disclaimer?: string;
+  } | null;
+};
 
 export default function PratichePage() {
   const navigate = useNavigate();
@@ -60,6 +79,7 @@ export default function PratichePage() {
   const [allAssignedBankIds, setAllAssignedBankIds] = useState<string[]>([]);
   const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
   const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
+  const [practiceAnomalies, setPracticeAnomalies] = useState<PracticeAnomalyReport[]>([]);
   const [viewMode, setViewMode] = useState<'lista' | 'kanban'>('lista');
   const [draggedId, setDraggedId] = useState<string | null>(null);
   // Duplicazione pratica (solo super_admin)
@@ -75,13 +95,25 @@ export default function PratichePage() {
     setAssignBankNote('');
     setSendBankEmail(false);
     setForceSendWithoutRelation(false);
+    setPracticeAnomalies([]);
     setLoadingBankDialog(true);
-    // Carica tutti i bank_id assegnati alla pratica (senza filtro created_by) per il dropdown
-    const { data: allBanks } = await supabase
-      .from('practice_banks')
-      .select('bank_id')
-      .eq('practice_id', practice.id);
+    // Carica assegnazioni e anomalie in parallelo. Le anomalie restano
+    // esclusivamente nella schermata interna e non vengono inviate alla banca.
+    const [{ data: allBanks }, { data: anomalyRows }] = await Promise.all([
+      supabase
+        .from('practice_banks')
+        .select('bank_id')
+        .eq('practice_id', practice.id),
+      supabase
+        .from('bilanci_kpi')
+        .select('id,anno_esercizio,anomaly_score,anomaly_level,anomaly_analysis')
+        .eq('practice_id', practice.id)
+        .not('anomaly_analysis', 'is', null)
+        .order('anno_esercizio', { ascending: false })
+        .limit(5),
+    ]);
     setAllAssignedBankIds((allBanks ?? []).map((r: { bank_id: string }) => r.bank_id));
+    setPracticeAnomalies((anomalyRows ?? []) as PracticeAnomalyReport[]);
     // Carica le banche visibili a questa segreteria (filtrate per created_by)
     let q = supabase
       .from('practice_banks')
@@ -104,6 +136,7 @@ export default function PratichePage() {
     setAllAssignedBankIds([]);
     setSendNoteFor({});
     setShowNoteFor({});
+    setPracticeAnomalies([]);
   }
 
   async function handleSendExisting(bankId: string) {
@@ -842,6 +875,62 @@ export default function PratichePage() {
                   {(showAssignBank as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? '—'}
                 </p>
                 <p className="text-xs text-muted-foreground font-mono">{showAssignBank.numero_pratica}</p>
+              </div>
+            )}
+
+            {/* Riepilogo interno delle anomalie: non viene mai incluso nell'email banca. */}
+            {practiceAnomalies.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 space-y-3">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-900">Anomalie di bilancio da approfondire</p>
+                    <p className="text-[11px] leading-relaxed text-amber-800">
+                      Riepilogo riservato al consulente. Queste informazioni non vengono inserite nell’email inviata alla banca.
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {practiceAnomalies.map(report => {
+                    const analysis = report.anomaly_analysis;
+                    const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+                    const score = report.anomaly_score ?? analysis?.score;
+                    const level = report.anomaly_level ?? analysis?.level ?? 'da verificare';
+                    return (
+                      <div key={report.id} className="rounded-md border border-amber-200 bg-white/80 p-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-foreground">Bilancio {report.anno_esercizio ?? '—'}</span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                            {score != null ? `${score}/100 · ` : ''}{level}
+                          </span>
+                        </div>
+                        {findings.length === 0 ? (
+                          <p className="mt-1 text-[11px] text-muted-foreground">Nessuna segnalazione automatica disponibile.</p>
+                        ) : (
+                          <ul className="mt-1.5 space-y-1.5">
+                            {findings.map((finding, index) => {
+                              const severityClass = finding.severity === 'alta'
+                                ? 'text-red-700'
+                                : finding.severity === 'media'
+                                  ? 'text-orange-700'
+                                  : 'text-amber-700';
+                              return (
+                                <li key={`${report.id}:${finding.title ?? index}`} className="text-[11px] leading-relaxed">
+                                  <span className={`font-semibold ${severityClass}`}>
+                                    {finding.severity ? `${finding.severity.toUpperCase()} · ` : ''}{finding.title ?? 'Voce da approfondire'}
+                                  </span>
+                                  {finding.evidence?.[0] && (
+                                    <span className="text-muted-foreground"> — {finding.evidence[0]}</span>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
