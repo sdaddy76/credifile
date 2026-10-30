@@ -1591,6 +1591,30 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const selectedAlerts = selectedBilancio
     ? anomalyAlerts.filter(alert => alert.bilancio_id === selectedBilancio.id)
     : [];
+  const analyzedBilanci = bilanci.filter(
+    (bilancio): bilancio is BilancioRecord & { anomaly_analysis: BalanceAnomalyAnalysis } =>
+      Boolean(bilancio.anomaly_analysis),
+  );
+  const latestAnalyzedBilancio = analyzedBilanci[0] ?? null;
+  const totalAnomalyFindings = analyzedBilanci.reduce(
+    (total, bilancio) => total + bilancio.anomaly_analysis.findings.length,
+    0,
+  );
+  const openAnomalyAlerts = anomalyAlerts.filter(
+    alert => alert.active && alert.status === 'open',
+  ).length;
+  const severityOrder: Record<BalanceAnomalyAnalysis['findings'][number]['severity'], number> = {
+    alta: 0,
+    media: 1,
+    bassa: 2,
+  };
+  const summaryFindings = analyzedBilanci
+    .flatMap(bilancio => bilancio.anomaly_analysis.findings.map(finding => ({
+      ...finding,
+      anno_esercizio: bilancio.anno_esercizio,
+    })))
+    .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
+    .slice(0, 4);
 
   return (
     <div className="space-y-4">
@@ -1611,6 +1635,108 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
               : `${unlinkedBalanceCount} analisi salvate non sono più collegate a documenti presenti nella pratica e non vengono mostrate. Seleziona i bilanci corretti e clicca “Analizza” per rigenerare i KPI.`}
           </div>
         )}
+
+        <Card className={
+          latestAnalyzedBilancio?.anomaly_analysis.level === 'critico'
+            ? 'border-red-300 bg-red-50/30'
+            : latestAnalyzedBilancio?.anomaly_analysis.level === 'elevato'
+              ? 'border-orange-300 bg-orange-50/30'
+              : latestAnalyzedBilancio?.anomaly_analysis.level === 'attenzione'
+                ? 'border-amber-300 bg-amber-50/30'
+                : analyzedBilanci.length > 0
+                  ? 'border-green-200 bg-green-50/30'
+                  : 'border-slate-200 bg-slate-50/50'
+        }>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600" />
+                Riepilogo anomalie bilanci
+              </span>
+              <Badge variant="outline" className="text-[10px] font-medium">
+                Riservato al consulente
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {analyzedBilanci.length === 0 ? (
+              <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                <p>
+                  La sintesi comparirà qui dopo aver selezionato un PDF nella pratica e premuto
+                  <strong className="text-foreground"> Analizza</strong>. Le segnalazioni restano
+                  interne e non vengono inserite nell’email alla banca.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-md border bg-background/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bilanci analizzati</p>
+                    <p className="mt-1 text-lg font-semibold text-foreground">{analyzedBilanci.length}</p>
+                  </div>
+                  <div className="rounded-md border bg-background/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Segnalazioni</p>
+                    <p className="mt-1 text-lg font-semibold text-foreground">{totalAnomalyFindings}</p>
+                  </div>
+                  <div className="rounded-md border bg-background/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Alert aperti</p>
+                    <p className="mt-1 text-lg font-semibold text-foreground">{openAnomalyAlerts}</p>
+                  </div>
+                  <div className="rounded-md border bg-background/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Ultimo esercizio</p>
+                    <p className="mt-1 text-lg font-semibold text-foreground">
+                      {latestAnalyzedBilancio?.anno_esercizio ?? '—'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">Ultimo punteggio:</span>
+                  <Badge variant="outline" className="font-bold">
+                    {latestAnalyzedBilancio?.anomaly_analysis.score ?? 0}/100 · {latestAnalyzedBilancio?.anomaly_analysis.level ?? 'N/D'}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    Seleziona un bilancio qui sotto per aprire evidenze, spiegazioni e azioni.
+                  </span>
+                </div>
+                {summaryFindings.length > 0 ? (
+                  <div className="rounded-md border bg-background/70 p-3">
+                    <p className="text-xs font-semibold text-foreground">Segnalazioni principali da approfondire</p>
+                    <div className="mt-2 space-y-2">
+                      {summaryFindings.map(finding => (
+                        <div key={`${finding.anno_esercizio}-${finding.id}`} className="flex items-start gap-2 text-xs">
+                          <Badge className={
+                            finding.severity === 'alta'
+                              ? 'bg-red-100 text-red-800 hover:bg-red-100'
+                              : finding.severity === 'media'
+                                ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
+                                : 'bg-slate-100 text-slate-700 hover:bg-slate-100'
+                          }>
+                            {finding.severity}
+                          </Badge>
+                          <div className="min-w-0">
+                            <p className="font-medium text-foreground">{finding.title}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Esercizio {finding.anno_esercizio} · {finding.evidence[0] ?? finding.explanation}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+                    Nessuna anomalia significativa rilevata dai controlli automatici disponibili.
+                  </div>
+                )}
+                <p className="text-[10px] leading-relaxed text-muted-foreground italic">
+                  Le segnalazioni indicano aspetti da verificare, non irregolarità accertate. Questo riepilogo è
+                  visibile solo al consulente e resta escluso dall’email inviata alla banca.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Sezione selezione PDF esistenti */}
         {uploadedPdfs.length > 0 && (
