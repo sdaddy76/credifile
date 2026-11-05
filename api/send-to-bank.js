@@ -394,9 +394,10 @@ export default async function handler(req, res) {
     const copyOnlyMode = Boolean(copy_only);
     // L'invio forzato vale solo per l'invio ordinario della pratica.
     const forceWithoutRelation = Boolean(force_without_relation) && !integrationMode && !copyOnlyMode;
-    // La copia al collaboratore della banca è volutamente documentale:
-    // non deve richiedere né allegare la Relazione Commerciale.
-    const requiresCommercialRelation = !integrationMode && !copyOnlyMode && !forceWithoutRelation;
+    // Banca e collaboratore condividono lo stesso pacchetto e le stesse
+    // verifiche. copy_only cambia destinatari e aggiornamenti di stato, non
+    // documenti o contenuto. L'esclusione esplicita vale solo per l'invio forzato.
+    const requiresCommercialRelation = !integrationMode && !forceWithoutRelation;
 
     const H = {
       'apikey': SUPABASE_KEY,
@@ -784,13 +785,19 @@ export default async function handler(req, res) {
       }
     }
 
-    // 6b. Finanziamenti in corso
-    let financing = [];
-    if (!integrationMode && (clientId || practice_id)) {
-      financing = await fetch(
-        `${SUPABASE_URL}/rest/v1/client_financing?practice_id=eq.${encodeURIComponent(practice_id)}&select=tipologia,banca_finanziaria,importo_iniziale,rata,durata_mesi,debito_residuo,tipo_garanzia,stato_rapporto,fonte,accordato,accordato_operativo,utilizzato,saldo_medio,data_riferimento&order=ordinamento.asc`,
-        { headers: H },
-      ).then(r => r.json()).catch(() => []) ?? [];
+    // 6b. Situazione finanziamenti: obbligatoria in ogni invio documentale,
+    // comprese copie e integrazioni. Un errore di lettura non equivale a
+    // nessun finanziamento: impedisce l'invio di un pacchetto incompleto.
+    const financingResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/client_financing?practice_id=eq.${encodeURIComponent(practice_id)}&select=tipologia,banca_finanziaria,importo_iniziale,rata,durata_mesi,debito_residuo,tipo_garanzia,stato_rapporto,fonte,accordato,accordato_operativo,utilizzato,saldo_medio,data_riferimento&order=ordinamento.asc`,
+      { headers: H },
+    );
+    const financing = financingResponse.ok ? await financingResponse.json() : null;
+    if (!Array.isArray(financing)) {
+      return res.status(502).json({
+        success: false,
+        error: 'Impossibile leggere la situazione finanziamenti. Nessuna email inviata: riprova dopo aver verificato i dati della pratica.',
+      });
     }
 
     // 6c. Centrale Rischi — se importata nei finanziamenti, aggiunge una riga spiegabile
@@ -885,9 +892,9 @@ export default async function handler(req, res) {
 
 
     // Sezione finanziamenti
-    const finSection = safeSection(financing.length > 0 ? `
+    const finSection = financing.length > 0 ? `
 <h3 style="color:#1e3a5f;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
-  💳 Finanziamenti in Corso (${financing.length})
+  Situazione finanziamenti (${financing.length} rapporti registrati)
 </h3>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">
   <thead>
@@ -898,21 +905,25 @@ export default async function handler(req, res) {
       <th style="text-align:right;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Rata €</th>
       <th style="text-align:right;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Debito Res. €</th>
       <th style="text-align:left;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Garanzia</th>
+      <th style="text-align:left;padding:6px 8px;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;">Stato / Data riferimento</th>
     </tr>
   </thead>
   <tbody>
     ${financing.map((f, i) =>
       `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">` +
-      `<td style="padding:5px 8px;color:#374151;">${f.tipologia || '—'}</td>` +
-      `<td style="padding:5px 8px;color:#374151;">${f.banca_finanziaria || '—'}</td>` +
-      `<td style="padding:5px 8px;text-align:right;font-weight:600;color:#1e3a5f;">${safeFmt(f.importo_iniziale)}</td>` +
-      `<td style="padding:5px 8px;text-align:right;color:#374151;">${safeFmt(f.rata)}</td>` +
-      `<td style="padding:5px 8px;text-align:right;color:#374151;">${safeFmt(f.debito_residuo)}</td>` +
-      `<td style="padding:5px 8px;color:#374151;">${f.tipo_garanzia || '—'}</td>` +
+      `<td style="padding:5px 8px;color:#374151;">${escapeHtml(f.tipologia || '—')}</td>` +
+      `<td style="padding:5px 8px;color:#374151;">${escapeHtml(f.banca_finanziaria || '—')}</td>` +
+      `<td style="padding:5px 8px;text-align:right;font-weight:600;color:#1e3a5f;">${f.importo_iniziale == null ? '—' : safeFmt(f.importo_iniziale)}</td>` +
+      `<td style="padding:5px 8px;text-align:right;color:#374151;">${f.rata == null ? '—' : safeFmt(f.rata)}</td>` +
+      `<td style="padding:5px 8px;text-align:right;color:#374151;">${f.debito_residuo == null ? '—' : safeFmt(f.debito_residuo)}</td>` +
+      `<td style="padding:5px 8px;color:#374151;">${escapeHtml(f.tipo_garanzia || '—')}</td>` +
+      `<td style="padding:5px 8px;color:#374151;">${escapeHtml(f.stato_rapporto || 'Non indicato')} / ${f.data_riferimento ? formatRomeDate(f.data_riferimento) : 'Non indicata'}</td>` +
       `</tr>`
     ).join('')}
   </tbody>
-</table>` : '');
+</table>
+<p style="font-size:11px;color:#64748b;">Dati registrati nella pratica al momento dell’invio; l’assenza di un valore non equivale a zero.</p>`
+      : '<h3>Situazione finanziamenti</h3><p>Nessun rapporto registrato nella pratica. Questo non attesta l’assenza di finanziamenti.</p>';
 
     // Bancabilità: includi nell'email solo se score >= 80
     const bancabSection = safeSection((bancabScore != null && bancabScore >= 80) ? `
@@ -1268,28 +1279,6 @@ ${repSection}
 </p>
 </body></html>`;
 
-    const copyOnlyHtmlBody = `<!DOCTYPE html>
-<html><body style="font-family:sans-serif;max-width:650px;margin:auto;padding:24px;color:#1e293b;">
-<div style="border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:20px;">
-  <h2 style="color:#1e3a5f;margin:0;">Credifile — Copia documenti pratica</h2>
-</div>
-<p>Gentile collaboratore,</p>
-<p>in riferimento alla pratica di <strong>${cliente}</strong>
-(rif. <code>${pratica.numero_pratica}</code>) condividiamo i soli documenti già associati alla banca
-<strong>${pb.banks?.nome ?? ''}</strong>.</p>
-<h3 style="color:#1e3a5f;margin-top:24px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;">
-  📎 Documenti (${docLinks.length})
-</h3>
-<ul style="padding-left:20px;">${docsHtml}</ul>
-<div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #1e3a5f;">
-  ${agentNome ? `Pratica gestita da: <strong>${agentNome}</strong>${agentEmail ? ` — <a href="mailto:${agentEmail}" style="color:#2563eb;">${agentEmail}</a>` : ''}<br>` : ''}
-  Per rispondere a questa comunicazione utilizzare il pulsante "Rispondi" — la risposta verrà recapitata direttamente al referente della pratica.
-</div>
-<p style="margin-top:16px;font-size:11px;color:#94a3b8;">
-  Questa copia non contiene la Relazione Commerciale né il report di bancabilità.
-</p>
-</body></html>`;
-
     const integrationDocumentsHtml = docLinks.length > 0
       ? docLinks.map(document =>
           `<li style="margin:10px 0;">` +
@@ -1328,6 +1317,7 @@ ${note ? `<p style="color:#555;margin-top:12px;"><strong>Riferimento richiesta:<
 </h3>
 <ul style="padding-left:20px;">${integrationDocumentsHtml}</ul>
 ${integrationAnswersHtml}
+${finSection}
 <div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #4f46e5;">
   ${agentNome ? `Pratica gestita da: <strong>${escapeHtml(agentNome)}</strong>${agentEmail ? ` — <a href="mailto:${escapeHtml(agentEmail)}" style="color:#2563eb;">${escapeHtml(agentEmail)}</a>` : ''}<br>` : ''}
   Rispondendo a questa email, il messaggio verrà recapitato direttamente al referente della pratica.
@@ -1348,7 +1338,7 @@ ${integrationAnswersHtml}
       from: FROM,
       to: copyOnlyMode ? [copyEmail] : [bankEmail],
       subject: copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject,
-      html: integrationMode ? integrationHtmlBody : copyOnlyMode ? copyOnlyHtmlBody : standardHtmlBody,
+      html: integrationMode ? integrationHtmlBody : standardHtmlBody,
     };
     if (agentEmail) emailPayload.reply_to = agentEmail;
     if (ccList.length > 0) emailPayload.cc = ccList;
@@ -1371,7 +1361,7 @@ ${integrationAnswersHtml}
         from: FROM,
         to: [ARCHIVE_CC],
         subject: `Copia archivio — ${copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject}`,
-        html: integrationMode ? integrationHtmlBody : copyOnlyMode ? copyOnlyHtmlBody : standardHtmlBody,
+        html: emailPayload.html,
       };
       if (agentEmail) archivePayload.reply_to = agentEmail;
       try {
@@ -1445,6 +1435,8 @@ ${integrationAnswersHtml}
       archive_resend_id: archiveEmailBody?.id ?? null,
       archive_error: archiveError,
       relazione_forzatamente_esclusa: forceWithoutRelation,
+      situazione_finanziamenti_inclusa: true,
+      finanziamenti_inclusi: financing.length,
     };
 
     // 10. Log storico email_send_log
@@ -1524,10 +1516,14 @@ ${integrationAnswersHtml}
       );
       if (recipientIds.size > 0) {
         const notificationType = integrationMode ? 'integrazione_inviata_banca' : 'email_inviata';
-        const notificationTitle = integrationMode
+        const notificationTitle = copyOnlyMode
+          ? `Copia documenti inviata a ${copyEmail}`
+          : integrationMode
           ? `Approfondimenti inviati a ${pb.banks?.nome ?? 'banca'}`
           : `Pratica inviata a ${pb.banks?.nome ?? 'banca'}`;
-        const notificationText = integrationMode
+        const notificationText = copyOnlyMode
+          ? `${cliente}: il pacchetto documentale della banca e la situazione finanziamenti sono stati trasmessi al collaboratore.`
+          : integrationMode
           ? `${cliente}: nuovi documenti o risposte sono stati trasmessi alla banca.`
           : `${cliente}: documenti e relazione sono stati trasmessi alla banca.`;
         await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
@@ -1561,8 +1557,10 @@ ${integrationAnswersHtml}
       answers_sent: answeredQuestions.length,
       delivery_type: deliveryType,
       bank_status_changed: !integrationMode && !copyOnlyMode,
-      kpi_rows: integrationMode || copyOnlyMode ? 0 : kpiRows.length,
-      has_rep: integrationMode || copyOnlyMode ? false : !!rep,
+      kpi_rows: integrationMode ? 0 : kpiRows.length,
+      has_rep: integrationMode ? false : !!rep,
+      financing_included: true,
+      financing_rows: financing.length,
       archive_copy: archiveCopyRequired || primaryRecipient === ARCHIVE_CC,
       archive_resend_id: archiveEmailBody?.id ?? null,
       archive_status: archiveError ? 'errore' : archiveCopyRequired ? 'inviata' : 'non_necessaria',

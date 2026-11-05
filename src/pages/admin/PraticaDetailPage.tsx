@@ -1898,7 +1898,7 @@ export default function PraticaDetailPage() {
         throw new Error(error?.message ?? String(data?.error ?? 'Errore invio copia'));
       }
       const docsSent = typeof data.docs_sent === 'number' ? data.docs_sent : 0;
-      toast.success(`Documenti inviati a ${email}: ${docsSent} file, senza Relazione Commerciale`);
+      toast.success(`Pacchetto banca inviato a ${email}: ${docsSent} documenti, inclusa la situazione finanziamenti`);
     } catch (error) {
       toast.error(`Errore invio copia al collaboratore: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -3946,7 +3946,7 @@ export default function PraticaDetailPage() {
                                     }}
                                   />
                                   <p className="mt-1 text-[11px] text-emerald-800">
-                                    Invia una copia dei soli documenti già associati a {pb.banks?.nome}, senza Relazione Commerciale o report.
+                                    Invia lo stesso pacchetto previsto per {pb.banks?.nome}: documenti, Relazione Commerciale, informazioni di analisi e situazione finanziamenti. Lo stato della banca non viene modificato.
                                   </p>
                                 </div>
                                 <Button
