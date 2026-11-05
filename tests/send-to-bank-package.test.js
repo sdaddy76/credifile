@@ -1,5 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { resolveDocumentSender } from '../api/send-to-bank.js';
+
+test('mittente documentale: daddino.com sostituisce il dominio precedente', () => {
+  assert.equal(resolveDocumentSender({}), 'Credifile <docflow@daddino.com>');
+  assert.equal(resolveDocumentSender({ FROM_EMAIL: 'Credifile <docflow@stedasrls.it>' }), 'Credifile <docflow@daddino.com>');
+  assert.equal(resolveDocumentSender({ FROM_EMAIL: 'pratiche.credifile@gmail.com' }), 'Credifile <docflow@daddino.com>');
+  assert.equal(resolveDocumentSender({ FROM_EMAIL: 'Credifile <posta@daddino.com>' }), 'Credifile <posta@daddino.com>');
+  assert.equal(resolveDocumentSender({
+    DOCUMENT_FROM_EMAIL: 'Credifile <documenti@daddino.com>',
+    FROM_EMAIL: 'Credifile <docflow@stedasrls.it>',
+  }), 'Credifile <documenti@daddino.com>');
+  for (const invalid of [
+    'Credifile <posta@daddino.com.evil.invalid>',
+    'Credifile <posta@daddino.com>\r\nBcc: external@example.invalid',
+    'Credifile <posta@daddino.com',
+    'posta@daddino.com>',
+  ]) {
+    assert.equal(resolveDocumentSender({ DOCUMENT_FROM_EMAIL: invalid }), 'Credifile <docflow@daddino.com>');
+  }
+});
 
 const financingRow = {
   tipologia: 'Mutuo',
@@ -114,6 +134,8 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       assert.equal(copy.res.statusCode, 200);
       assert.equal(bank.emails.length, 2);
       assert.equal(copy.emails.length, 2);
+      assert.equal(copy.emails[0].from, 'Credifile <docflow@daddino.com>');
+      assert.equal(copy.emails[1].from, copy.emails[0].from);
       const withoutTokens = html => html.replace(/token=[a-f0-9]{48}/g, 'token=TEST');
       assert.equal(withoutTokens(bank.emails[0].html), withoutTokens(copy.emails[0].html));
       assert.equal(copy.emails[0].html, copy.emails[1].html);

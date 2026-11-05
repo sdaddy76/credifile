@@ -6,7 +6,20 @@ import crypto from 'node:crypto';
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://fhieppjqlefdlanvrpik.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_KEY   = process.env.RESEND_API_KEY;
-const FROM         = process.env.FROM_EMAIL   || 'Credifile <docflow@stedasrls.it>';
+// Il mittente documentale è separato da quello delle altre notifiche.
+// Non riutilizzare un vecchio FROM_EMAIL su stedasrls.it o un dominio Gmail.
+export function resolveDocumentSender(environment = process.env) {
+  for (const candidate of [environment.DOCUMENT_FROM_EMAIL, environment.FROM_EMAIL]) {
+    const value = typeof candidate === 'string' ? candidate.trim() : '';
+    if (/[\r\n]/.test(value)) continue;
+    if (/^(?:[^<>\r\n]+<)?[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@daddino\.com>?$/i.test(value)
+      && (value.includes('<') === value.endsWith('>'))) {
+      return value;
+    }
+  }
+  return 'Credifile <docflow@daddino.com>';
+}
+const FROM = resolveDocumentSender();
 const APP          = process.env.APP_URL      || 'https://credifile-eosin.vercel.app';
 // Casella archivio obbligatoria per ogni comunicazione documentale.
 // È configurabile lato server, senza esporre l'indirizzo nel frontend.
