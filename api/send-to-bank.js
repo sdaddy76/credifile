@@ -32,6 +32,63 @@ const CORS = {
   'Content-Type': 'application/json',
 };
 
+function normalizeReplyEmail(value) {
+  if (typeof value !== 'string' || /[\r\n]/.test(value)) return null;
+  const email = value.trim();
+  return email.length <= 254
+    && /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(email)
+    ? email
+    : null;
+}
+
+// La scelta avviene solo lato server, usando i profili della pratica:
+// agente → segreteria → superadmin. Mai il mittente tecnico o il copy_to.
+async function resolveDocumentReplyContact(practice, actorProfile, headers) {
+  const agentEmail = normalizeReplyEmail(practice.agent?.email);
+  if (agentEmail) {
+    return { ...practice.agent, email: agentEmail, ruolo: 'agente' };
+  }
+
+  const profilesResponse = await fetch(
+    `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=in.(supervisore_segreteria,super_admin)&select=id,nome,email,ruolo&order=created_at.asc,id.asc`,
+    { headers },
+  );
+  if (!profilesResponse.ok) throw new Error('Lettura referenti non riuscita');
+  const profiles = await profilesResponse.json();
+  if (!Array.isArray(profiles)) throw new Error('Risposta referenti non valida');
+  const validProfiles = profiles
+    .map(profile => ({ ...profile, email: normalizeReplyEmail(profile.email) }))
+    .filter(profile => profile.email);
+  const secretaries = validProfiles.filter(profile => profile.ruolo === 'supervisore_segreteria');
+
+  if (secretaries.length > 0) {
+    const agentId = practice.agent?.id || practice.assigned_to;
+    if (agentId) {
+      const assignmentsResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/segreteria_agent_assignments?agent_user_id=eq.${encodeURIComponent(agentId)}&select=segreteria_user_id`,
+        { headers },
+      );
+      if (!assignmentsResponse.ok) throw new Error('Lettura segreteria assegnata non riuscita');
+      const assignments = await assignmentsResponse.json();
+      if (!Array.isArray(assignments)) throw new Error('Risposta segreteria assegnata non valida');
+      const assignedSecretaryIds = new Set(assignments.map(row => row.segreteria_user_id));
+      const assignedSecretary = secretaries.find(profile => assignedSecretaryIds.has(profile.id));
+      if (assignedSecretary) return assignedSecretary;
+    }
+    // Se manca un'associazione, preferisce la segreteria che ha creato
+    // la pratica o sta inviando; altrimenti usa la prima per data e ID.
+    return secretaries.find(profile => profile.id === practice.created_by)
+      ?? secretaries.find(profile => profile.id === actorProfile.id)
+      ?? secretaries[0];
+  }
+
+  const admins = validProfiles.filter(profile => profile.ruolo === 'super_admin');
+  return admins.find(profile => profile.id === practice.created_by)
+    ?? admins.find(profile => profile.id === actorProfile.id)
+    ?? admins[0]
+    ?? null;
+}
+
 // ── helper colore score ────────────────────────────────────────────────────
 function scoreColor(s) {
   if (s == null) return '#888';
@@ -498,9 +555,7 @@ export default async function handler(req, res) {
     const pratica = Array.isArray(praticaArr) ? praticaArr[0] : null;
     if (!pratica) return res.status(404).json({ success: false, error: 'Pratica non trovata' });
 
-    const clientId   = pratica.clients?.id;
-    const agentEmail = pratica.agent?.email ?? null;
-    const agentNome  = pratica.agent?.nome  ?? null;
+    const clientId = pratica.clients?.id;
 
     const pb = Array.isArray(pbArr) ? pbArr[0] : null;
     if (!pb) return res.status(404).json({ success: false, error: 'Assegnazione banca non trovata' });
@@ -552,6 +607,29 @@ export default async function handler(req, res) {
     if (!bankEmail && !copyOnlyMode) {
       return res.status(422).json({ success: false, error: 'Email banca non configurata' });
     }
+
+    let replyContact;
+    try {
+      replyContact = await resolveDocumentReplyContact(pratica, actorProfile, H);
+    } catch {
+      return res.status(502).json({
+        success: false,
+        error: 'Impossibile verificare il destinatario delle risposte. Nessuna email inviata: riprova.',
+      });
+    }
+    if (!replyContact) {
+      return res.status(422).json({
+        success: false,
+        error: 'Nessun indirizzo valido per le risposte: configura l’email dell’agente, della segreteria o del superadmin. Nessuna email inviata.',
+      });
+    }
+    const replyEmail = replyContact.email;
+    const replyRoleLabel = {
+      agente: 'Agente',
+      supervisore_segreteria: 'Segreteria',
+      super_admin: 'Superadmin',
+    }[replyContact.ruolo];
+    const replyContactHtml = `Referente per le risposte (${replyRoleLabel}): <strong>${escapeHtml(replyContact.nome || replyEmail)}</strong> — <a href="mailto:${escapeHtml(replyEmail)}" style="color:#2563eb;">${escapeHtml(replyEmail)}</a><br>`;
 
     // Destinatari CC e BCC (salvati come stringa separata da virgola)
     const configuredCcList = (pb.banks?.email_cc || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
@@ -1284,7 +1362,7 @@ ${bancabSection}
 ${bancabDetailSection}
 ${repSection}
 <div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #1e3a5f;">
-  ${agentNome ? `Pratica gestita da: <strong>${agentNome}</strong>${agentEmail ? ` — <a href="mailto:${agentEmail}" style="color:#2563eb;">${agentEmail}</a>` : ''}<br>` : ''}
+  ${replyContactHtml}
   Per rispondere a questa comunicazione utilizzare il pulsante "Rispondi" — la risposta verrà recapitata direttamente al referente della pratica.
 </div>
 <p style="margin-top:16px;font-size:11px;color:#94a3b8;">
@@ -1332,7 +1410,7 @@ ${note ? `<p style="color:#555;margin-top:12px;"><strong>Riferimento richiesta:<
 ${integrationAnswersHtml}
 ${finSection}
 <div style="margin-top:32px;padding:14px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;border-left:3px solid #4f46e5;">
-  ${agentNome ? `Pratica gestita da: <strong>${escapeHtml(agentNome)}</strong>${agentEmail ? ` — <a href="mailto:${escapeHtml(agentEmail)}" style="color:#2563eb;">${escapeHtml(agentEmail)}</a>` : ''}<br>` : ''}
+  ${replyContactHtml}
   Rispondendo a questa email, il messaggio verrà recapitato direttamente al referente della pratica.
 </div>
 <p style="margin-top:16px;font-size:11px;color:#94a3b8;">
@@ -1353,7 +1431,7 @@ ${finSection}
       subject: copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject,
       html: integrationMode ? integrationHtmlBody : standardHtmlBody,
     };
-    if (agentEmail) emailPayload.reply_to = agentEmail;
+    emailPayload.reply_to = replyEmail;
     if (ccList.length > 0) emailPayload.cc = ccList;
     if (!copyOnlyMode && bccList.length > 0) emailPayload.bcc = bccList;
 
@@ -1376,7 +1454,7 @@ ${finSection}
         subject: `Copia archivio — ${copyOnlyMode ? `Copia — ${emailSubject}` : emailSubject}`,
         html: emailPayload.html,
       };
-      if (agentEmail) archivePayload.reply_to = agentEmail;
+      archivePayload.reply_to = replyEmail;
       try {
         const archiveResponse = await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -1450,6 +1528,9 @@ ${finSection}
       relazione_forzatamente_esclusa: forceWithoutRelation,
       situazione_finanziamenti_inclusa: true,
       finanziamenti_inclusi: financing.length,
+      reply_to: replyEmail,
+      reply_to_role: replyContact.ruolo,
+      reply_to_profile_id: replyContact.id,
     };
 
     // 10. Log storico email_send_log
@@ -1563,7 +1644,8 @@ ${finSection}
       sent_to: copyOnlyMode ? copyEmail : bankEmail,
       cc: ccList,
       bcc: copyOnlyMode ? [] : bccList,
-      reply_to: agentEmail ?? null,
+      reply_to: replyEmail,
+      reply_to_role: replyContact.ruolo,
       docs_sent: docLinks.length,
       relation_attached: false,
       relation_linked: !integrationMode && Boolean(commercialRelation?.pdf_url),

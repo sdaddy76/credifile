@@ -48,10 +48,15 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service';
   process.env.RESEND_API_KEY = 'test-email';
   const { default: handler } = await import('../api/send-to-bank.js?package-test');
+  const defaultProfiles = [
+    { id: 'secretary-test', ruolo: 'supervisore_segreteria', nome: 'Segreteria prova', email: 'secretary@example.invalid' },
+    { id: 'user-test', ruolo: 'super_admin', nome: 'Admin prova', email: 'admin@example.invalid' },
+  ];
 
   async function send(body, options = {}) {
     const emails = [];
     const writes = [];
+    const reads = [];
     const relation = {
       id: 'relation-test',
       bank_id: 'bank-test',
@@ -74,12 +79,26 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
         writes.push({ path, method: init.method, data: JSON.parse(init.body) });
         return json([]);
       }
-      if (path.endsWith('/admin_profiles')) return json([{ id: 'user-test', ruolo: 'super_admin', nome: 'Test' }]);
+      reads.push({ path, search: url.searchParams });
+      if (path.endsWith('/admin_profiles')) {
+        if (url.searchParams.has('ruolo') && url.searchParams.get('ruolo').startsWith('in.')) {
+          if (options.replyProfilesError) return json({ message: 'database unavailable' }, false);
+          return json(options.replyProfiles ?? defaultProfiles);
+        }
+        return json([{ id: 'user-test', ruolo: 'super_admin', nome: 'Test', email: 'admin@example.invalid' }]);
+      }
+      if (path.endsWith('/segreteria_agent_assignments')) {
+        if (options.replyAssignmentsError) return json({ message: 'database unavailable' }, false);
+        return json(options.secretaryAssignments ?? []);
+      }
       if (path.endsWith('/practices')) {
         return json([{
           id: 'practice-test',
           numero_pratica: 'TEST-ONLY',
           clients: { id: 'client-test', ragione_sociale: 'Società di prova' },
+          agent: options.agent ?? null,
+          assigned_to: options.agent?.id ?? null,
+          created_by: options.createdBy ?? null,
         }]);
       }
       if (path.endsWith('/practice_banks')) {
@@ -123,7 +142,7 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       headers: { authorization: 'Bearer test-session' },
       body: { practice_id: 'practice-test', bank_id: 'bank-test', ...body },
     }, res);
-    return { res, emails, writes };
+    return { res, emails, writes, reads };
   }
 
   try {
@@ -184,6 +203,109 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       assert.equal(result.res.statusCode, 200);
       assert.match(result.emails[0].html, /Questo non attesta l’assenza di finanziamenti/);
       assert.equal(result.res.payload.financing_rows, 0);
+    });
+
+    await t.test('risposte: agente prioritario per banca, collaboratore, integrazioni e archivio', async () => {
+      for (const body of [
+        {},
+        { copy_only: true, copy_to: 'collaborator@example.invalid' },
+        { integration_request_id: 'integration-test' },
+      ]) {
+        const result = await send(body, {
+          agent: { id: 'agent-test', nome: 'Agente <Prova>', email: ' agent@example.invalid ' },
+          replyProfilesError: true, // Il fallback non deve essere consultato.
+        });
+        assert.equal(result.res.statusCode, 200);
+        assert.equal(result.res.payload.reply_to, 'agent@example.invalid');
+        assert.equal(result.res.payload.reply_to_role, 'agente');
+        assert.equal(result.emails.length, 2);
+        for (const email of result.emails) {
+          assert.equal(email.reply_to, 'agent@example.invalid');
+          assert.match(email.html, /Referente per le risposte \(Agente\)/);
+          assert.match(email.html, /Agente &lt;Prova&gt;/);
+        }
+      }
+    });
+
+    await t.test('senza agente usa la segreteria, non il superadmin che invia', async () => {
+      for (const body of [
+        {},
+        { copy_only: true, copy_to: 'collaborator@example.invalid' },
+        { integration_request_id: 'integration-test' },
+      ]) {
+        const result = await send(body);
+        assert.equal(result.res.statusCode, 200);
+        assert.equal(result.res.payload.reply_to_role, 'supervisore_segreteria');
+        assert.ok(result.emails.every(email => email.reply_to === 'secretary@example.invalid'));
+        assert.match(result.emails[0].html, /Referente per le risposte \(Segreteria\)/);
+        const activity = result.writes.find(write => write.path.endsWith('/practice_activity_log'));
+        assert.equal(activity.data.metadata.reply_to, 'secretary@example.invalid');
+        assert.equal(activity.data.metadata.reply_to_profile_id, 'secretary-test');
+      }
+    });
+
+    await t.test('agente senza email: preferisce la sua segreteria assegnata', async () => {
+      const result = await send({}, {
+        agent: { id: 'agent-test', email: ' ' },
+        replyProfiles: [
+          ...defaultProfiles,
+          { id: 'assigned-secretary', ruolo: 'supervisore_segreteria', email: 'assigned@example.invalid' },
+        ],
+        secretaryAssignments: [{ segreteria_user_id: 'assigned-secretary' }],
+      });
+      assert.equal(result.res.statusCode, 200);
+      assert.ok(result.emails.every(email => email.reply_to === 'assigned@example.invalid'));
+      const lookup = result.reads.find(read => read.path.endsWith('/segreteria_agent_assignments'));
+      assert.equal(lookup.search.get('agent_user_id'), 'eq.agent-test');
+    });
+
+    await t.test('senza associazioni preferisce la segreteria che ha creato la pratica', async () => {
+      const result = await send({}, {
+        createdBy: 'creator-secretary',
+        replyProfiles: [
+          ...defaultProfiles,
+          { id: 'creator-secretary', ruolo: 'supervisore_segreteria', email: 'creator@example.invalid' },
+        ],
+      });
+      assert.equal(result.res.statusCode, 200);
+      assert.equal(result.emails[0].reply_to, 'creator@example.invalid');
+    });
+
+    await t.test('senza indirizzi validi di agente e segreteria usa il superadmin', async () => {
+      for (const invalid of [null, '', 'non-valida', 'a@example.invalid,external@example.invalid', 'a@example.invalid\r\nBcc: external@example.invalid']) {
+        const result = await send({}, {
+          agent: { id: 'agent-test', email: invalid },
+          replyProfiles: [
+            { id: 'invalid-secretary', ruolo: 'supervisore_segreteria', email: invalid },
+            { id: 'valid-admin', ruolo: 'super_admin', email: ' admin@example.invalid ' },
+          ],
+        });
+        assert.equal(result.res.statusCode, 200);
+        assert.equal(result.res.payload.reply_to_role, 'super_admin');
+        assert.ok(result.emails.every(email => email.reply_to === 'admin@example.invalid'));
+        assert.match(result.emails[0].html, /Referente per le risposte \(Superadmin\)/);
+      }
+    });
+
+    await t.test('nessun referente valido: blocca prima di inviare o cambiare stato', async () => {
+      const result = await send({}, { replyProfiles: [] });
+      assert.equal(result.res.statusCode, 422);
+      assert.match(result.res.payload.error, /Nessun indirizzo valido per le risposte/);
+      assert.equal(result.emails.length, 0);
+      assert.equal(result.writes.length, 0);
+    });
+
+    await t.test('errore di lettura referenti o associazioni: nessun fallback silenzioso', async () => {
+      for (const options of [
+        { replyProfilesError: true },
+        { agent: { id: 'agent-test' }, replyAssignmentsError: true },
+      ]) {
+        const result = await send({}, options);
+        assert.equal(result.res.statusCode, 502);
+        assert.match(result.res.payload.error, /Impossibile verificare il destinatario delle risposte/);
+        assert.equal(result.emails.length, 0);
+        assert.equal(result.writes.length, 0);
+      }
     });
   } finally {
     globalThis.fetch = previousFetch;
