@@ -17,6 +17,8 @@ import { normalizePrimaryStatus } from '@/lib/practiceTimeline';
 import { buildAppUrl } from '@/lib/appUrl';
 import { parseLocalizedNumber } from '@/lib/numberParsing';
 import { uploadPracticeFile } from '@/lib/uploadFile';
+import DefaultProbabilityCard from '@/components/DefaultProbabilityCard';
+import { calculateProbabilityOfDefault, formatDefaultProbability, type DefaultProbabilityInput } from '@/lib/probabilityOfDefault';
 
 interface Props { practiceId: string }
 
@@ -98,7 +100,7 @@ interface KpiResult {
   efficienza: Record<string, KpiEntry>;
   copertura: Record<string, KpiEntry>;
 }
-interface BilancioRecord {
+interface BilancioRecord extends DefaultProbabilityInput {
   id: string;
   anno_esercizio: number;
   uploaded_file_id: string | null;
@@ -1814,6 +1816,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bilanci analizzati</p>
             {bilanci.map(b => {
               const s = countSemafori(b);
+              const pd = calculateProbabilityOfDefault(b, codiceAteco);
               const isSelected = selectedBilancio?.id === b.id;
               const isDeleting = deletingId === b.id;
               return (
@@ -1833,6 +1836,9 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                       <span className="text-green-700">🟢 {s.verde}</span>
                       <span className="text-amber-600">🟡 {s.giallo}</span>
                       <span className="text-red-600">🔴 {s.rosso}</span>
+                    </div>
+                    <div className="mt-2 text-xs font-medium">
+                      PD indicativa: {pd.status === 'estimated' ? formatDefaultProbability(pd.probability) : 'N/D · seleziona per i dettagli'}
                     </div>
                     {b.anomaly_analysis && (
                       <div className={`mt-2 text-[10px] font-semibold ${
@@ -1892,6 +1898,8 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
                   )}
                 </CardContent>
               </Card>
+
+              <DefaultProbabilityCard bilancio={selectedBilancio} codiceAteco={codiceAteco} />
 
               {selectedBilancio.anomaly_analysis ? (
                 <Card className={
