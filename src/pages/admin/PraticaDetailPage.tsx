@@ -276,6 +276,7 @@ export default function PraticaDetailPage() {
   const [savingBankRequestId, setSavingBankRequestId] = useState<string | null>(null);
   const [updatingBankStatusId, setUpdatingBankStatusId] = useState<string | null>(null);
   const [bankCollaboratorEmails, setBankCollaboratorEmails] = useState<Record<string, string>>({});
+  const [collaboratorIncludeReport, setCollaboratorIncludeReport] = useState<Record<string, boolean>>({});
   const [sendingBankCopyId, setSendingBankCopyId] = useState<string | null>(null);
   const [addingBank, setAddingBank] = useState('');
   const [addingBankRequirements, setAddingBankRequirements] = useState<BankDocumentRequirement[]>([]);
@@ -1893,13 +1894,13 @@ export default function PraticaDetailPage() {
         bank_id: practiceBank.bank_id,
         copy_to: email,
         copy_only: true,
-        include_report: false,
+        include_report: Boolean(collaboratorIncludeReport[practiceBank.id]),
       });
       if (error || !data?.success) {
         throw new Error(error?.message ?? String(data?.error ?? 'Errore invio copia'));
       }
       const docsSent = typeof data.docs_sent === 'number' ? data.docs_sent : 0;
-      toast.success(`Pacchetto banca inviato a ${email}: ${docsSent} documenti, inclusa la situazione finanziamenti`);
+      toast.success(`Pacchetto banca inviato a ${email}: ${docsSent} documenti, ${data.report_attached ? 'con' : 'senza'} report PDF, inclusa la situazione finanziamenti`);
     } catch (error) {
       toast.error(`Errore invio copia al collaboratore: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -3946,8 +3947,24 @@ export default function PraticaDetailPage() {
                                       }
                                     }}
                                   />
+                                  <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-md border border-emerald-200 bg-white/80 p-2 text-xs text-emerald-900">
+                                    <input
+                                      type="checkbox"
+                                      className="mt-0.5 h-4 w-4 accent-emerald-600"
+                                      checked={Boolean(collaboratorIncludeReport[pb.id])}
+                                      disabled={sendingBankCopyId === pb.id}
+                                      onChange={event => setCollaboratorIncludeReport(prev => ({
+                                        ...prev,
+                                        [pb.id]: event.target.checked,
+                                      }))}
+                                    />
+                                    <span>
+                                      <span className="block font-semibold">Allega report — Relazione Commerciale (PDF)</span>
+                                      <span>Spunta per includere il PDF e il suo link anche nella copia archivio Gmail. Senza spunta, invia senza report.</span>
+                                    </span>
+                                  </label>
                                   <p className="mt-1 text-[11px] text-emerald-800">
-                                    Invia lo stesso pacchetto previsto per {pb.banks?.nome}: documenti, Relazione Commerciale, informazioni di analisi e situazione finanziamenti. Lo stato della banca non viene modificato.
+                                    Invia al collaboratore i documenti, le informazioni di analisi e la situazione finanziamenti per {pb.banks?.nome}. Il report è facoltativo; lo stato della banca non viene modificato. Non è necessaria l’email principale della banca.
                                   </p>
                                 </div>
                                 <Button
@@ -3960,7 +3977,7 @@ export default function PraticaDetailPage() {
                                 >
                                   {sendingBankCopyId === pb.id
                                     ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Invio...</>
-                                    : <><Mail className="w-3.5 h-3.5" /> Invia documenti senza report</>}
+                                    : <><Mail className="w-3.5 h-3.5" /> {collaboratorIncludeReport[pb.id] ? 'Invia al collaboratore con report' : 'Invia al collaboratore senza report'}</>}
                                 </Button>
                               </div>
                             )}

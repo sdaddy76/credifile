@@ -214,6 +214,32 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       assert.deepEqual(result.emails[0].to, ['collaborator@example.invalid']);
     });
 
+    await t.test('collaboratore senza email banca: rispetta la scelta con o senza report e la copia archivio', async () => {
+      for (const includeReport of [true, false]) {
+        for (const missingRelation of includeReport ? [false] : [false, true]) {
+          const result = await send({
+            copy_only: true,
+            copy_to: 'collaborator@example.invalid',
+            include_report: includeReport,
+          }, { missingBankEmail: true, missingRelation });
+          assert.equal(result.res.statusCode, 200);
+          assert.equal(result.res.payload.report_attached, includeReport);
+          assert.equal(result.res.payload.relation_linked, includeReport);
+          assert.equal(result.res.payload.bank_status_changed, false);
+          assert.equal(result.emails.length, 2);
+          assert.deepEqual(result.emails[0].to, ['collaborator@example.invalid']);
+          assert.deepEqual(result.emails[1].to, ['pratiche.credifile@gmail.com']);
+          for (const email of result.emails) {
+            assert.equal(Boolean(email.attachments?.length), includeReport);
+            assert.equal(email.html.includes('Relazione Commerciale'), includeReport);
+            assert.match(email.html, /visura\.pdf/);
+            assert.match(email.html, /Situazione finanziamenti/);
+          }
+          assert.equal(result.writes.some(write => write.path.endsWith('/practice_banks') && write.method === 'PATCH'), false);
+        }
+      }
+    });
+
     await t.test('integrazioni: solo file del ciclo più situazione finanziamenti', async () => {
       const result = await send({ integration_request_id: 'integration-test' });
       assert.equal(result.res.statusCode, 200);
