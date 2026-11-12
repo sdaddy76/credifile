@@ -50,7 +50,7 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
   const { default: handler } = await import('../api/send-to-bank.js?package-test');
   const defaultProfiles = [
     { id: 'secretary-test', ruolo: 'supervisore_segreteria', nome: 'Segreteria prova', email: 'secretary@example.invalid' },
-    { id: 'user-test', ruolo: 'super_admin', nome: 'Admin prova', email: 'admin@example.invalid' },
+    { id: 'stefano-test', ruolo: 'super_admin', nome: "Stefano D'Addino", email: 'stefano@daddino.com' },
   ];
 
   async function send(body, options = {}) {
@@ -81,7 +81,7 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       }
       reads.push({ path, search: url.searchParams });
       if (path.endsWith('/admin_profiles')) {
-        if (url.searchParams.has('ruolo') && url.searchParams.get('ruolo').startsWith('in.')) {
+        if (url.searchParams.get('ruolo') === 'eq.super_admin') {
           if (options.replyProfilesError) return json({ message: 'database unavailable' }, false);
           return json(options.replyProfiles ?? defaultProfiles);
         }
@@ -244,7 +244,7 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       }
     });
 
-    await t.test('senza agente usa la segreteria, non il superadmin che invia', async () => {
+    await t.test('senza agente usa sempre Stefano, non la segreteria o il superadmin che invia', async () => {
       for (const body of [
         {},
         { copy_only: true, copy_to: 'collaborator@example.invalid' },
@@ -252,16 +252,16 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       ]) {
         const result = await send(body);
         assert.equal(result.res.statusCode, 200);
-        assert.equal(result.res.payload.reply_to_role, 'supervisore_segreteria');
-        assert.ok(result.emails.every(email => email.reply_to === 'secretary@example.invalid'));
-        assert.match(result.emails[0].html, /Referente per le risposte \(Segreteria\)/);
+        assert.equal(result.res.payload.reply_to_role, 'super_admin');
+        assert.ok(result.emails.every(email => email.reply_to === 'stefano@daddino.com'));
+        assert.match(result.emails[0].html, /Referente per le risposte \(Superadmin\)/);
         const activity = result.writes.find(write => write.path.endsWith('/practice_activity_log'));
-        assert.equal(activity.data.metadata.reply_to, 'secretary@example.invalid');
-        assert.equal(activity.data.metadata.reply_to_profile_id, 'secretary-test');
+        assert.equal(activity.data.metadata.reply_to, 'stefano@daddino.com');
+        assert.equal(activity.data.metadata.reply_to_profile_id, 'stefano-test');
       }
     });
 
-    await t.test('agente senza email: preferisce la sua segreteria assegnata', async () => {
+    await t.test('agente senza email: usa Stefano anche se c’è una segreteria assegnata', async () => {
       const result = await send({}, {
         agent: { id: 'agent-test', email: ' ' },
         replyProfiles: [
@@ -271,12 +271,11 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
         secretaryAssignments: [{ segreteria_user_id: 'assigned-secretary' }],
       });
       assert.equal(result.res.statusCode, 200);
-      assert.ok(result.emails.every(email => email.reply_to === 'assigned@example.invalid'));
-      const lookup = result.reads.find(read => read.path.endsWith('/segreteria_agent_assignments'));
-      assert.equal(lookup.search.get('agent_user_id'), 'eq.agent-test');
+      assert.ok(result.emails.every(email => email.reply_to === 'stefano@daddino.com'));
+      assert.equal(result.reads.some(read => read.path.endsWith('/segreteria_agent_assignments')), false);
     });
 
-    await t.test('senza associazioni preferisce la segreteria che ha creato la pratica', async () => {
+    await t.test('non sceglie la segreteria che ha creato la pratica come referente implicito', async () => {
       const result = await send({}, {
         createdBy: 'creator-secretary',
         replyProfiles: [
@@ -285,37 +284,35 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
         ],
       });
       assert.equal(result.res.statusCode, 200);
-      assert.equal(result.emails[0].reply_to, 'creator@example.invalid');
+      assert.equal(result.emails[0].reply_to, 'stefano@daddino.com');
     });
 
-    await t.test('senza indirizzi validi di agente e segreteria usa il superadmin', async () => {
+    await t.test('senza agente valido sceglie Stefano, anche se ci sono altri superadmin', async () => {
       for (const invalid of [null, '', 'non-valida', 'a@example.invalid,external@example.invalid', 'a@example.invalid\r\nBcc: external@example.invalid']) {
         const result = await send({}, {
           agent: { id: 'agent-test', email: invalid },
           replyProfiles: [
             { id: 'invalid-secretary', ruolo: 'supervisore_segreteria', email: invalid },
-            { id: 'valid-admin', ruolo: 'super_admin', email: ' admin@example.invalid ' },
+            { id: 'valid-admin', ruolo: 'super_admin', nome: 'Altro amministratore', email: ' admin@example.invalid ' },
+            { id: 'stefano-test', ruolo: 'super_admin', nome: "Stefano D'Addino", email: ' stefano@daddino.com ' },
           ],
         });
         assert.equal(result.res.statusCode, 200);
         assert.equal(result.res.payload.reply_to_role, 'super_admin');
-        assert.ok(result.emails.every(email => email.reply_to === 'admin@example.invalid'));
+        assert.ok(result.emails.every(email => email.reply_to === 'stefano@daddino.com'));
         assert.match(result.emails[0].html, /Referente per le risposte \(Superadmin\)/);
       }
     });
 
-    await t.test('nessun referente valido: blocca prima di inviare o cambiare stato', async () => {
+    await t.test('se il profilo Stefano manca usa il recapito predefinito verificato', async () => {
       const result = await send({}, { replyProfiles: [] });
-      assert.equal(result.res.statusCode, 422);
-      assert.match(result.res.payload.error, /Nessun indirizzo valido per le risposte/);
-      assert.equal(result.emails.length, 0);
-      assert.equal(result.writes.length, 0);
+      assert.equal(result.res.statusCode, 200);
+      assert.equal(result.emails[0].reply_to, 'stefano@daddino.com');
     });
 
     await t.test('errore di lettura referenti o associazioni: nessun fallback silenzioso', async () => {
       for (const options of [
         { replyProfilesError: true },
-        { agent: { id: 'agent-test' }, replyAssignmentsError: true },
       ]) {
         const result = await send({}, options);
         assert.equal(result.res.statusCode, 502);

@@ -41,16 +41,23 @@ function normalizeReplyEmail(value) {
     : null;
 }
 
-// La scelta avviene solo lato server, usando i profili della pratica:
-// agente → segreteria → superadmin. Mai il mittente tecnico o il copy_to.
-async function resolveDocumentReplyContact(practice, actorProfile, headers) {
+const DEFAULT_DOCUMENT_REPLY_CONTACT = {
+  id: null,
+  nome: "Stefano D'Addino",
+  email: 'stefano@daddino.com',
+  ruolo: 'super_admin',
+};
+
+// La scelta avviene solo lato server: agente assegnato → Stefano D'Addino.
+// Non si sceglie una segreteria generica né il superadmin che sta inviando.
+async function resolveDocumentReplyContact(practice, headers) {
   const agentEmail = normalizeReplyEmail(practice.agent?.email);
   if (agentEmail) {
     return { ...practice.agent, email: agentEmail, ruolo: 'agente' };
   }
 
   const profilesResponse = await fetch(
-    `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=in.(supervisore_segreteria,super_admin)&select=id,nome,email,ruolo&order=created_at.asc,id.asc`,
+    `${SUPABASE_URL}/rest/v1/admin_profiles?ruolo=eq.super_admin&select=id,nome,email,ruolo&order=created_at.asc,id.asc`,
     { headers },
   );
   if (!profilesResponse.ok) throw new Error('Lettura referenti non riuscita');
@@ -59,34 +66,9 @@ async function resolveDocumentReplyContact(practice, actorProfile, headers) {
   const validProfiles = profiles
     .map(profile => ({ ...profile, email: normalizeReplyEmail(profile.email) }))
     .filter(profile => profile.email);
-  const secretaries = validProfiles.filter(profile => profile.ruolo === 'supervisore_segreteria');
-
-  if (secretaries.length > 0) {
-    const agentId = practice.agent?.id || practice.assigned_to;
-    if (agentId) {
-      const assignmentsResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/segreteria_agent_assignments?agent_user_id=eq.${encodeURIComponent(agentId)}&select=segreteria_user_id`,
-        { headers },
-      );
-      if (!assignmentsResponse.ok) throw new Error('Lettura segreteria assegnata non riuscita');
-      const assignments = await assignmentsResponse.json();
-      if (!Array.isArray(assignments)) throw new Error('Risposta segreteria assegnata non valida');
-      const assignedSecretaryIds = new Set(assignments.map(row => row.segreteria_user_id));
-      const assignedSecretary = secretaries.find(profile => assignedSecretaryIds.has(profile.id));
-      if (assignedSecretary) return assignedSecretary;
-    }
-    // Se manca un'associazione, preferisce la segreteria che ha creato
-    // la pratica o sta inviando; altrimenti usa la prima per data e ID.
-    return secretaries.find(profile => profile.id === practice.created_by)
-      ?? secretaries.find(profile => profile.id === actorProfile.id)
-      ?? secretaries[0];
-  }
-
-  const admins = validProfiles.filter(profile => profile.ruolo === 'super_admin');
-  return admins.find(profile => profile.id === practice.created_by)
-    ?? admins.find(profile => profile.id === actorProfile.id)
-    ?? admins[0]
-    ?? null;
+  const stefanoEmail = normalizeReplyEmail(DEFAULT_DOCUMENT_REPLY_CONTACT.email);
+  const stefanoProfile = validProfiles.find(profile => profile.email.toLowerCase() === stefanoEmail);
+  return stefanoProfile ?? { ...DEFAULT_DOCUMENT_REPLY_CONTACT, email: stefanoEmail };
 }
 
 // ── helper colore score ────────────────────────────────────────────────────
@@ -610,7 +592,7 @@ export default async function handler(req, res) {
 
     let replyContact;
     try {
-      replyContact = await resolveDocumentReplyContact(pratica, actorProfile, H);
+      replyContact = await resolveDocumentReplyContact(pratica, H);
     } catch {
       return res.status(502).json({
         success: false,
@@ -620,7 +602,7 @@ export default async function handler(req, res) {
     if (!replyContact) {
       return res.status(422).json({
         success: false,
-        error: 'Nessun indirizzo valido per le risposte: configura l’email dell’agente, della segreteria o del superadmin. Nessuna email inviata.',
+        error: 'Nessun indirizzo valido per le risposte: verifica il referente della pratica o il contatto predefinito. Nessuna email inviata.',
       });
     }
     const replyEmail = replyContact.email;
