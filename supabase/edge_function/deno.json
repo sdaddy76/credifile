@@ -4,7 +4,7 @@
     "supabase": "npm:@supabase/supabase-js@2"
   },
   "tasks": {
-    "test": "deno test --allow-net --allow-env --env-file=.env"
+    "test": "deno test --allow-net --allow-env tests/"
   },
   "lint": {
     "include": ["**/*.ts"],
