@@ -37,7 +37,7 @@ jobs:
           version: latest
 
       - name: Deploy analizza-bilancio
-        run: supabase functions deploy analizza-bilancio --project-ref "$SUPABASE_PROJECT_REF"
+        run: supabase functions deploy analizza-bilancio --project-ref "$SUPABASE_PROJECT_REF" --yes
 
       - name: Deploy analisi-reputazione
-        run: supabase functions deploy analisi-reputazione --project-ref "$SUPABASE_PROJECT_REF"
+        run: supabase functions deploy analisi-reputazione --project-ref "$SUPABASE_PROJECT_REF" --yes
