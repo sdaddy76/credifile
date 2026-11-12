@@ -16,6 +16,7 @@ import type {
   ReportData,
   FinanziamentoItem,
   BalanceAnomalyAnalysis,
+  ReportHistoricalKpiPoint,
 } from '@/lib/generateReportPdf';
 import {
   KPI_SCORING_CONFIG,
@@ -509,6 +510,71 @@ export default function NuovoReportWizard() {
     finally { setAiLoading(false); }
   };
 
+  const loadHistoricalReportKpis = async (currentYear: number): Promise<ReportHistoricalKpiPoint[]> => {
+    const points = new Map<number, ReportHistoricalKpiPoint>();
+    points.set(currentYear, {
+      anno_bilancio: currentYear,
+      valori: {
+        ...Object.fromEntries(kpiScores.map(kpi => [kpi.kpi_key, kpi.valore])),
+        fatturato: kpiResult?.redditivita?.fatturato?.valore ?? null,
+        ebitda_eur: kpiResult?.redditivita?.ebitda_eur?.valore ?? null,
+        utile_netto: kpiResult?.redditivita?.utile_netto?.valore ?? null,
+        pfn: kpiResult?.indebitamento?.pfn?.valore ?? null,
+      },
+    });
+    if (!user || !clientId) return [...points.values()];
+
+    const { data, error } = await supabase
+      .from('consulente_reports')
+      .select('anno_bilancio,kpi_scores,kpi_data,created_at')
+      .eq('consulente_id', user.id)
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (error) {
+      console.warn('Impossibile recuperare i report storici per i grafici', error);
+      return [...points.values()];
+    }
+
+    for (const report of data ?? []) {
+      const year = Number(report.anno_bilancio);
+      if (!Number.isInteger(year) || points.has(year)) continue;
+      const values: Record<string, number | null> = {};
+      if (Array.isArray(report.kpi_scores)) {
+        for (const rawScore of report.kpi_scores) {
+          if (!rawScore || typeof rawScore !== 'object') continue;
+          const score = rawScore as { kpi_key?: unknown; valore?: unknown };
+          if (typeof score.kpi_key !== 'string') continue;
+          values[score.kpi_key] = typeof score.valore === 'number' && Number.isFinite(score.valore)
+            ? score.valore
+            : null;
+        }
+      }
+      if (Object.keys(values).length === 0 && report.kpi_data && typeof report.kpi_data === 'object') {
+        const kpiData = report.kpi_data as Record<string, Record<string, { valore?: unknown }>>;
+        for (const config of KPI_SCORING_CONFIG) {
+          const value = kpiData[config.area]?.[config.sourceKey]?.valore;
+          values[config.key] = typeof value === 'number' && Number.isFinite(value) ? value : null;
+        }
+        const historicalAliases = [
+          ['fatturato', 'redditivita', 'fatturato'],
+          ['ebitda_eur', 'redditivita', 'ebitda_eur'],
+          ['utile_netto', 'redditivita', 'utile_netto'],
+          ['pfn', 'indebitamento', 'pfn'],
+        ] as const;
+        for (const [key, area, sourceKey] of historicalAliases) {
+          const value = kpiData[area]?.[sourceKey]?.valore;
+          values[key] = typeof value === 'number' && Number.isFinite(value) ? value : null;
+        }
+      }
+      if (Object.keys(values).length > 0) points.set(year, { anno_bilancio: year, valori: values });
+    }
+
+    return [...points.values()]
+      .sort((left, right) => left.anno_bilancio - right.anno_bilancio)
+      .slice(-5);
+  };
+
   // ── STEP 5: genera PDF ───────────────────────────────────────────────
   const generaPdf = async () => {
     setGenerating(true);
@@ -516,6 +582,8 @@ export default function NuovoReportWizard() {
       const sorted = [...kpiScores].filter(k => k.score !== null).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
       const top3    = sorted.slice(0, 3);
       const bottom3 = [...sorted].reverse().slice(0, 3);
+      const currentYear = annoEsercizio ?? parseInt(annoStr);
+      const storicoKpi = await loadHistoricalReportKpis(currentYear);
 
       const reportData: ReportData = {
         ragione_sociale: ragSociale,
@@ -544,6 +612,7 @@ export default function NuovoReportWizard() {
         dscr_metodo:         dscrMetodo,
         servizio_debito_annuo: servizioDebitoAnnuo || undefined,
         anomaly_analysis:      anomalyAnalysis,
+        storico_kpi:           storicoKpi,
       };
 
       const { pdfBlob: blob, base64 } = await generateReportPdf(reportData);
@@ -1268,6 +1337,7 @@ export default function NuovoReportWizard() {
                   <p>🏦 DSCR calcolato solo sulle rate annue complete; altrimenti indicato come N/D</p>
                   <p>🌐 Commento situazione settore</p>
                   <p>📋 Top 3 / Bottom 3 KPI con barre visive</p>
+                  <p>📈 Grafici KPI vs benchmark settore e andamento storico quando ci sono report precedenti</p>
                   {finanziamenti.filter(f => f.istituto).length > 0 && <p>🏦 {finanziamenti.filter(f => f.istituto).length} finanziamenti in essere</p>}
                   <p>🎯 {aiSugg.length} raccomandazioni AI</p>
                 </div>

@@ -29,6 +29,10 @@ export interface FinanziamentoItem {
   scadenza?: string | null;
   fonte: string;
 }
+export interface ReportHistoricalKpiPoint {
+  anno_bilancio: number;
+  valori: Record<string, number | null>;
+}
 export interface ReportData {
   // campi già esistenti
   ragione_sociale: string; partita_iva?: string; codice_ateco?: string;
@@ -54,6 +58,7 @@ export interface ReportData {
   dscr_metodo?: 'finanziamenti' | 'estratto_conto' | 'non_disponibile';
   servizio_debito_annuo?: number;
   anomaly_analysis?: BalanceAnomalyAnalysis | null;
+  storico_kpi?: ReportHistoricalKpiPoint[];
 }
 
 // ── Colori ─────────────────────────────────────────────────────────────────
@@ -448,6 +453,144 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     y += rowH + 2;
   }
   y += 6;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PAGINA — GRAFICI DI SINTESI
+  // ══════════════════════════════════════════════════════════════════════
+  doc.addPage(); y = 18;
+  sectionTitle('Grafici di sintesi: Azienda vs settore');
+  doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'normal');
+  doc.text(`Confronto con il benchmark ${settLabel}. Ogni indicatore usa la propria scala; i valori numerici sono riportati a destra.`, 14, y);
+  y += 8;
+
+  const sectorComparisons = data.kpi_scores.flatMap(kpi => {
+    const benchmark = data.benchmark_settore?.[kpi.benchmark_key ?? kpi.kpi_label];
+    if (kpi.valore === null || benchmark === null || benchmark === undefined
+      || !Number.isFinite(kpi.valore) || !Number.isFinite(benchmark)) return [];
+    return [{ kpi, benchmark }];
+  });
+  if (sectorComparisons.length === 0) {
+    doc.setFillColor(...LIGHT); doc.roundedRect(14, y, W - 28, 18, 2, 2, 'F');
+    doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+    doc.text('Grafico non disponibile: mancano valori aziendali o benchmark settoriali confrontabili.', 19, y + 10);
+    y += 24;
+  } else {
+    // Legenda
+    doc.setFillColor(...TEAL); doc.rect(14, y - 2.5, 3, 3, 'F');
+    doc.setFontSize(7); doc.setTextColor(...DARK); doc.setFont('helvetica', 'normal');
+    doc.text('Azienda', 19, y);
+    doc.setFillColor(148, 163, 184); doc.rect(45, y - 2.5, 3, 3, 'F');
+    doc.text('Benchmark', 50, y);
+    doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+    doc.text('Barre normalizzate sul valore massimo di ciascun indicatore (non confrontabili tra KPI diversi).', 74, y);
+    y += 6;
+
+    const chartCenter = 105;
+    const halfBarWidth = 28;
+    for (const { kpi, benchmark } of sectorComparisons) {
+      checkPage(10);
+      const value = kpi.valore!;
+      const scale = Math.max(Math.abs(value), Math.abs(benchmark), 1);
+      const companyWidth = halfBarWidth * Math.abs(value) / scale;
+      const benchmarkWidth = halfBarWidth * Math.abs(benchmark) / scale;
+      const companyColor = kpi.inverso ? value <= benchmark : value >= benchmark;
+      const color = companyColor ? GREEN : RED;
+      doc.setFontSize(6.7); doc.setFont('helvetica', 'bold'); doc.setTextColor(...DARK);
+      doc.text(kpi.kpi_label.substring(0, 27), 14, y + 3.8);
+      doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.25);
+      doc.line(chartCenter, y, chartCenter, y + 7);
+      const drawBar = (v: number, width: number, barY: number, rgb: [n,n,n]) => {
+        if (v >= 0) { doc.setFillColor(...rgb); doc.rect(chartCenter, barY, width, 2.2, 'F'); }
+        else { doc.setFillColor(...rgb); doc.rect(chartCenter - width, barY, width, 2.2, 'F'); }
+      };
+      drawBar(value, companyWidth, y, color);
+      drawBar(benchmark, benchmarkWidth, y + 3.3, [148, 163, 184]);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.4); doc.setTextColor(...DARK);
+      const companyValue = kpi.formatted.length > 13 ? kpi.formatted.slice(0, 12) : kpi.formatted;
+      const benchmarkValue = new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(benchmark);
+      doc.text(`Azienda ${companyValue}  ·  Settore ${benchmarkValue}`, 139, y + 4.5);
+      y += 10;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PAGINA — ANDAMENTO STORICO KPI
+  // ══════════════════════════════════════════════════════════════════════
+  doc.addPage(); y = 18;
+  sectionTitle('Andamento storico degli indicatori');
+  const historyByYear = new Map<number, ReportHistoricalKpiPoint>();
+  for (const point of [...(data.storico_kpi ?? []), {
+    anno_bilancio: data.anno_bilancio,
+    valori: Object.fromEntries(data.kpi_scores.map(kpi => [kpi.kpi_key, kpi.valore])),
+  }]) {
+    if (Number.isInteger(point.anno_bilancio)) historyByYear.set(point.anno_bilancio, point);
+  }
+  const history = [...historyByYear.values()].sort((a, b) => a.anno_bilancio - b.anno_bilancio);
+  doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'normal');
+  doc.text('Serie ricavata dai report già salvati per questo cliente. Le annualità mancanti non vengono interpolate.', 14, y);
+  y += 8;
+
+  const historicalMetrics = [
+    ['fatturato', 'Fatturato (€)'],
+    ['ebitda_eur', 'EBITDA (€)'],
+    ['utile_netto', 'Utile netto (€)'],
+    ['pfn', 'PFN (€)'],
+    ['ebitda_margin', 'Margine EBITDA'],
+    ['dscr', 'DSCR'],
+    ['current_ratio', 'Current Ratio'],
+    ['leverage', 'Leverage'],
+    ['roe', 'ROE'],
+    ['pfn_ebitda', 'PFN / EBITDA'],
+  ] as const;
+  const trendMetrics = historicalMetrics.flatMap(([key, label]) => {
+    const points = history.flatMap(point => {
+      const value = point.valori[key];
+      return typeof value === 'number' && Number.isFinite(value)
+        ? [{ anno: point.anno_bilancio, valore: value }]
+        : [];
+    });
+    return points.length >= 2 ? [{ key, label, points }] : [];
+  });
+
+  if (history.length < 2 || trendMetrics.length === 0) {
+    doc.setFillColor(...LIGHT); doc.roundedRect(14, y, W - 28, 24, 2, 2, 'F');
+    doc.setFontSize(8); doc.setTextColor(...DARK); doc.setFont('helvetica', 'normal');
+    doc.text('Trend storico non disponibile: servono almeno due report salvati su esercizi differenti per il cliente.', 19, y + 10);
+    doc.setFontSize(7); doc.setTextColor(...GRAY); doc.setFont('helvetica', 'italic');
+    doc.text(`Annualità utilizzabili nel report: ${history.map(point => point.anno_bilancio).join(', ') || 'nessuna'}.`, 19, y + 17);
+  } else {
+    for (const metric of trendMetrics) {
+      checkPage(34);
+      const plotX = 51;
+      const plotW = W - plotX - 22;
+      const plotY = y + 7;
+      const plotH = 17;
+      const values = metric.points.map(point => point.valore);
+      const min = Math.min(0, ...values);
+      const max = Math.max(0, ...values);
+      const range = max - min || 1;
+      const coords = metric.points.map((point, index) => ({
+        x: metric.points.length === 1 ? plotX + plotW / 2 : plotX + (plotW * index) / (metric.points.length - 1),
+        y: plotY + plotH - ((point.valore - min) / range) * plotH,
+        ...point,
+      }));
+      doc.setFontSize(7.5); doc.setTextColor(...DARK); doc.setFont('helvetica', 'bold');
+      doc.text(metric.label, 14, y + 4);
+      doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.25);
+      doc.line(plotX, plotY + plotH, plotX + plotW, plotY + plotH);
+      doc.setDrawColor(...TEAL); doc.setLineWidth(0.8);
+      for (let index = 1; index < coords.length; index++) {
+        doc.line(coords[index - 1].x, coords[index - 1].y, coords[index].x, coords[index].y);
+      }
+      coords.forEach(point => {
+        doc.setFillColor(...TEAL); doc.circle(point.x, point.y, 1.2, 'F');
+        doc.setFontSize(6); doc.setTextColor(...DARK); doc.setFont('helvetica', 'normal');
+        doc.text(new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(point.valore), point.x, point.y - 2, { align: 'center' });
+        doc.setTextColor(...GRAY); doc.text(String(point.anno), point.x, plotY + plotH + 4, { align: 'center' });
+      });
+      y += 32;
+    }
+  }
 
   // ══════════════════════════════════════════════════════════════════════
   // ANALISI ANOMALIE E POSTE DA VERIFICARE
