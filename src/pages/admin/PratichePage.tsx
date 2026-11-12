@@ -61,7 +61,7 @@ export default function PratichePage() {
   const [assignBankId, setAssignBankId] = useState('');
   const [assignBankNote, setAssignBankNote] = useState('');
   const [sendBankEmail, setSendBankEmail] = useState(false);
-  const [forceSendWithoutRelation, setForceSendWithoutRelation] = useState(false);
+  const [includeCommercialReport, setIncludeCommercialReport] = useState(true);
   const [savingBank, setSavingBank] = useState(false);
   const [existingPracticeBanks, setExistingPracticeBanks] = useState<{
     id:string;
@@ -79,7 +79,7 @@ export default function PratichePage() {
   const [allAssignedBankIds, setAllAssignedBankIds] = useState<string[]>([]);
   const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
   const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
-  const [sendWithoutRelationFor, setSendWithoutRelationFor] = useState<Record<string,boolean>>({});
+  const [omitReportFor, setOmitReportFor] = useState<Record<string,boolean>>({});
   const [practiceAnomalies, setPracticeAnomalies] = useState<PracticeAnomalyReport[]>([]);
   const [viewMode, setViewMode] = useState<'lista' | 'kanban'>('lista');
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -95,7 +95,7 @@ export default function PratichePage() {
     setAssignBankId('');
     setAssignBankNote('');
     setSendBankEmail(false);
-    setForceSendWithoutRelation(false);
+    setIncludeCommercialReport(true);
     setPracticeAnomalies([]);
     setLoadingBankDialog(true);
     // Carica assegnazioni e anomalie in parallelo. Le anomalie restano
@@ -132,12 +132,12 @@ export default function PratichePage() {
     setAssignBankId('');
     setAssignBankNote('');
     setSendBankEmail(false);
-    setForceSendWithoutRelation(false);
+    setIncludeCommercialReport(true);
     setExistingPracticeBanks([]);
     setAllAssignedBankIds([]);
     setSendNoteFor({});
     setShowNoteFor({});
-    setSendWithoutRelationFor({});
+    setOmitReportFor({});
     setPracticeAnomalies([]);
   }
 
@@ -148,13 +148,13 @@ export default function PratichePage() {
       practice_id: showAssignBank.id,
       bank_id: bankId,
       note: sendNoteFor[bankId] || null,
-      force_without_relation: Boolean(sendWithoutRelationFor[bankId]),
+      include_report: !Boolean(omitReportFor[bankId]),
     });
     if (error || data?.error) {
       toast.error('Errore invio: ' + (error?.message ?? data?.error));
     } else {
       toast.success(`Email inviata alla banca (${data?.docs_sent ?? 0} documenti allegati)`);
-      setSendWithoutRelationFor(prev => ({ ...prev, [bankId]: false }));
+      setOmitReportFor(prev => ({ ...prev, [bankId]: false }));
       // Aggiorna stato locale
       setExistingPracticeBanks(prev =>
         prev.map(pb => pb.bank_id === bankId ? { ...pb, status: 'inviata', data_invio: new Date().toISOString() } : pb)
@@ -511,7 +511,7 @@ export default function PratichePage() {
         practice_id: showAssignBank.id,
         bank_id: assignBankId,
         note: assignBankNote || null,
-        force_without_relation: forceSendWithoutRelation,
+        include_report: includeCommercialReport,
       });
       if (fnError || fnData?.error) {
         toast.warning('Banca assegnata ma errore invio email: ' + (fnError?.message ?? fnData?.error));
@@ -525,6 +525,7 @@ export default function PratichePage() {
     setAssignBankId('');
     setAssignBankNote('');
     setSendBankEmail(false);
+    setIncludeCommercialReport(true);
     // Ricarica le banche nel dialog senza chiuderlo
     let rq = supabase.from('practice_banks')
       .select('*, banks(nome,email,email_invio_banca)')
@@ -983,16 +984,16 @@ export default function PratichePage() {
                         <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={Boolean(sendWithoutRelationFor[pb.bank_id])}
-                            onChange={event => setSendWithoutRelationFor(prev => ({
+                          checked={!Boolean(omitReportFor[pb.bank_id])}
+                          onChange={event => setOmitReportFor(prev => ({
                               ...prev,
-                              [pb.bank_id]: event.target.checked,
+                              [pb.bank_id]: !event.target.checked,
                             }))}
                             className="mt-0.5 h-4 w-4 accent-amber-600"
                           />
                           <span>
-                            <span className="font-semibold block">Invia senza Relazione Commerciale</span>
-                            <span className="text-amber-800">Invia i documenti disponibili senza allegare la relazione.</span>
+                            <span className="font-semibold block">Allega la Relazione Commerciale (PDF)</span>
+                            <span className="text-amber-800">Il PDF sarà allegato sia all’email alla banca sia alla copia archivio.</span>
                           </span>
                         </label>
                         <div className="flex items-center gap-2">
@@ -1082,14 +1083,14 @@ export default function PratichePage() {
                 <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={forceSendWithoutRelation}
-                    onChange={e => setForceSendWithoutRelation(e.target.checked)}
+                    checked={includeCommercialReport}
+                    onChange={e => setIncludeCommercialReport(e.target.checked)}
                     className="mt-0.5 h-4 w-4 accent-amber-600"
                   />
                   <span>
-                    <span className="font-semibold block">Forza invio senza Relazione Commerciale</span>
+                    <span className="font-semibold block">Allega la Relazione Commerciale (PDF)</span>
                     <span className="text-xs text-amber-800">
-                      Invia i documenti disponibili anche se la relazione non è stata generata.
+                      Se selezionato, allega il PDF all’email e alla copia archivio. Se non è selezionato, PDF e collegamento alla relazione vengono omessi.
                     </span>
                   </span>
                 </label>

@@ -11,6 +11,7 @@ export async function invokeSendToBank(body: {
   integration_request_id?: string | null;
   copy_to?: string | null;
   copy_only?: boolean;
+  include_report?: boolean;
   force_without_relation?: boolean;
 }): Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> {
   try {

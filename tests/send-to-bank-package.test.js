@@ -153,6 +153,10 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       assert.equal(copy.res.statusCode, 200);
       assert.equal(bank.emails.length, 2);
       assert.equal(copy.emails.length, 2);
+      assert.equal(bank.emails[0].attachments[0].filename, 'Relazione_Commerciale_Societa_di_prova.pdf');
+      assert.equal(bank.emails[1].attachments[0].filename, bank.emails[0].attachments[0].filename);
+      assert.equal(copy.emails[0].attachments[0].filename, bank.emails[0].attachments[0].filename);
+      assert.equal(copy.res.payload.report_attached, true);
       assert.equal(copy.emails[0].from, 'Credifile <docflow@daddino.com>');
       assert.equal(copy.emails[1].from, copy.emails[0].from);
       const withoutTokens = html => html.replace(/token=[a-f0-9]{48}/g, 'token=TEST');
@@ -184,8 +188,18 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       assert.match(result.emails[0].html, /visura\.pdf/);
       assert.doesNotMatch(result.emails[0].html, /Relazione Commerciale/);
       assert.equal(result.res.payload.relation_linked, false);
+      assert.equal(result.res.payload.report_attached, false);
+      assert.equal(result.emails[0].attachments, undefined);
       const activity = result.writes.find(write => write.path.endsWith('/practice_activity_log'));
       assert.equal(activity.data.metadata.relazione_forzatamente_esclusa, true);
+    });
+
+    await t.test('l’opzione esplicita consente di inviare senza report anche se il PDF esiste', async () => {
+      const result = await send({ include_report: false });
+      assert.equal(result.res.statusCode, 200);
+      assert.equal(result.res.payload.report_attached, false);
+      assert.equal(result.emails[0].attachments, undefined);
+      assert.doesNotMatch(result.emails[0].html, /Relazione Commerciale/);
     });
 
     await t.test('invio normale senza relazione resta bloccato prima dell’invio', async () => {

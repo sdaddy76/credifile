@@ -430,6 +430,7 @@ export default async function handler(req, res) {
       integration_request_id,
       copy_to,
       copy_only = false,
+      include_report,
       force_without_relation = false,
     } = req.body;
     if (!practice_id || !bank_id) {
@@ -445,11 +446,14 @@ export default async function handler(req, res) {
     const integrationMode = Boolean(integration_request_id);
     const copyOnlyMode = Boolean(copy_only);
     // L'invio forzato vale solo per l'invio ordinario della pratica.
-    const forceWithoutRelation = Boolean(force_without_relation) && !integrationMode && !copyOnlyMode;
+    const includeReport = !integrationMode && (typeof include_report === 'boolean'
+      ? include_report
+      : !Boolean(force_without_relation));
+    const forceWithoutRelation = !includeReport && !integrationMode && !copyOnlyMode;
     // Banca e collaboratore condividono lo stesso pacchetto e le stesse
     // verifiche. copy_only cambia destinatari e aggiornamenti di stato, non
     // documenti o contenuto. L'esclusione esplicita vale solo per l'invio forzato.
-    const requiresCommercialRelation = !integrationMode && !forceWithoutRelation;
+    const requiresCommercialRelation = includeReport;
 
     const H = {
       'apikey': SUPABASE_KEY,
@@ -687,6 +691,7 @@ export default async function handler(req, res) {
         }),
     );
     let docLinks = signResults.filter(Boolean);
+    let commercialReportAttachment = null;
     if (!integrationMode && commercialRelation?.pdf_url) {
       try {
         const relationPath = String(commercialRelation.pdf_url);
@@ -699,12 +704,16 @@ export default async function handler(req, res) {
           );
           if (!signRes.ok) throw new Error('Impossibile firmare il PDF della relazione');
           const signData = await signRes.json();
-          relationUrl = signData?.signedUrl ?? null;
+          const signedUrl = signData?.signedUrl;
+          relationUrl = typeof signedUrl === 'string'
+            ? (/^https:\/\//i.test(signedUrl) ? signedUrl : `${SUPABASE_URL}/storage/v1${signedUrl.startsWith('/') ? signedUrl : `/${signedUrl}`}`)
+            : null;
           if (!relationUrl && signData?.signedURL) relationUrl = `${SUPABASE_URL}/storage/v1${signData.signedURL}`;
         }
         if (!relationUrl) throw new Error('URL PDF relazione non disponibile');
 
         const relationFilename = `Relazione_Commerciale_${safeAttachmentName(pratica.clients?.ragione_sociale)}.pdf`;
+        commercialReportAttachment = { filename: relationFilename, path: relationUrl };
         docLinks.push({
           uploadedFileId: null,
           relationId: commercialRelation.id,
@@ -1414,6 +1423,7 @@ ${finSection}
       html: integrationMode ? integrationHtmlBody : standardHtmlBody,
     };
     emailPayload.reply_to = replyEmail;
+    if (commercialReportAttachment) emailPayload.attachments = [commercialReportAttachment];
     if (ccList.length > 0) emailPayload.cc = ccList;
     if (!copyOnlyMode && bccList.length > 0) emailPayload.bcc = bccList;
 
@@ -1437,6 +1447,7 @@ ${finSection}
         html: emailPayload.html,
       };
       archivePayload.reply_to = replyEmail;
+      if (commercialReportAttachment) archivePayload.attachments = [commercialReportAttachment];
       try {
         const archiveResponse = await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -1507,7 +1518,8 @@ ${finSection}
       copia_archivio: archiveCopyRequired || primaryRecipient === ARCHIVE_CC,
       archive_resend_id: archiveEmailBody?.id ?? null,
       archive_error: archiveError,
-      relazione_forzatamente_esclusa: forceWithoutRelation,
+      report_allegato: Boolean(commercialReportAttachment),
+      relazione_forzatamente_esclusa: !includeReport,
       situazione_finanziamenti_inclusa: true,
       finanziamenti_inclusi: financing.length,
       reply_to: replyEmail,
@@ -1629,6 +1641,7 @@ ${finSection}
       reply_to: replyEmail,
       reply_to_role: replyContact.ruolo,
       docs_sent: docLinks.length,
+      report_attached: Boolean(commercialReportAttachment),
       relation_attached: false,
       relation_linked: !integrationMode && Boolean(commercialRelation?.pdf_url),
       answers_sent: answeredQuestions.length,
