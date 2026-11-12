@@ -177,6 +177,23 @@ test('pacchetto documentale e situazione finanziamenti, senza servizi reali', as
       assert.equal(result.emails.length, 0);
     });
 
+    await t.test('invio forzato senza relazione: trasmette i documenti senza allegarla', async () => {
+      const result = await send({ force_without_relation: true }, { missingRelation: true });
+      assert.equal(result.res.statusCode, 200);
+      assert.equal(result.emails.length, 2);
+      assert.match(result.emails[0].html, /visura\.pdf/);
+      assert.doesNotMatch(result.emails[0].html, /Relazione Commerciale/);
+      assert.equal(result.res.payload.relation_linked, false);
+      const activity = result.writes.find(write => write.path.endsWith('/practice_activity_log'));
+      assert.equal(activity.data.metadata.relazione_forzatamente_esclusa, true);
+    });
+
+    await t.test('invio normale senza relazione resta bloccato prima dell’invio', async () => {
+      const result = await send({}, { missingRelation: true });
+      assert.equal(result.res.statusCode, 422);
+      assert.equal(result.emails.length, 0);
+    });
+
     await t.test('la copia non richiede un indirizzo principale banca', async () => {
       const result = await send({ copy_only: true, copy_to: 'collaborator@example.invalid' }, { missingBankEmail: true });
       assert.equal(result.res.statusCode, 200);

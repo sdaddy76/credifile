@@ -79,6 +79,7 @@ export default function PratichePage() {
   const [allAssignedBankIds, setAllAssignedBankIds] = useState<string[]>([]);
   const [sendNoteFor, setSendNoteFor] = useState<Record<string,string>>({});
   const [showNoteFor, setShowNoteFor] = useState<Record<string,boolean>>({});
+  const [sendWithoutRelationFor, setSendWithoutRelationFor] = useState<Record<string,boolean>>({});
   const [practiceAnomalies, setPracticeAnomalies] = useState<PracticeAnomalyReport[]>([]);
   const [viewMode, setViewMode] = useState<'lista' | 'kanban'>('lista');
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -136,6 +137,7 @@ export default function PratichePage() {
     setAllAssignedBankIds([]);
     setSendNoteFor({});
     setShowNoteFor({});
+    setSendWithoutRelationFor({});
     setPracticeAnomalies([]);
   }
 
@@ -146,12 +148,13 @@ export default function PratichePage() {
       practice_id: showAssignBank.id,
       bank_id: bankId,
       note: sendNoteFor[bankId] || null,
-      force_without_relation: forceSendWithoutRelation,
+      force_without_relation: Boolean(sendWithoutRelationFor[bankId]),
     });
     if (error || data?.error) {
       toast.error('Errore invio: ' + (error?.message ?? data?.error));
     } else {
       toast.success(`Email inviata alla banca (${data?.docs_sent ?? 0} documenti allegati)`);
+      setSendWithoutRelationFor(prev => ({ ...prev, [bankId]: false }));
       // Aggiorna stato locale
       setExistingPracticeBanks(prev =>
         prev.map(pb => pb.bank_id === bankId ? { ...pb, status: 'inviata', data_invio: new Date().toISOString() } : pb)
@@ -977,6 +980,21 @@ export default function PratichePage() {
                       )}
                       {/* Bottone invia + nota banca collassabile */}
                       <div className="space-y-1.5">
+                        <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(sendWithoutRelationFor[pb.bank_id])}
+                            onChange={event => setSendWithoutRelationFor(prev => ({
+                              ...prev,
+                              [pb.bank_id]: event.target.checked,
+                            }))}
+                            className="mt-0.5 h-4 w-4 accent-amber-600"
+                          />
+                          <span>
+                            <span className="font-semibold block">Invia senza Relazione Commerciale</span>
+                            <span className="text-amber-800">Invia i documenti disponibili senza allegare la relazione.</span>
+                          </span>
+                        </label>
                         <div className="flex items-center gap-2">
                           <Button
                             size="sm"
