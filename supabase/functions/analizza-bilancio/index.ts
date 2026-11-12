@@ -9,6 +9,7 @@ import {
   extractBalanceCompanyName,
   extractBalanceValue,
   extractBankDebtByMaturity,
+  extractCurrentLiabilities,
   parseItalianBalanceNumber,
   splitBalanceDocument,
 } from '../_shared/balance-parser.ts';
@@ -243,7 +244,8 @@ function parseBilancio(text: string) {
   const fondi_rischi = ePassivo(['B) Fondi per rischi', 'Fondi per rischi e oneri']);
   const tfr = ePassivo(['C) Trattamento di fine rapporto', 'Trattamento di fine rapporto di lavoro']);
   const totale_debiti = ePassivo(['Totale debiti']);
-  const passivita_correnti = ePassivo(['Totale passività correnti', 'Totale passivita correnti', 'Passività correnti', 'Passivita correnti']);
+  const liquidityExtraction = extractCurrentLiabilities(text);
+  const passivita_correnti = liquidityExtraction.value;
   const ratei_risconti_passivi = ePassivo(['E) Ratei e risconti', 'Ratei e risconti passivi']);
   const totale_passivo = ePassivo(['Totale passivo']);
 
@@ -332,7 +334,7 @@ function parseBilancio(text: string) {
     debiti_banche_breve, debiti_banche_lungo,
     debiti_altri_finanziatori,
     debiti_fornitori, debiti_tributari,
-    totale_debiti, passivita_correnti, ratei_risconti_passivi,
+    totale_debiti, passivita_correnti, liquidityExtraction, ratei_risconti_passivi,
     ricavi_vendite, totale_valore_produzione,
     costi_materie, costi_servizi, costo_personale, ammortamenti, oneri_diversi_gestione,
     totale_costi_produzione, differenza_ab,
@@ -580,16 +582,16 @@ function calcolaKpi(
       liquidita: {
         current_ratio: kpi('Current Ratio', currentRatio, fmtRatio(currentRatio),
           currentRatio === null ? 'nd' : currentRatio >= 1.5 ? 'verde' : currentRatio >= 1.0 ? 'giallo' : 'rosso',
-          currentRatio === null ? 'Non disponibile' : 'Bilancio',
-          currentRatio === null ? 'Passività correnti non presenti: il totale debiti non viene usato come proxy' : undefined),
+          currentRatio === null ? 'Non disponibile' : d.liquidityExtraction.source === 'short_debt_proxy' ? 'Bilancio · proxy debiti a breve' : 'Bilancio',
+          d.liquidityExtraction.note),
         quick_ratio: kpi('Quick Ratio', quickRatio, fmtRatio(quickRatio),
           quickRatio === null ? 'nd' : quickRatio >= 1.0 ? 'verde' : quickRatio >= 0.8 ? 'giallo' : 'rosso',
           quickRatio === null ? 'Non disponibile' : 'Bilancio',
-          quickRatio === null ? 'Servono attivo circolante, rimanenze e passività correnti' : undefined),
+          quickRatio === null ? 'Servono attivo circolante, rimanenze e passività correnti' : d.liquidityExtraction.note),
         acid_test: kpi('Acid Test', acidTest, fmtRatio(acidTest),
           acidTest === null ? 'nd' : acidTest >= 0.5 ? 'verde' : acidTest >= 0.2 ? 'giallo' : 'rosso',
           acidTest === null ? 'Non disponibile' : 'Bilancio',
-          acidTest === null ? 'Servono liquidità, crediti a breve e passività correnti' : undefined),
+          acidTest === null ? 'Servono liquidità, crediti a breve e passività correnti' : d.liquidityExtraction.note),
       },
       solidita: {
         debt_equity: kpi('Debt/Equity', debtEquity, fmtRatio(debtEquity),
@@ -678,6 +680,13 @@ Deno.serve(async (req) => {
   };
   let effectiveUploadedFileId = uploaded_file_id ?? null;
 
+  // Safe handshake: older deployments reject this read-only request instead
+  // of silently treating a recovery request as a full historical reanalysis.
+  if (body.action === 'liquidity_recovery_capabilities') {
+    if (!await getAuthenticatedOperator(req)) return fail('Autenticazione operativa richiesta', 403);
+    return ok({ liquidity_recovery_version: 'liquidity-v2' });
+  }
+
   // I PDF ricevuti tramite segnalazione possono essere presenti nello storage
   // e nel payload della segnalazione senza una riga in uploaded_files. In
   // questo caso la registrazione viene eseguita server-side, con service role,
@@ -731,6 +740,58 @@ Deno.serve(async (req) => {
 
   // Parse bilancio
   const bilData = parseBilancio(pdf_text);
+
+  // Historical recovery is intentionally narrow: exact row + source document,
+  // caller RLS for both reads and writes, matching financial fingerprint, and
+  // only liquidity columns. Do not overwrite another year/company, anomaly
+  // reviews, financing-derived KPI or the original source link.
+  if (body.refresh_liquidity_only === true) {
+    const operator = await getAuthenticatedOperator(req);
+    if (!operator) return fail('Autenticazione operativa richiesta per aggiornare i dati PD', 403);
+    if (!body.bilancio_id || !effectiveUploadedFileId) return fail('Bilancio e documento di origine obbligatori');
+    const callerHeaders = {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: req.headers.get('Authorization') ?? '',
+      'Content-Type': 'application/json',
+    };
+    const target = `id=eq.${encodeURIComponent(body.bilancio_id)}&practice_id=eq.${encodeURIComponent(practice_id)}&uploaded_file_id=eq.${encodeURIComponent(effectiveUploadedFileId)}`;
+    const existingResponse = await fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?${target}&select=*`, { headers: callerHeaders });
+    if (!existingResponse.ok) return fail('Impossibile verificare l’accesso al bilancio', 403);
+    const records = await existingResponse.json() as Array<ReturnType<typeof parseBilancio> & { id: string; kpi: Record<string, unknown> }>;
+    const existing = records[0];
+    if (!existing) return fail('Bilancio non accessibile o non collegato al documento della pratica', 403);
+    const fileResponse = await fetch(`${SUPABASE_URL}/rest/v1/uploaded_files?id=eq.${encodeURIComponent(effectiveUploadedFileId)}&practice_id=eq.${encodeURIComponent(practice_id)}&select=id`, { headers: callerHeaders });
+    if (!fileResponse.ok || !(await fileResponse.json() as unknown[]).length) return fail('Documento di origine non accessibile', 403);
+    for (const key of ['totale_attivo', 'totale_patrimonio_netto'] as const) {
+      if (typeof bilData[key] !== 'number' || existing[key] === null
+        || !Number.isFinite(Number(existing[key])) || Math.abs(bilData[key]! - Number(existing[key])) > 1) {
+        return fail('Il PDF non coincide con gli importi del bilancio salvato. Eseguire un’analisi completa per verificare la fonte.');
+      }
+    }
+    if (existing.anno_esercizio !== null && bilData.anno_esercizio !== existing.anno_esercizio) {
+      return fail('Annualità del PDF diversa o non riconosciuta: aggiornamento non eseguito.');
+    }
+    if (bilData.passivita_correnti === null) {
+      return ok({ updated: false, uploaded_file_id: effectiveUploadedFileId, note: bilData.liquidityExtraction.note });
+    }
+    // Reuse the same KPI engine as new analyses, preserving the historical
+    // balance figures and all non-liquidity KPI (no new financing assumptions).
+    const refreshed = calcolaKpi({ ...bilData, ...existing,
+      passivita_correnti: bilData.passivita_correnti,
+      liquidityExtraction: bilData.liquidityExtraction,
+    });
+    const patchResponse = await fetch(`${SUPABASE_URL}/rest/v1/bilanci_kpi?${target}`, {
+      method: 'PATCH', headers: { ...callerHeaders, Prefer: 'return=representation' },
+      body: JSON.stringify({ passivita_correnti: bilData.passivita_correnti,
+        kpi: { ...existing.kpi, liquidita: refreshed.kpi.liquidita } }),
+    });
+    if (!patchResponse.ok) return fail('Aggiornamento liquidità non autorizzato o non riuscito');
+    const saved = await patchResponse.json() as Array<{ id: string }>;
+    if (!saved.some(row => row.id === existing.id)) return fail('Aggiornamento non confermato: nessuna riga modificata');
+    return ok({ updated: true, bilancio_id: existing.id, uploaded_file_id: effectiveUploadedFileId,
+      passivita_correnti: bilData.passivita_correnti, note: bilData.liquidityExtraction.note });
+  }
+
   const periodFinancing = financingForBalanceYear(financing ?? [], bilData.anno_esercizio);
   const periodTransactions = transactionsForBalanceYear(transactions ?? [], bilData.anno_esercizio);
   const {

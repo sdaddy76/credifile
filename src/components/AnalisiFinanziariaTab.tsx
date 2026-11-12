@@ -983,6 +983,8 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
   const [unlinkedBalanceCount, setUnlinkedBalanceCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [liquidityRecovery, setLiquidityRecovery] = useState<{ completed: number; total: number } | null>(null);
+  const [liquidityRecoveryResults, setLiquidityRecoveryResults] = useState<string[]>([]);
   const [selectedBilancio, setSelectedBilancio] = useState<BilancioRecord | null>(null);
   const [codiceAteco, setCodiceAteco] = useState<string | null>(null);
   const [bancabilita, setBancabilita] = useState<BancaCheck[]>([]);
@@ -1461,6 +1463,60 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     return result;
   };
 
+  const downloadBalancePdf = async (pdf: UploadedPdf) => {
+    const { data, error } = await supabase.storage.from('practice-files').createSignedUrl(pdf.storage_path, 60);
+    if (error || !data?.signedUrl) throw new Error('Impossibile accedere al PDF di origine');
+    const response = await fetch(data.signedUrl);
+    if (!response.ok) throw new Error(`Download PDF fallito (${response.status})`);
+    return new File([await response.blob()], pdf.nome_file, { type: 'application/pdf' });
+  };
+
+  const recoverHistoricalLiquidity = async () => {
+    if (analyzing) return;
+    const targets = bilanci.filter(balance => balance.passivita_correnti == null && balance.uploaded_file_id);
+    if (!targets.length) return;
+    setAnalyzing(true);
+    setLiquidityRecoveryResults([]);
+    const results: string[] = [];
+    try {
+      const { data: capability, error: capabilityError } = await supabase.functions.invoke('analizza-bilancio', {
+        body: { action: 'liquidity_recovery_capabilities' },
+      });
+      if (capabilityError || capability?.liquidity_recovery_version !== 'liquidity-v2') {
+        throw new Error('Il servizio di recupero dati non è ancora aggiornato o non è accessibile. Nessun bilancio è stato modificato; riprova tra poco.');
+      }
+      for (let index = 0; index < targets.length; index++) {
+        const balance = targets[index];
+        setLiquidityRecovery({ completed: index, total: targets.length });
+        const label = `${balance.ragione_sociale || 'Bilancio'} · ${balance.anno_esercizio ?? 'anno N/D'}`;
+        try {
+          const pdf = uploadedPdfs.find(item => item.id === balance.uploaded_file_id);
+          if (!pdf) throw new Error('PDF di origine non disponibile nell’elenco documenti');
+          const pdfText = await extractPdfText(await downloadBalancePdf(pdf));
+          const { data, error } = await supabase.functions.invoke('analizza-bilancio', { body: {
+            practice_id: practiceId, bilancio_id: balance.id,
+            uploaded_file_id: balance.uploaded_file_id, pdf_text: pdfText,
+            refresh_liquidity_only: true,
+          } });
+          if (error || !data?.success) throw new Error(data?.error ?? error?.message ?? 'Aggiornamento non riuscito');
+          results.push(`${label}: ${data.updated ? 'dati di liquidità aggiornati' : 'nessun dato utilizzabile recuperato'} — ${data.note ?? ''}`);
+        } catch (error) {
+          results.push(`${label}: non aggiornato — ${error instanceof Error ? error.message : String(error)}`);
+        }
+        setLiquidityRecoveryResults([...results]);
+      }
+      await loadData();
+      toast.info('Recupero terminato: consulta gli esiti per ogni bilancio. La PD resta non calcolabile se altri dati o verifiche sono mancanti.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLiquidityRecoveryResults(previous => [...previous, message]);
+      toast.error(message);
+    } finally {
+      setLiquidityRecovery(null);
+      setAnalyzing(false);
+    }
+  };
+
   // Analizza un PDF già caricato nella pratica
   const handleAnalyzeExisting = async () => {
     if (!selectedPdfId) { toast.error('Seleziona un file PDF dalla lista'); return; }
@@ -1473,16 +1529,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     setAnalyzing(true);
     toast.info('Download e analisi del bilancio in corso...');
     try {
-      // Scarica il PDF da storage tramite URL firmato
-      const { data: signData, error: signErr } = await supabase.storage
-        .from('practice-files')
-        .createSignedUrl(pdf.storage_path, 60);
-      if (signErr || !signData?.signedUrl) throw new Error('Impossibile accedere al file: ' + (signErr?.message ?? 'URL non disponibile'));
-
-      const response = await fetch(signData.signedUrl);
-      if (!response.ok) throw new Error('Download fallito: ' + response.statusText);
-      const blob = await response.blob();
-      const file = new File([blob], pdf.nome_file, { type: 'application/pdf' });
+      const file = await downloadBalancePdf(pdf);
 
       // Public-referral PDFs may exist in storage and in the signal payload
       // without a row in uploaded_files. Materialize that source before
@@ -1510,7 +1557,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
             nome_file: pdf.nome_file,
             storage_path: pdf.storage_path,
             mime_type: 'application/pdf',
-            dimensione: blob.size,
+            dimensione: file.size,
             uploaded_by: 'segnalatore',
           };
         }
@@ -1799,6 +1846,26 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       <Separator />
 
       {/* Dashboard KPI */}
+      {bilanci.some(balance => balance.passivita_correnti == null) && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Aggiorna i dati storici per la PD</CardTitle></CardHeader>
+          <CardContent className="space-y-3 text-xs">
+            <p>Le analisi precedenti non contengono le passività correnti. Recupera le scadenze dai PDF già caricati, senza ricaricare i documenti. Aggiorniamo solo la liquidità: gli altri KPI e le risposte alle anomalie restano invariati.</p>
+            <Button size="sm" variant="outline" onClick={recoverHistoricalLiquidity} disabled={analyzing}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${liquidityRecovery ? 'animate-spin' : ''}`} />
+              {liquidityRecovery ? `Recupero ${liquidityRecovery.completed + 1}/${liquidityRecovery.total}…` : 'Recupera dati PD dai PDF della pratica'}
+            </Button>
+            <p className="text-muted-foreground">I debiti a breve sono segnalati come proxy se il documento non riporta il totale delle passività correnti. Dati assenti o ambigui non vengono inventati.</p>
+          </CardContent>
+        </Card>
+      )}
+      {liquidityRecoveryResults.length > 0 && (
+        <div role="status" className="rounded-lg border p-3 text-xs space-y-2">
+          <p className="font-semibold">Esiti recupero dati di liquidità</p>
+          <ul className="list-disc pl-4 space-y-1">{liquidityRecoveryResults.map((result, index) => <li key={index}>{result}</li>)}</ul>
+        </div>
+      )}
+
       {bilanci.length === 0 ? (
         <div className="py-10 text-center border rounded-lg bg-muted/30">
           <TrendingUp className="w-10 h-10 mx-auto text-muted-foreground mb-3" />

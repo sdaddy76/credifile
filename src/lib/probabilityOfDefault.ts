@@ -26,6 +26,7 @@ export interface DefaultProbabilityInput {
   voci_mancanti?: string[] | null;
   data_quality_level?: 'alta' | 'media' | 'bassa';
   anomaly_analysis?: { data_quality_level?: 'alta' | 'media' | 'bassa' } | null;
+  kpi?: { liquidita?: { current_ratio?: { source?: string; source_note?: string } } };
 }
 
 export type DefaultProbabilityResult = {
@@ -121,6 +122,8 @@ export function calculateProbabilityOfDefault(
     return { status: 'unavailable', reasons: ['Rapporti non finiti: verificare importi e denominatori del bilancio.'] };
   }
   const warnings: string[] = [];
+  const liquidityNote = input.kpi?.liquidita?.current_ratio?.source_note;
+  if (liquidityNote?.includes('PROXY')) warnings.push(liquidityNote);
   if (quality !== 'alta') warnings.push('Verificare i valori estratti con il bilancio originale prima di utilizzare la stima.');
   if (!codiceAteco?.trim()) warnings.push('ATECO non disponibile: verificare che l’impresa non operi nel settore finanziario/assicurativo.');
   if (equity < 0) warnings.push('Patrimonio netto negativo: il rapporto passività/attivo supera il 100%.');

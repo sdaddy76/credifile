@@ -49,7 +49,7 @@ export default function DefaultProbabilityCard({ bilancio, codiceAteco }: Props)
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div><p className="text-muted-foreground">ROA · Utile netto / Attivo</p><p className="font-semibold">{ratio(result.ratios.roa)}</p></div>
               <div><p className="text-muted-foreground">L · Passività totali / Attivo</p><p className="font-semibold">{ratio(result.ratios.leverage)}</p></div>
-              <div><p className="text-muted-foreground">CR · Attivo circolante / Passività correnti</p><p className="font-semibold">{ratio(result.ratios.currentRatio)}</p></div>
+              <div><p className="text-muted-foreground">CR · Attivo circolante / Passività correnti{bilancio.kpi?.liquidita?.current_ratio?.source_note?.includes('PROXY') ? ' (proxy debiti a breve)' : ''}</p><p className="font-semibold">{ratio(result.ratios.currentRatio)}</p></div>
             </div>
             {result.warnings.length > 0 && (
               <ul className="list-disc pl-4 text-xs text-amber-800 space-y-1">{result.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
