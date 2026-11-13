@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,7 @@ export default function MieiSegnalPage() {
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!user?.id) return;
     const [{ data: asgn }, { data: inv }] = await Promise.all([
       supabase
@@ -48,9 +48,9 @@ export default function MieiSegnalPage() {
     setAssegnazioni((asgn ?? []) as AgentSegnalatore[]);
     setInvites((inv ?? []) as Invite[]);
     setLoading(false);
-  }
+  }, [user?.id]);
 
-  useEffect(() => { load(); }, [user?.id]);
+  useEffect(() => { load(); }, [load]);
 
   const handleInvite = async () => {
     const trimmed = email.trim().toLowerCase();

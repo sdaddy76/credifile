@@ -43,6 +43,33 @@ type BodyInput = {
   kpi_comments?: Array<Record<string, unknown>>;
 };
 
+type ClientContext = Record<string, unknown> & {
+  id?: string | null;
+  ragione_sociale?: string | null;
+  nome?: string | null;
+  piva?: string | null;
+  partita_iva?: string | null;
+  codice_fiscale?: string | null;
+  codice_ateco?: string | null;
+};
+
+type PracticeContext = Record<string, unknown> & {
+  client_id?: string | null;
+  clients?: ClientContext | null;
+  ragione_sociale?: string | null;
+  codice_ateco?: string | null;
+  importo_richiesto?: number | string | null;
+  importo?: number | string | null;
+  durata?: number | string | null;
+  finalita?: string | null;
+  descrizione_finalita?: string | null;
+};
+
+type AnalysisContext = Record<string, unknown> & {
+  practice?: PracticeContext | null;
+  client?: ClientContext | null;
+};
+
 const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -83,7 +110,7 @@ function normalizeAnswers(raw: Record<string, unknown>, allowedIds = OUTPUT_IDS)
 async function safeSelect(label: string, query: PromiseLike<{ data: unknown; error: unknown }>) {
   try {
     const { data, error } = await query;
-    if (error) return { label, error: String((error as any)?.message ?? error), data: null };
+    if (error) return { label, error: String((error as { message?: unknown })?.message ?? error), data: null };
     return { label, data, error: null };
   } catch (e) {
     return { label, error: String(e), data: null };
@@ -102,23 +129,24 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const context: Record<string, unknown> = {};
+    const context: AnalysisContext = {};
 
     if (input.practice_id) {
-      const { data: practice, error: practiceError } = await supabase
+      const { data: practiceRow, error: practiceError } = await supabase
         .from('practices')
         .select('*, clients(*)')
         .eq('id', input.practice_id)
         .maybeSingle();
+      const practice = practiceRow as PracticeContext | null;
 
       if (practiceError) {
         context.practice_error = practiceError.message;
       } else {
         context.practice = practice;
-        context.client = (practice as any)?.clients ?? null;
+        context.client = practice?.clients ?? null;
       }
 
-      const clientId = (practice as any)?.client_id ?? (practice as any)?.clients?.id ?? null;
+      const clientId = practice?.client_id ?? practice?.clients?.id ?? null;
       const results = await Promise.all([
         safeSelect('bilanci_kpi', supabase
           .from('bilanci_kpi')
@@ -179,7 +207,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const ctx: any = context;
+    const ctx = context;
     const practice = ctx.practice ?? {};
     const client = ctx.client ?? practice?.clients ?? {};
     const ragioneSociale = input.ragione_sociale || client?.ragione_sociale || client?.nome || practice?.ragione_sociale || 'N/D';

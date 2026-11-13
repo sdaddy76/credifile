@@ -723,15 +723,15 @@ export default function NuovoReportWizard() {
       } else {
         toast.error(data?.error ?? 'Nessuna risposta AI ricevuta');
       }
-    } catch (error: any) {
-      toast.error(`Errore generazione relazione: ${error.message ?? error}`);
+    } catch (error: unknown) {
+      toast.error(`Errore generazione relazione: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setRelazioneLoading(false);
     }
   };
 
   const buildRelazioneDocx = async () => {
-    const children: any[] = [
+    const children: (Paragraph | Table)[] = [
       new Paragraph({ text: 'RELAZIONE COMMERCIALE', heading: HeadingLevel.TITLE }),
       new Paragraph({ children: [new TextRun({ text: `${ragSociale || client?.ragione_sociale || 'Cliente'} — ${new Date().toLocaleDateString('it-IT')}`, italics: true })] }),
     ];

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -84,6 +84,25 @@ type AutoData = {
   motivazione: string;
 };
 
+type PracticeBankDetails = {
+  importo_richiesto?: number | null;
+  motivazione?: string | null;
+};
+
+type ClientAutoFields = {
+  ragione_sociale?: string | null;
+  codice_fiscale?: string | null;
+  piva?: string | null;
+  codice_ateco?: string | null;
+  indirizzo?: string | null;
+};
+
+type UploadedCommercialDocument = {
+  id: string;
+  nome_file: string | null;
+  practice_documents: { nome?: string | null } | { nome?: string | null }[] | null;
+};
+
 type BenchmarkInfo = {
   settoreLabel: string;
   kpiData: Record<string, number | null>;
@@ -105,6 +124,14 @@ const SELECTED_KPI_KEYS = '__selected_kpi_keys';
 const BANK_POSITIVE_ONLY_KEY = '__bank_positive_only';
 
 /* @section: relazione-commerciale-helpers */
+const errorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return String(error);
+};
+
 const formatEuro = (value?: number | null) => {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return 'N/D';
   return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(Number(value));
@@ -171,7 +198,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const [activeRelazioneId, setActiveRelazioneId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string | string[] | null>>({});
   const [autoData, setAutoData] = useState<AutoData>({ ragione_sociale: '', cf: '', piva: '', ateco: '', indirizzo: '', importo: null, motivazione: '' });
-  const [practiceBankDetails, setPracticeBankDetails] = useState<Record<string, { importo_richiesto?: number | null; motivazione?: string | null }>>({});
+  const [practiceBankDetails, setPracticeBankDetails] = useState<Record<string, PracticeBankDetails>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -181,6 +208,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   const [balanceRecords, setBalanceRecords] = useState<CommercialBalanceRecord[]>([]);
   const [provisionalFileIds, setProvisionalFileIds] = useState<string[]>([]);
   const [hasProvisionalDocument, setHasProvisionalDocument] = useState(false);
+  const answersRelazioneId = useRef<string | null>(null);
 
   const activeRelazione = useMemo(
     () => relazioni.find(r => r.id === activeRelazioneId) ?? relazioni[0] ?? null,
@@ -245,16 +273,17 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
   }, [commercialAnalysis.latestAnnual, kpiComparisons]);
 
   useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [practiceId, clientId]);
-
-  useEffect(() => {
-    if (activeRelazione) setAnswers(activeRelazione.risposte ?? {});
-  }, [activeRelazione?.id]);
+    if (!activeRelazione) {
+      answersRelazioneId.current = null;
+      return;
+    }
+    if (answersRelazioneId.current === activeRelazione.id) return;
+    answersRelazioneId.current = activeRelazione.id;
+    setAnswers(activeRelazione.risposte ?? {});
+  }, [activeRelazione]);
 
   /* @section: relazione-commerciale-load */
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     try {
       const [
@@ -270,7 +299,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       ] = await Promise.all([
         supabase.from('relazione_templates').select('*').eq('attivo', true).order('nome'),
         supabase.from('relazioni_commerciali').select('*, relazione_templates(*)').eq('practice_id', practiceId).order('updated_at', { ascending: false }),
-        clientId ? supabase.from('clients').select('ragione_sociale,codice_fiscale,piva,indirizzo,codice_ateco').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
+        clientId ? supabase.from('clients').select('ragione_sociale,codice_fiscale,piva,indirizzo,codice_ateco').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null, error: null }),
         supabase.from('practices').select('importo_richiesto').eq('id', practiceId).maybeSingle(),
         supabase.from('practice_banks').select('bank_id,importo_richiesto,motivazione').eq('practice_id', practiceId),
         supabase
@@ -294,21 +323,21 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       ]);
       if (tplErr) throw tplErr;
       if (relErr) throw relErr;
-      setTemplates(((tpl ?? []) as any[]).map(t => ({ ...t, sezioni: Array.isArray(t.sezioni) ? t.sezioni : [] })) as RelazioneTemplate[]);
-      const normalizedRel = ((rel ?? []) as any[]).map(r => ({
+      setTemplates(((tpl ?? []) as RelazioneTemplate[]).map(t => ({ ...t, sezioni: Array.isArray(t.sezioni) ? t.sezioni : [] })));
+      const normalizedRel = ((rel ?? []) as RelazioneCommerciale[]).map(r => ({
         ...r,
         risposte: r.risposte ?? {},
         relazione_templates: r.relazione_templates ? { ...r.relazione_templates, sezioni: Array.isArray(r.relazione_templates.sezioni) ? r.relazione_templates.sezioni : [] } : null,
-      })) as RelazioneCommerciale[];
+      }));
       setRelazioni(normalizedRel);
       setActiveRelazioneId(prev => prev ?? normalizedRel[0]?.id ?? null);
-      const bankMap: Record<string, { importo_richiesto?: number | null; motivazione?: string | null }> = {};
-      (bankDetails ?? []).forEach((row: any) => { bankMap[row.bank_id] = row; });
+      const bankMap: Record<string, PracticeBankDetails> = {};
+      ((bankDetails ?? []) as (PracticeBankDetails & { bank_id: string })[]).forEach(row => { bankMap[row.bank_id] = row; });
       setPracticeBankDetails(bankMap);
-      const c: any = client ?? {};
-      const p: any = practice ?? {};
+      const c: ClientAutoFields = client ?? {};
+      const p: Pick<PracticeBankDetails, 'importo_richiesto'> = practice ?? {};
       const balances = (bilanci ?? []) as CommercialBalanceRecord[];
-      const provisionalIds = ((uploadedDocuments ?? []) as any[])
+      const provisionalIds = ((uploadedDocuments ?? []) as UploadedCommercialDocument[])
         .filter(file => {
           const linked = Array.isArray(file.practice_documents)
             ? file.practice_documents[0]
@@ -358,13 +387,17 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
         periodoDati: benchmarkRow?.effective_period ?? null,
         annoBilancio: latestBilancio?.anno_esercizio ?? null,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
-      toast.error(`Errore caricamento relazione: ${error.message ?? error}`);
+      toast.error(`Errore caricamento relazione: ${errorMessage(error)}`);
     } finally {
       setLoading(false);
     }
-  };
+  }, [clientId, practiceId]);
+
+  useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
 
   /* @section: relazione-commerciale-create-save */
   const createRelazione = async () => {
@@ -382,9 +415,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       setActiveRelazioneId(normalized.id);
       setSelectedTemplate('');
       toast.success('Relazione commerciale creata');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
-      toast.error(`Errore creazione relazione: ${error.message ?? error}`);
+      toast.error(`Errore creazione relazione: ${errorMessage(error)}`);
     } finally {
       setSaving(false);
     }
@@ -409,9 +442,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
           : r
       ));
       if (!silent) toast.success('Bozza salvata');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Errore salvataggio draft AI:', error);
-      if (!silent) toast.error(`Errore salvataggio: ${error.message ?? error}`);
+      if (!silent) toast.error(`Errore salvataggio: ${errorMessage(error)}`);
       throw error;
     }
   };
@@ -505,8 +538,8 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       } else {
         toast.error(data?.error ?? 'Nessuna risposta AI ricevuta');
       }
-    } catch (e: any) {
-      toast.error('Errore compilazione AI: ' + (e.message ?? e));
+    } catch (e: unknown) {
+      toast.error('Errore compilazione AI: ' + errorMessage(e));
     } finally {
       setCompilingAi(false);
     }
@@ -520,9 +553,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       setRelazioni(prev => prev.filter(r => r.id !== id));
       if (activeRelazioneId === id) setActiveRelazioneId(null);
       toast.success('Relazione eliminata');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
-      toast.error(`Errore eliminazione: ${error.message ?? error}`);
+      toast.error(`Errore eliminazione: ${errorMessage(error)}`);
     }
   };
 
@@ -547,7 +580,7 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       ['Motivazione Richiesta', autoData.motivazione || 'N/D'],
     ].filter(([, value]) => isReportValueVisible(value));
 
-    const children: any[] = [
+    const children: (Paragraph | Table)[] = [
       new Paragraph({ text: `RELAZIONE COMMERCIALE - ${template.nome}`, heading: HeadingLevel.TITLE, alignment: AlignmentType.CENTER }),
       new Paragraph({ children: [new TextRun({ text: `Pratica: ${autoData.ragione_sociale || 'N/D'} | Data: ${new Date().toLocaleDateString('it-IT')}`, italics: true })], alignment: AlignmentType.CENTER }),
       new Paragraph({ text: 'Dati automatici pratica', heading: HeadingLevel.HEADING_1 }),
@@ -779,9 +812,9 @@ export default function RelazioneTab({ practiceId, clientId, canEdit, role }: Pr
       if (updErr) throw new Error(`Aggiornamento relazione: ${updErr.message}`);
       setRelazioni(prev => prev.map(r => r.id === activeRelazione.id ? { ...r, docx_url: docxPath, pdf_url: pdfPath, status: 'generata', risposte: answersToGenerate } : r));
       toast.success('DOCX e PDF generati');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
-      toast.error(`Errore generazione documento: ${error.message ?? error}`);
+      toast.error(`Errore generazione documento: ${errorMessage(error)}`);
     } finally {
       setGenerating(false);
     }

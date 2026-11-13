@@ -2,9 +2,10 @@
 // Pannello super_admin / segreteria per gestire le segnalazioni pubbliche ricevute.
 // Permette di assegnare ogni segnalazione a un agente.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { documentMimeType } from '@/lib/documentFormats';
 import { sanitizeFileName } from '@/lib/uploadFile';
 import { useAuth } from '@/hooks/useAuth';
 import { initializePracticeDocuments } from '@/lib/clientVisura';
@@ -121,7 +122,7 @@ export default function SegnalazioniRicevutePage() {
   };
 
   // Carica segnalazioni
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setLoadError('');
     // Non incorporare la relazione agente nella query principale: in alcuni
@@ -220,10 +221,10 @@ export default function SegnalazioniRicevutePage() {
       .in('stato', ['nuova', 'assegnata', 'lavorazione']);
     setDuplicateCount(count ?? 0);
     setLoading(false);
-  };
+  }, [filtroStato, isAgente, isSegreteria, isSuperAdmin, user?.id]);
 
   useEffect(() => { loadAgenti(); }, []);
-  useEffect(() => { load(); }, [filtroStato, isAgente, isSegreteria, isSuperAdmin, user?.id]);
+  useEffect(() => { load(); }, [load]);
 
   // Assegna segnalazione a un agente
   const assegna = async (seg: Segnalazione) => {
@@ -364,7 +365,7 @@ export default function SegnalazioniRicevutePage() {
         const path = `segnalazioni/admin/${seg.id}/${Date.now()}_${index}_${sanitizeFileName(file.name)}`;
         const { error: uploadError } = await supabase.storage
           .from('practice-files')
-          .upload(path, file, { upsert: false, cacheControl: '3600' });
+          .upload(path, file, { upsert: false, cacheControl: '3600', contentType: documentMimeType(file.name, file.type) });
         if (uploadError) throw new Error(`Upload "${file.name}" non riuscito: ${uploadError.message}`);
         uploadedPaths.push(path);
         const { data: signedData, error: signedError } = await supabase.storage
@@ -377,7 +378,7 @@ export default function SegnalazioniRicevutePage() {
           nome: file.name,
           url: signedData.signedUrl,
           path,
-          mime_type: file.type || null,
+          mime_type: documentMimeType(file.name, file.type),
           dimensione: file.size,
         });
       }

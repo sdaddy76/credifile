@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { CheckSquare, Clock, AlertCircle, CheckCircle2, RefreshCw, ArrowRight, Filter } from 'lucide-react';
+import { CheckSquare, Clock, AlertCircle, CheckCircle2, RefreshCw, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface Task {
@@ -45,7 +45,7 @@ export default function TasksPage() {
   const [filtroPriorita, setFiltroPriorita] = useState('');
   const [search, setSearch] = useState('');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
     let q = supabase
@@ -63,9 +63,9 @@ export default function TasksPage() {
     const { data } = await q.limit(100);
     setTasks((data ?? []) as Task[]);
     setLoading(false);
-  };
+  }, [user?.id, isSuperAdmin, isSegreteria, filtroStato]);
 
-  useEffect(() => { load(); }, [user?.id, filtroStato]);
+  useEffect(() => { load(); }, [load]);
 
   const updateStato = async (taskId: string, newStato: string) => {
     const update: Record<string, unknown> = { stato: newStato, updated_at: new Date().toISOString() };

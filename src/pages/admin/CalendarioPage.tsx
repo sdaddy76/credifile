@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,6 +22,34 @@ interface CalEvent {
   priorita?: string;
   scaduto?: boolean;
   link?: string;
+}
+
+interface CalendarPractice {
+  id: string;
+  numero_pratica: string;
+  clients: { ragione_sociale: string } | { ragione_sociale: string }[] | null;
+}
+
+interface PracticeEventRow {
+  id: string;
+  practice_id: string;
+}
+
+type DeadlineRow = PracticeEventRow & { documento: string; data_scadenza: string };
+type TaskRow = PracticeEventRow & { titolo: string; scadenza: string; stato: string; priorita: string };
+type ActivityRow = PracticeEventRow & { action: string; actor_nome: string | null; metadata: Record<string, unknown> | null; created_at: string };
+type StatusRow = PracticeEventRow & { old_status: string | null; new_status: string; note: string | null; created_at: string };
+type UploadRow = PracticeEventRow & { nome_file: string; uploaded_by: string | null; created_at: string };
+type EmailRow = PracticeEventRow & { bank_nome: string | null; oggetto: string | null; delivery_type: string | null; created_at: string };
+type IntegrationRow = PracticeEventRow & { requested_at: string | null; sent_at: string | null; note: string | null };
+interface PublicRequestRow {
+  id: string;
+  ragione_sociale: string;
+  stato: string;
+  tipo_richiesta: string | null;
+  practice_id: string | null;
+  created_at: string;
+  piva?: string | null;
 }
 
 const MESI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
@@ -88,7 +116,7 @@ export default function CalendarioPage() {
   const [month, setMonth] = useState(today.getMonth()); // 0-based
   const [selectedDay, setSelectedDay] = useState<number | null>(today.getDate());
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
@@ -141,7 +169,7 @@ export default function CalendarioPage() {
           return query;
         })(),
       ]);
-      const practices = (practiceRows.data ?? []) as any[];
+      const practices = (practiceRows.data ?? []) as CalendarPractice[];
       const practiceMap = new Map(practices.map(practice => [
         practice.id,
         {
@@ -150,50 +178,56 @@ export default function CalendarioPage() {
         },
       ]));
 
-      const applyPracticeFilter = (query: any) => (
-        allowedIds === null
-          ? query
-          : query.in('practice_id', allowedIds.length > 0 ? allowedIds : ['00000000-0000-0000-0000-000000000000'])
-      );
       const rangeStart = new Date(Date.UTC(year, 0, 1) - 86400000).toISOString();
       const rangeEnd = new Date(Date.UTC(year + 1, 0, 1) + 86400000).toISOString();
+      let deadlineQuery = supabase.from('document_deadlines')
+        .select('id, documento, data_scadenza, practice_id')
+        .gte('data_scadenza', `${year}-01-01`)
+        .lte('data_scadenza', `${year}-12-31`);
+      let taskQuery = supabase.from('practice_tasks')
+        .select('id, titolo, scadenza, stato, priorita, practice_id')
+        .not('scadenza', 'is', null)
+        .gte('scadenza', `${year}-01-01`)
+        .lte('scadenza', `${year}-12-31`)
+        .neq('stato', 'annullata');
+      let activityQuery = supabase.from('practice_activity_log')
+        .select('id,practice_id,action,actor_nome,metadata,created_at')
+        .gte('created_at', rangeStart)
+        .lt('created_at', rangeEnd);
+      let statusQuery = supabase.from('practice_status_log')
+        .select('id,practice_id,old_status,new_status,note,created_at')
+        .gte('created_at', rangeStart)
+        .lt('created_at', rangeEnd);
+      let uploadQuery = supabase.from('uploaded_files')
+        .select('id,practice_id,practice_document_id,nome_file,uploaded_by,created_at')
+        .gte('created_at', rangeStart)
+        .lt('created_at', rangeEnd);
+      let emailQuery = supabase.from('email_send_log')
+        .select('id,practice_id,bank_nome,oggetto,destinatari,delivery_type,created_at')
+        .gte('created_at', rangeStart)
+        .lt('created_at', rangeEnd);
+      let integrationQuery = supabase.from('practice_integration_requests')
+        .select('id,practice_id,note,requested_at,sent_at,practice_bank_id')
+        .gte('created_at', rangeStart)
+        .lt('created_at', rangeEnd);
+      if (allowedIds !== null) {
+        const visibleIds = allowedIds.length > 0 ? allowedIds : ['00000000-0000-0000-0000-000000000000'];
+        deadlineQuery = deadlineQuery.in('practice_id', visibleIds);
+        taskQuery = taskQuery.in('practice_id', visibleIds);
+        activityQuery = activityQuery.in('practice_id', visibleIds);
+        statusQuery = statusQuery.in('practice_id', visibleIds);
+        uploadQuery = uploadQuery.in('practice_id', visibleIds);
+        emailQuery = emailQuery.in('practice_id', visibleIds);
+        integrationQuery = integrationQuery.in('practice_id', visibleIds);
+      }
       const [deadlines, tasks, activities, statusLogs, uploads, emailLogs, integrations] = await Promise.all([
-        applyPracticeFilter(supabase.from('document_deadlines')
-          .select('id, documento, data_scadenza, practice_id')
-          .gte('data_scadenza', `${year}-01-01`)
-          .lte('data_scadenza', `${year}-12-31`)),
-        applyPracticeFilter(supabase.from('practice_tasks')
-          .select('id, titolo, scadenza, stato, priorita, practice_id')
-          .not('scadenza', 'is', null)
-          .gte('scadenza', `${year}-01-01`)
-          .lte('scadenza', `${year}-12-31`)
-          .neq('stato', 'annullata')),
-        applyPracticeFilter(supabase.from('practice_activity_log')
-          .select('id,practice_id,action,actor_nome,metadata,created_at')
-          .gte('created_at', rangeStart)
-          .lt('created_at', rangeEnd)),
-        applyPracticeFilter(supabase.from('practice_status_log')
-          .select('id,practice_id,old_status,new_status,note,created_at')
-          .gte('created_at', rangeStart)
-          .lt('created_at', rangeEnd)),
-        applyPracticeFilter(supabase.from('uploaded_files')
-          .select('id,practice_id,practice_document_id,nome_file,uploaded_by,created_at'))
-          .gte('created_at', rangeStart)
-          .lt('created_at', rangeEnd),
-        applyPracticeFilter(supabase.from('email_send_log')
-          .select('id,practice_id,bank_nome,oggetto,destinatari,delivery_type,created_at')
-          .gte('created_at', rangeStart)
-          .lt('created_at', rangeEnd)),
-        applyPracticeFilter(supabase.from('practice_integration_requests')
-          .select('id,practice_id,note,requested_at,sent_at,practice_bank_id')
-          .gte('created_at', rangeStart)
-          .lt('created_at', rangeEnd)),
+        deadlineQuery, taskQuery, activityQuery, statusQuery, uploadQuery, emailQuery, integrationQuery,
       ]);
 
-      const todayStr = romeDateKey(today);
-      const info = (practiceId?: string) => practiceId ? practiceMap.get(practiceId) : undefined;
+      const todayStr = romeDateKey(new Date());
+      const info = (practiceId?: string | null) => practiceId ? practiceMap.get(practiceId) : undefined;
       const evs: CalEvent[] = [
-        ...((deadlines.data ?? []) as any[]).map(d => ({
+        ...((deadlines.data ?? []) as DeadlineRow[]).map(d => ({
         id: d.id,
         tipo: 'scadenza' as const,
         titolo: d.documento,
@@ -204,7 +238,7 @@ export default function CalendarioPage() {
         cliente: info(d.practice_id)?.cliente,
         scaduto: d.data_scadenza < todayStr,
       })),
-      ...((tasks.data ?? []) as any[]).map(t => ({
+      ...((tasks.data ?? []) as TaskRow[]).map(t => ({
         id: t.id,
         tipo: 'task' as const,
         titolo: t.titolo,
@@ -217,10 +251,10 @@ export default function CalendarioPage() {
         priorita: t.priorita,
         scaduto: t.scadenza < todayStr && t.stato !== 'completata',
       })),
-      ...((activities.data ?? []) as any[]).map(activity => ({
+      ...((activities.data ?? []) as ActivityRow[]).map(activity => ({
         id: `activity-${activity.id}`,
         tipo: 'attivita' as const,
-        titolo: eventTitle(activity.action, activity.metadata),
+        titolo: eventTitle(activity.action, activity.metadata ?? undefined),
         data: romeDateKey(activity.created_at),
         timestamp: activity.created_at,
         descrizione: activity.actor_nome ? `Operatore: ${activity.actor_nome}` : undefined,
@@ -228,7 +262,7 @@ export default function CalendarioPage() {
         pratica_numero: info(activity.practice_id)?.numero,
         cliente: info(activity.practice_id)?.cliente,
       })),
-      ...((statusLogs.data ?? []) as any[]).map(log => ({
+      ...((statusLogs.data ?? []) as StatusRow[]).map(log => ({
         id: `status-${log.id}`,
         tipo: 'stato' as const,
         titolo: `Stato pratica: ${log.old_status || '—'} → ${log.new_status}`,
@@ -239,7 +273,7 @@ export default function CalendarioPage() {
         pratica_numero: info(log.practice_id)?.numero,
         cliente: info(log.practice_id)?.cliente,
       })),
-      ...((uploads.data ?? []) as any[]).map(file => ({
+      ...((uploads.data ?? []) as UploadRow[]).map(file => ({
         id: `upload-${file.id}`,
         tipo: 'upload' as const,
         titolo: `Documento caricato: ${file.nome_file}`,
@@ -250,7 +284,7 @@ export default function CalendarioPage() {
         pratica_numero: info(file.practice_id)?.numero,
         cliente: info(file.practice_id)?.cliente,
       })),
-      ...((emailLogs.data ?? []) as any[]).map(email => ({
+      ...((emailLogs.data ?? []) as EmailRow[]).map(email => ({
         id: `email-${email.id}`,
         tipo: 'email' as const,
         titolo: email.delivery_type === 'approfondimento'
@@ -263,7 +297,7 @@ export default function CalendarioPage() {
         pratica_numero: info(email.practice_id)?.numero,
         cliente: info(email.practice_id)?.cliente,
       })),
-      ...((integrations.data ?? []) as any[]).flatMap(integration => {
+      ...((integrations.data ?? []) as IntegrationRow[]).flatMap(integration => {
         const requested = integration.requested_at
           ? [{
               id: `integration-request-${integration.id}`,
@@ -292,7 +326,7 @@ export default function CalendarioPage() {
           : [];
         return [...requested, ...sent];
       }),
-      ...((publicRequests.data ?? []) as any[]).map(request => ({
+      ...((publicRequests.data ?? []) as PublicRequestRow[]).map(request => ({
         id: `public-${request.id}`,
         tipo: 'segnalazione' as const,
         titolo: request.tipo_richiesta === 'report_autonomo'
@@ -311,9 +345,9 @@ export default function CalendarioPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, year, isSegreteria, isAgente, isSegnalatore]);
 
-  useEffect(() => { load(); }, [user?.id, year, isSuperAdmin, isSegreteria, isAgente, isSegnalatore]);
+  useEffect(() => { load(); }, [load, isSuperAdmin]);
 
   const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y - 1); } else setMonth(m => m - 1); };
   const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y + 1); } else setMonth(m => m + 1); };
@@ -329,9 +363,6 @@ export default function CalendarioPage() {
     return events.filter(e => e.data === dateStr);
   };
 
-  const selectedDateStr = selectedDay
-    ? `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`
-    : null;
   const selectedEvents = selectedDay ? eventsForDay(selectedDay) : [];
 
   // Lista eventi prossimi 14gg

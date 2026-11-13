@@ -30,7 +30,8 @@ npm install @stripe/stripe-js @stripe/react-stripe-js
 
 ```tsx
 import { Elements } from '@stripe/react-stripe-js';
-import { stripePromise, CheckoutForm } from './stripe/CheckoutForm';
+import { CheckoutForm } from './stripe/CheckoutForm';
+import { stripePromise } from './stripe/stripe-config';
 
 function App() {
   return (
@@ -64,7 +65,8 @@ Includes Stripe initialization and payment form logic:
 
 ```tsx
 import { Elements } from '@stripe/react-stripe-js';
-import { stripePromise, CheckoutForm } from './stripe/CheckoutForm';
+import { CheckoutForm } from './stripe/CheckoutForm';
+import { stripePromise } from './stripe/stripe-config';
 
 <Elements stripe={stripePromise}>
   <CheckoutForm

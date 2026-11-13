@@ -3,13 +3,12 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   FileText, Mail, Search, RefreshCw, Download,
-  ChevronRight, Send, CheckCircle2, AlertCircle,
-  Building2, User, Calendar, BarChart3, Eye,
+  ChevronRight, CheckCircle2, AlertCircle,
+  Building2, User, Calendar, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
@@ -321,19 +320,6 @@ async function generateReportPdf(bilanci: BilancioRecord[], practiceLabel: strin
   doc.save(fileName);
 }
 
-// ── Status pratica colori ──────────────────────────────────────────────────
-const STATUS_LABEL: Record<string, string> = {
-  bozza: 'Bozza', raccolta_documenti: 'Raccolta Doc.', inviata_banca: 'Inviata Banca',
-  istruttoria: 'Istruttoria', in_delibera: 'In Delibera', deliberata: 'Deliberata',
-  erogata: 'Erogata', declinata: 'Declinata',
-};
-const STATUS_COLOR: Record<string, string> = {
-  bozza: 'bg-gray-100 text-gray-700', raccolta_documenti: 'bg-yellow-100 text-yellow-800',
-  inviata_banca: 'bg-purple-100 text-purple-800', istruttoria: 'bg-cyan-100 text-cyan-800',
-  in_delibera: 'bg-amber-100 text-amber-800', deliberata: 'bg-green-100 text-green-800',
-  erogata: 'bg-emerald-100 text-emerald-800', declinata: 'bg-red-100 text-red-800',
-};
-
 // ═══════════════════════════════════════════════════════════════════════════
 export default function ReportPage() {
   const navigate = useNavigate();
@@ -426,7 +412,7 @@ export default function ReportPage() {
       if (!cliente.practiceId) throw new Error('Pratica non associata');
       await generateReportPdf(cliente.bilanci, cliente.numeroPratica ?? 'N/D', cliente.practiceId);
       toast.success(`Report PDF generato e archiviato per ${cliente.ragioneSociale}`);
-    } catch (e) {
+    } catch {
       toast.error('Errore nella generazione del PDF');
     } finally {
       setGenerando(null);

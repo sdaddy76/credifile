@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { formatRomeDateTime } from '@/lib/dateTime';
 
 export default function ProfiloPage() {
-  const { user, profileNome } = useAuth();
+  const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [nome, setNome] = useState('');

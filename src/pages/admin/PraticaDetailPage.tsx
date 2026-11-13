@@ -23,6 +23,7 @@ import {
   CheckSquare, StickyNote, Pin, ListChecks, Phone, Pencil, Landmark
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FILE_EXTENSIONS, documentMimeType } from '@/lib/documentFormats';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { parseCentraleRischi, categoriaToTipologia, type CRRiga } from '@/lib/parseCentraleRischi';
 import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
@@ -38,6 +39,7 @@ const AmlReportTab = lazy(() => import('@/components/AmlReportTab'));
 const DocumentCoherenceTab = lazy(() => import('@/components/DocumentCoherenceTab'));
 const PracticeTimelineCalendar = lazy(() => import('@/components/PracticeTimelineCalendar'));
 const Partecipogramma = lazy(() => import('@/components/Partecipogramma'));
+const PracticeChartsTab = lazy(() => import('@/components/PracticeChartsTab'));
 
 function TabsContent({ children, ...props }: ComponentProps<typeof SectionContent>) {
   return (
@@ -83,8 +85,6 @@ import {
   emptyStructuredSubject,
   getStructuredSubjects,
   isStructuredSubjectComplete,
-  readStructuredContacts,
-  type StructuredContact,
   type StructuredSubject,
   type StructuredSubjectType,
 } from '@/lib/structuredContacts';
@@ -1514,7 +1514,7 @@ export default function PraticaDetailPage() {
     if (!crPreview || !id) return;
     setCrImporting(true);
     try {
-      const rows = crPreview.map((riga, i): FinRow => ({
+      const rows = crPreview.map((riga): FinRow => ({
         id: crypto.randomUUID(),
         tipologia:         categoriaToTipologia(riga.categoria),
         banca_finanziaria: riga.banca,
@@ -1681,7 +1681,7 @@ export default function PraticaDetailPage() {
         }
 
         uploadedCount++;
-        await propagaDocumentoAltrePratiche(docId, result.path, result.nomefile_originale, file.type, file.size);
+        await propagaDocumentoAltrePratiche(docId, result.path, result.nomefile_originale, documentMimeType(file.name, file.type), file.size);
       }
 
       if (uploadedCount > 0) {
@@ -1700,7 +1700,7 @@ export default function PraticaDetailPage() {
     window.Dropbox.choose({
       linkType: 'direct',
       multiselect: true,
-      extensions: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png'],
+      extensions: [...DOCUMENT_FILE_EXTENSIONS],
       success: async (files) => {
         if (!files.length || !id) return;
         const oversized = files.filter(f => f.bytes > 30 * 1024 * 1024);
@@ -1731,7 +1731,7 @@ export default function PraticaDetailPage() {
             }
 
             uploadedCount++;
-            await propagaDocumentoAltrePratiche(docId, result.path, result.nomefile_originale, blob.type, bytes);
+            await propagaDocumentoAltrePratiche(docId, result.path, result.nomefile_originale, documentMimeType(name, blob.type), bytes);
           }
           if (uploadedCount > 0) {
             await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
@@ -1878,8 +1878,8 @@ export default function PraticaDetailPage() {
         ? { ...item, importo_richiesto: normalizedAmount, motivazione: motivazioneValue.trim() || null }
         : item));
       toast.success(`Dati per ${practiceBank.banks?.nome ?? 'la banca'} salvati`);
-    } catch (error: any) {
-      toast.error('Errore salvataggio dati banca: ' + (error?.message ?? error));
+    } catch (error: unknown) {
+      toast.error('Errore salvataggio dati banca: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setSavingBankRequestId(null);
     }
@@ -1975,31 +1975,6 @@ export default function PraticaDetailPage() {
     }));
   };
 
-  const updateStructuredContact = (
-    docId: string,
-    role: 'legal_representative' | 'administrator' | 'beneficial_owners',
-    field: keyof StructuredContact,
-    value: string,
-    ownerIndex?: number,
-  ) => {
-    setDocuments(prev => prev.map(document => {
-      if (document.id !== docId) return document;
-      const contacts = readStructuredContacts(document.client_response);
-      if (role === 'beneficial_owners') {
-        const index = ownerIndex ?? 0;
-        contacts.beneficial_owners = contacts.beneficial_owners.map((owner, currentIndex) => (
-          currentIndex === index ? { ...owner, [field]: value } : owner
-        ));
-      } else {
-        contacts[role] = { ...contacts[role], [field]: value };
-      }
-      return {
-        ...document,
-        client_response: contacts as unknown as Record<string, unknown>,
-      };
-    }));
-  };
-
   const updateStructuredSubject = (
     docId: string,
     subjectIndex: number,
@@ -2041,35 +2016,6 @@ export default function PraticaDetailPage() {
           subjects: subjects.length > 0
             ? subjects
             : [emptyStructuredSubject()],
-        } as unknown as Record<string, unknown>,
-      };
-    }));
-  };
-
-  const addStructuredBeneficialOwner = (docId: string) => {
-    setDocuments(prev => prev.map(document => {
-      if (document.id !== docId) return document;
-      const contacts = readStructuredContacts(document.client_response);
-      return {
-        ...document,
-        client_response: {
-          ...contacts,
-          beneficial_owners: [...contacts.beneficial_owners, emptyStructuredSubject(['beneficial_owner'])],
-        } as unknown as Record<string, unknown>,
-      };
-    }));
-  };
-
-  const removeStructuredBeneficialOwner = (docId: string, ownerIndex: number) => {
-    setDocuments(prev => prev.map(document => {
-      if (document.id !== docId) return document;
-      const contacts = readStructuredContacts(document.client_response);
-      const remaining = contacts.beneficial_owners.filter((_, index) => index !== ownerIndex);
-      return {
-        ...document,
-        client_response: {
-          ...contacts,
-          beneficial_owners: remaining.length > 0 ? remaining : [emptyStructuredSubject(['beneficial_owner'])],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -3000,6 +2946,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="banche" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🏦 Banche {practiceBanks.length > 0 ? `(${practiceBanks.length})` : ''}</TabsTrigger>
               <TabsTrigger value="finanziamenti" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">💳 Finanziamenti {financing.length > 0 ? `(${financing.length})` : ''}</TabsTrigger>
               <TabsTrigger value="analisi" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📈 Analisi Finanziaria</TabsTrigger>
+              <TabsTrigger value="grafici" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📊 Grafici</TabsTrigger>
               <TabsTrigger value="partecipogramma" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🌳 Partecipogramma</TabsTrigger>
               <TabsTrigger value="coerenza" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🔎 Coerenza Documentale</TabsTrigger>
               <TabsTrigger value="report" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📄 Report di Bancabilità</TabsTrigger>
@@ -3022,6 +2969,10 @@ export default function PraticaDetailPage() {
             </TabsList>
 
             <TabsContent value="documenti" className="space-y-3 mt-3">
+              <p className="text-xs text-muted-foreground">
+                Formati documenti: PDF, Excel (.xls, .xlsx), Word (.doc, .docx), XBRL/XML, ZIP e immagini · massimo 30 MB per file.
+                Gli archivi ZIP vengono conservati come allegati, senza estrazione automatica.
+              </p>
               {/* Actions */}
               {(canEdit || canApprove) && (
               <div className="flex gap-2 flex-wrap">
@@ -3625,7 +3576,7 @@ export default function PraticaDetailPage() {
                                     <>
                                       <input type="file" multiple className="hidden"
                                         ref={el => { adminFileRefs.current[doc.id] = el; }}
-                                        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                                        accept={DOCUMENT_FILE_ACCEPT}
                                         onChange={e => { const fs = e.target.files; if (fs && fs.length > 0) handleAdminUpload(doc.id, fs); e.target.value = ''; }}
                                       />
                                       <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
@@ -4421,6 +4372,10 @@ export default function PraticaDetailPage() {
               {id && <AnalisiFinanziariaTab practiceId={id} />}
             </TabsContent>
 
+            <TabsContent value="grafici" className="mt-3">
+              {id && <PracticeChartsTab practiceId={id} onOpenAnalysis={() => setActiveTab('analisi')} onOpenReport={() => setActiveTab('report')} />}
+            </TabsContent>
+
             <TabsContent value="partecipogramma" className="mt-3">
               {client && id && <Partecipogramma key={client.id} client={client} practiceId={id} />}
             </TabsContent>
@@ -4514,7 +4469,6 @@ export default function PraticaDetailPage() {
                     const badgeColor = sc >= 70 ? 'bg-green-100 text-green-800 border-green-300' : sc >= 40 ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-red-100 text-red-800 border-red-300';
                     const cardBorder = sc >= 70 ? 'border-green-200'  : sc >= 40 ? 'border-amber-200'  : 'border-red-200';
                     const total = banca.passCount + banca.failCount + banca.ndCount;
-                    const [open, setOpen] = [false, () => {}]; // placeholder — usiamo details nativo HTML
                     return (
                       <Card key={banca.bankId ?? idx} className={`border ${cardBorder}`}>
                         <CardContent className="py-3 px-4 space-y-3">

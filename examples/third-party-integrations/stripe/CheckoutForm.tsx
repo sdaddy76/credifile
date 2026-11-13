@@ -1,68 +1,8 @@
-// CheckoutForm.tsx - Payment form component (includes Stripe initialization)
+// CheckoutForm.tsx - Payment form components.
 import React, { useState } from 'react';
-import { loadStripe, Stripe } from '@stripe/stripe-js';
+import type { PaymentIntent } from '@stripe/stripe-js';
 import { useStripe, useElements, CardElement } from '@stripe/react-stripe-js';
 import { supabase } from '@/integrations/supabase/client';
-
-// ==================== Stripe Initialization Section ====================
-// ✅ Get public key from environment variables (secure)
-const STRIPE_PUBLIC_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
-
-if (!STRIPE_PUBLIC_KEY) {
-  console.error('❌ Missing environment variable VITE_STRIPE_PUBLIC_KEY');
-}
-
-// ✅ Simple and direct initialization
-export const stripePromise = STRIPE_PUBLIC_KEY 
-  ? loadStripe(STRIPE_PUBLIC_KEY)
-  : null;
-
-// ✅ Type-safe configuration interface
-export interface StripeConfig {
-  publishableKey: string;
-  supportedPaymentMethods: string[];
-  currency: string;
-}
-
-// ✅ Default configuration
-export const defaultStripeConfig: StripeConfig = {
-  publishableKey: STRIPE_PUBLIC_KEY || '',
-  supportedPaymentMethods: ['card'],
-  currency: 'usd'
-};
-
-// ✅ Validate Stripe availability
-export const validateStripeSetup = (): boolean => {
-  if (!STRIPE_PUBLIC_KEY) {
-    console.warn('⚠️ Stripe public key not configured, payment functionality unavailable');
-    return false;
-  }
-  
-  if (!STRIPE_PUBLIC_KEY.startsWith('pk_')) {
-    console.error('❌ Invalid Stripe public key format, should start with pk_');
-    return false;
-  }
-  
-  return true;
-};
-
-// ✅ Get Stripe instance (with error handling)
-export const getStripeInstance = async (): Promise<Stripe | null> => {
-  if (!validateStripeSetup()) {
-    return null;
-  }
-  
-  try {
-    const stripe = await stripePromise;
-    if (!stripe) {
-      throw new Error('Stripe initialization failed');
-    }
-    return stripe;
-  } catch (error) {
-    console.error('Stripe loading failed:', error);
-    return null;
-  }
-};
 
 // ==================== Payment Form Component Section ====================
 
@@ -80,7 +20,7 @@ interface PaymentData {
 
 interface CheckoutFormProps {
   paymentData: PaymentData;
-  onSuccess?: (paymentIntent: any) => void;
+  onSuccess?: (paymentIntent: PaymentIntent) => void;
   onError?: (error: string) => void;
 }
 
@@ -117,7 +57,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
     try {
       // ✅ Step 1: Create payment intent
       console.log('🔄 Creating payment intent...');
-      const { data, error } = await supabase.functions.invoke('create-payment-intent', {
+      const { data, error } = await supabase.functions.invoke<{ client_secret: string }>('create-payment-intent', {
         body: {
           amount: paymentData.amount,
           currency: paymentData.currency,
@@ -183,9 +123,11 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
         throw new Error(`Payment status abnormal: ${paymentIntent?.status}`);
       }
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Payment failed:', error);
-      const errorMsg = error.message || 'Unknown error occurred during payment process';
+      const errorMsg = error instanceof Error && error.message
+        ? error.message
+        : 'Unknown error occurred during payment process';
       setErrorMessage(errorMsg);
       onError?.(errorMsg);
     } finally {
@@ -258,7 +200,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
 
 // ✅ Export default usage example
 export const ExampleUsage = () => {
-  const handlePaymentSuccess = (paymentIntent: any) => {
+  const handlePaymentSuccess = (paymentIntent: PaymentIntent) => {
     console.log('Payment successful!', paymentIntent);
     // Redirect to success page or show success message
   };

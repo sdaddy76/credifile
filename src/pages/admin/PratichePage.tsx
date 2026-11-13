@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { invokeSendToBank } from '@/lib/sendToBank';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
@@ -148,7 +148,7 @@ export default function PratichePage() {
       practice_id: showAssignBank.id,
       bank_id: bankId,
       note: sendNoteFor[bankId] || null,
-      include_report: !Boolean(omitReportFor[bankId]),
+      include_report: !omitReportFor[bankId],
     });
     if (error || data?.error) {
       toast.error('Errore invio: ' + (error?.message ?? data?.error));
@@ -181,7 +181,7 @@ export default function PratichePage() {
   }
 
 
-  async function load() {
+  const load = useCallback(async () => {
     let query = supabase.from('practices').select('*, clients(ragione_sociale,email), assigned_agent:admin_profiles!practices_assigned_to_fkey(id,nome,email), segnalatore:admin_profiles!practices_segnalatore_id_fkey(id,nome,email)');
 
     if (isAgente && user?.id) {
@@ -210,7 +210,7 @@ export default function PratichePage() {
     const { data } = await query.order('created_at', { ascending: false });
     setPractices((data ?? []) as Practice[]);
     setLoading(false);
-  }
+  }, [isAgente, isSegreteria, isSegnalatore, user?.id]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -247,7 +247,7 @@ export default function PratichePage() {
           setSegreteriaMap(map);
         });
     }
-  }, [authLoading, isAgente, isSegreteria, isSuperAdmin, isSegnalatore, user?.id]);
+  }, [authLoading, isAgente, isSegreteria, isSuperAdmin, user?.id, load]);
 
   const filtered = practices.filter(p => {
     const rs = (p as Practice & { clients?: { ragione_sociale: string } }).clients?.ragione_sociale ?? '';
@@ -722,7 +722,6 @@ export default function PratichePage() {
           {filtered.map(p => {
             const client = (p as Practice & { clients?: { ragione_sociale: string; email: string } }).clients;
             const assignedAgent = (p as Practice & { assigned_agent?: { id: string; nome?: string; email: string } }).assigned_agent;
-            const createdByAgent = agents.find(a => a.id === (p as Practice & { created_by?: string }).created_by) ?? null;
             const segnalatorePratica = (p as Practice & { segnalatore?: { id: string; nome?: string; email: string } }).segnalatore;
             return (
               <Card key={p.id} className="border-border hover:border-primary/30 transition-colors cursor-pointer" onClick={() => navigate(`/admin/pratiche/${p.id}`)}>
@@ -984,7 +983,7 @@ export default function PratichePage() {
                         <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 cursor-pointer">
                           <input
                             type="checkbox"
-                          checked={!Boolean(omitReportFor[pb.bank_id])}
+                          checked={!omitReportFor[pb.bank_id]}
                           onChange={event => setOmitReportFor(prev => ({
                               ...prev,
                               [pb.bank_id]: !event.target.checked,

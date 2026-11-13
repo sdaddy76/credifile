@@ -6,7 +6,7 @@ const fail = (msg: string) => new Response(JSON.stringify({ success: false, erro
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   try {
-    const { email, nome, invited_by, resend } = await req.json()
+    const { email, nome, resend } = await req.json()
     if (!email) return fail('email obbligatoria')
 
     const sb     = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)

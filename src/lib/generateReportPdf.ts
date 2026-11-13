@@ -122,7 +122,10 @@ function fmtEur(v: number): string {
 }
 
 export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Blob; base64: string }> {
-  const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  // jspdf-autotable aggiunge questa proprietà dopo ogni tabella.
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' }) as jsPDF & {
+    lastAutoTable: { finalY: number };
+  };
   const W     = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   let y = 0;
@@ -360,7 +363,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
     margin: { left: 14, right: 14 },
     theme: 'striped',
   });
-  y = (doc as any).lastAutoTable.finalY + 8;
+  y = doc.lastAutoTable.finalY + 8;
 
   // Barre KPI visive (progress orizzontali)
   checkPage(16);
@@ -676,7 +679,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
           }
         },
       });
-      y = (doc as any).lastAutoTable.finalY + 8;
+      y = doc.lastAutoTable.finalY + 8;
     }
 
     if (analysis.findings.length === 0) {
@@ -724,7 +727,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
           }
         },
       });
-      y = (doc as any).lastAutoTable.finalY + 8;
+      y = doc.lastAutoTable.finalY + 8;
 
       for (const finding of analysis.findings.filter(item => item.severity !== 'bassa').slice(0, 8)) {
         checkPage(34);
@@ -799,7 +802,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
       margin: { left: 14, right: 14 },
       theme: 'striped',
     });
-    y = (doc as any).lastAutoTable.finalY + 8;
+    y = doc.lastAutoTable.finalY + 8;
 
     // Totali
     const totResiduo = data.finanziamenti.reduce((s, f) => s + f.importo_residuo, 0);
@@ -875,7 +878,7 @@ export async function generateReportPdf(data: ReportData): Promise<{ pdfBlob: Bl
   }
 
   // ── FOOTER su tutte le pagine ─────────────────────────────────────────
-  const totalPages = (doc as any).internal.getNumberOfPages();
+  const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
     addFooter(i, totalPages);

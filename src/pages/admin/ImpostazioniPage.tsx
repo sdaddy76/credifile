@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -179,7 +179,7 @@ export default function ImpostazioniPage() {
     setDropboxLoading(false);
   };
 
-  const loadDropboxBackups = async () => {
+  const loadDropboxBackups = useCallback(async () => {
     if (!session?.access_token) return;
     setDropboxBackupsLoading(true);
     try {
@@ -197,7 +197,7 @@ export default function ImpostazioniPage() {
     } finally {
       setDropboxBackupsLoading(false);
     }
-  };
+  }, [session?.access_token]);
 
   const restoreDropboxBackup = async (backup: DropboxBackup) => {
     if (!session?.access_token || restoringBackup) return;
@@ -257,7 +257,7 @@ export default function ImpostazioniPage() {
 
   useEffect(() => {
     if (isSuperAdmin && session?.access_token) void loadDropboxBackups();
-  }, [isSuperAdmin, session?.access_token]);
+  }, [isSuperAdmin, session?.access_token, loadDropboxBackups]);
 
   if (!isSegreteria && !isSuperAdmin) return null;
 

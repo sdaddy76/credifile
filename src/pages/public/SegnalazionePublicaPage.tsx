@@ -12,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Upload, X, FileText, Send, Plus, Loader2, CheckCircle2, ShieldCheck, BadgeEuro } from 'lucide-react';
 import { extractPdfText, parseVisuraCompleta } from '@/lib/parseVisura';
 import { supabase } from '@/lib/supabase';
+import { documentMimeType } from '@/lib/documentFormats';
 import PublicSiteLayout from '@/components/public/PublicSiteLayout';
 import { usePageMeta } from '@/lib/pageMeta';
 
@@ -195,7 +196,7 @@ export default function SegnalazionePublicaPage() {
         ...altriDocs.map(doc => ({
           client_id: doc.id,
           name: doc.file.name,
-          type: doc.file.type || 'application/octet-stream',
+          type: documentMimeType(doc.file.name, doc.file.type),
           size: doc.file.size,
           role: 'allegato',
           nome_descrittivo: doc.nome || doc.file.name,
@@ -239,7 +240,7 @@ export default function SegnalazionePublicaPage() {
         const { error: uploadError } = await supabase.storage
           .from('practice-files')
           .uploadToSignedUrl(upload.path, upload.token, file, {
-            contentType: file.type || 'application/octet-stream',
+            contentType: documentMimeType(file.name, file.type),
             upsert: false,
           });
         if (uploadError) throw uploadError;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, BarChart3, FileSearch, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -21,8 +21,8 @@ export default function AnalisiCostiBancariPage() {
   const [selectedPracticeId, setSelectedPracticeId] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    if (!user) return;
+  const load = useCallback(async () => {
+    if (!user?.id) return;
     setLoading(true);
     const { data: ownedClients } = await supabase
       .from('consulente_clients')
@@ -62,9 +62,9 @@ export default function AnalisiCostiBancariPage() {
     setPractices(next);
     setSelectedPracticeId(current => next.some(practice => practice.id === current) ? current : next[0]?.id ?? '');
     setLoading(false);
-  };
+  }, [user?.id]);
 
-  useEffect(() => { load(); }, [user?.id]);
+  useEffect(() => { load(); }, [load]);
 
   const selectedPractice = practices.find(practice => practice.id === selectedPracticeId);
 

@@ -342,7 +342,9 @@ function isPersonName(s: string): boolean {
 
 const CARICA_PATTERN = String.raw`(Amministratore\s+(?:Unico|[Dd]elegato)|AMM(?:\.RE?|INISTRATORE)?\s*(?:UNICO|[Uu]nico|DELEGATO|[Dd]elegato)|Presidente(?:\s+(?:del\s+)?C(?:onsiglio|\.?D\.?A\.?))?|Consigliere(?:\s+[Dd]elegato)?|Liquidatore(?:\s+[Uu]nico)?|Direttore\s+[Gg]enerale)`;
 
-export function parseAmministratori(raw: string, _sociCFs: Set<string> = new Set()): AmministratoreResult[] {
+// The optional second argument remains accepted for legacy PDF callers.
+export function parseAmministratori(raw: string, sociCFs?: Set<string>): AmministratoreResult[];
+export function parseAmministratori(raw: string): AmministratoreResult[] {
   const s5 = isolaSezione(raw,
     [/(?:sezione\s+(?:V|5)\b|\b5[\s.)]\s*(?:organo\s+)?amministrat|organo\s+amministrativo|organi\s+sociali|persone\s+che\s+esercitano|esponenti\s*,?\s*consiglio\s+di\s+amministrazione)/i],
     /(?:sezione\s+(?:VI|6)\b|\b6[\s.)]\s*Sindac|titolari\s+di\s+cariche|titolare\s+effettivo|societ[aà]\s+partecipate|unit[aà]\s+locali|$)/i,

@@ -989,7 +989,7 @@ export default function ReputazioneTab({ practiceId, clientId }: Props) {
       .limit(10);
     const list = (data ?? []) as AnalysisRecord[];
     setAnalyses(list);
-    if (list.length > 0 && !selected) setSelected(list[0]);
+    setSelected(current => current ?? list[0] ?? null);
     setLoadingHistory(false);
   }, [practiceId]);
 

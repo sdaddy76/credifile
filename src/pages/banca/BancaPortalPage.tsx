@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
@@ -119,6 +119,13 @@ interface ReceivedPractice {
       kpi?: Record<string, number>;
     };
   };
+}
+
+interface BankAssignment {
+  id: string;
+  practice_id: string;
+  importo_richiesto?: number | null;
+  motivazione?: string | null;
 }
 
 /* ─── Helpers ─── */
@@ -273,7 +280,7 @@ export default function BancaPortalPage() {
   }, [user]);
 
   /* Pratiche disponibili (anonime) */
-  const loadDisponibili = async () => {
+  const loadDisponibili = useCallback(async () => {
     if (!bankId) { setLoading(false); return; }
     setLoading(true);
     try {
@@ -315,8 +322,8 @@ export default function BancaPortalPage() {
       const reqMap: Record<string, { status: string; id: string }> = {};
       (reqData ?? []).forEach(r => { reqMap[r.practice_id] = { status: r.status, id: r.id }; });
 
-      const assignmentMap: Record<string, { id: string; importo_richiesto?: number | null; motivazione?: string | null }> = {};
-      (bankAssignments ?? []).forEach((assignment: any) => { assignmentMap[assignment.practice_id] = assignment; });
+      const assignmentMap: Record<string, BankAssignment> = {};
+      (bankAssignments ?? []).forEach(assignment => { assignmentMap[assignment.practice_id] = assignment; });
       setPractices(pList.map(p => {
         const assignment = assignmentMap[p.id];
         return {
@@ -331,10 +338,10 @@ export default function BancaPortalPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [bankId]);
 
   /* Pratiche ricevute (dati completi) */
-  const loadRicevute = async () => {
+  const loadRicevute = useCallback(async () => {
     if (!bankId) return;
     setLoadingReceived(true);
     try {
@@ -355,7 +362,8 @@ export default function BancaPortalPage() {
       const { data: pData } = await supabase
         .from('practices')
         .select('id, numero_pratica, importo_richiesto, motivazione, status, codice_ateco, created_at, clients(ragione_sociale, piva, codice_fiscale, indirizzo, telefono, email, data_costituzione)')
-        .in('id', practiceIds);
+        .in('id', practiceIds)
+        .returns<ReceivedPractice['practice'][]>();
 
       const { data: bankAssignments } = await supabase
         .from('practice_banks')
@@ -380,15 +388,13 @@ export default function BancaPortalPage() {
         (sData ?? []).forEach(s => { segMap[s.id] = { nome: s.nome, email: s.email }; });
       }
 
-      const kpiMap: Record<string, typeof kpiData extends (infer T)[] | null ? T : never> = {};
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (kpiData ?? []).forEach((k: any) => { if (!kpiMap[k.practice_id]) kpiMap[k.practice_id] = k; });
+      const kpiMap: Record<string, ReceivedPractice['practice']['kpi']> = {};
+      (kpiData ?? []).forEach(k => { if (!kpiMap[k.practice_id]) kpiMap[k.practice_id] = k; });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const pMap: Record<string, any> = {};
+      const pMap: Record<string, ReceivedPractice['practice']> = {};
       (pData ?? []).forEach(p => { pMap[p.id] = p; });
-      const assignmentMap: Record<string, any> = {};
-      (bankAssignments ?? []).forEach((assignment: any) => { assignmentMap[assignment.practice_id] = assignment; });
+      const assignmentMap: Record<string, BankAssignment> = {};
+      (bankAssignments ?? []).forEach(assignment => { assignmentMap[assignment.practice_id] = assignment; });
 
       const result: ReceivedPractice[] = reqData.map(r => ({
         requestId: r.id,
@@ -412,13 +418,13 @@ export default function BancaPortalPage() {
     } finally {
       setLoadingReceived(false);
     }
-  };
+  }, [bankId]);
 
-  useEffect(() => { loadDisponibili(); }, [bankId]);
-  useEffect(() => { if (activeTab === 'ricevute') loadRicevute(); }, [activeTab, bankId]);
+  useEffect(() => { loadDisponibili(); }, [loadDisponibili]);
+  useEffect(() => { if (activeTab === 'ricevute') loadRicevute(); }, [activeTab, loadRicevute]);
 
   /* ── Carica impostazioni notifiche ── */
-  const loadNotifSettings = async () => {
+  const loadNotifSettings = useCallback(async () => {
     if (!bankId) return;
     try {
       const { data, error } = await supabase
@@ -446,9 +452,9 @@ export default function BancaPortalPage() {
     } catch (err) {
       console.error('Eccezione in loadNotifSettings:', err);
     }
-  };
+  }, [bankId, user?.email]);
 
-  useEffect(() => { if (bankId) loadNotifSettings(); }, [bankId]);
+  useEffect(() => { if (bankId) loadNotifSettings(); }, [bankId, loadNotifSettings]);
 
   const saveNotifSettings = async () => {
     if (!bankId) return;

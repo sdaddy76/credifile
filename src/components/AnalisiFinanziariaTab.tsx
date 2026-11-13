@@ -1054,7 +1054,7 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
     }
   }, [practiceId]);
 
-  const loadData = async (
+  const loadData = useCallback(async (
     preferredBilancioId: string | null = null,
     preferredUploadedFileId: string | null = null,
   ) => {
@@ -1188,9 +1188,9 @@ export default function AnalisiFinanziariaTab({ practiceId }: Props) {
       nextPdfs.some(file => file.id === current) ? current : nextPdfs[0]?.id ?? '',
     );
     setLoading(false);
-  };
+  }, [practiceId]);
 
-  useEffect(() => { loadData(); }, [practiceId]);
+  useEffect(() => { void loadData(); }, [loadData]);
 
   const handleDeleteBilancio = async (id: string, anno: number) => {
     if (!window.confirm(`Eliminare il bilancio ${anno}? L'operazione è irreversibile.`)) return;

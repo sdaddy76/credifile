@@ -43,3 +43,16 @@ test('i vendor non trascinano dipendenze condivise e URL dei worker', async () =
     'il lettore legacy deve restare separato dal lettore moderno',
   );
 });
+
+test('la pratica offre un accesso diretto ai grafici e i formati condivisi', async () => {
+  const page = await projectFile('src/pages/admin/PraticaDetailPage.tsx');
+  const portal = await projectFile('src/pages/client/ClientPortalPage.tsx');
+  assert.match(page, /<TabsTrigger value="grafici"/);
+  assert.match(page, /<TabsContent value="grafici"/);
+  assert.match(page, /lazy\(\(\) => import\('@\/components\/PracticeChartsTab'\)\)/);
+  assert.match(page, /extensions: \[\.\.\.DOCUMENT_FILE_EXTENSIONS\]/);
+  assert.match(page, /accept=\{DOCUMENT_FILE_ACCEPT\}/);
+  assert.match(portal, /accept=\{DOCUMENT_FILE_ACCEPT\}/);
+  assert.doesNotMatch(page, /accept="\.pdf,\.doc,\.docx,\.xls/);
+  assert.doesNotMatch(portal, /accept="\.pdf,\.doc,\.docx,\.xls/);
+});

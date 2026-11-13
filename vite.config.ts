@@ -3,6 +3,7 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import tailwindcss from '@tailwindcss/vite';
 import fs from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import nodePath from 'node:path';
 import { componentTagger } from 'lovable-tagger';
 import path from "path";
@@ -16,6 +17,37 @@ import * as t from '@babel/types';
 // CJS/ESM interop for Babel libs
 const traverse = ((_traverse as unknown as { default?: typeof _traverse }).default ?? _traverse) as typeof _traverse;
 const generate = ((_generate as unknown as { default?: typeof _generate }).default ?? _generate) as typeof _generate;
+
+/**
+ * L'app usa esclusivamente gli export ESM di PDF.js. L'esposizione globale
+ * opzionale forza invece l'inclusione di tutti gli editor/annotazioni, anche
+ * quando servono solo getDocument e il worker. Conserviamo gli export e i
+ * polyfill legacy, rimuovendo soltanto i due registri globali non utilizzati.
+ */
+function pdfjsEsmTreeShaking(): Plugin {
+  return {
+    name: 'pdfjs-esm-tree-shaking',
+    enforce: 'pre',
+    apply: 'build',
+    transform(code, id) {
+      if (!/\/pdfjs-dist\/(?:legacy\/)?build\/pdf\.mjs$/.test(id)) return null;
+      const ast = parse(code, { sourceType: 'module' });
+      traverse(ast, {
+        ExpressionStatement(nodePath) {
+          const expression = nodePath.node.expression;
+          if (!t.isAssignmentExpression(expression) || expression.operator !== '=') return;
+          const target = expression.left;
+          if (!t.isMemberExpression(target) || target.computed
+            || !t.isIdentifier(target.object, { name: 'globalThis' })
+            || !t.isIdentifier(target.property)
+            || !['pdfjsLib', '_pdfjsTestingUtils'].includes(target.property.name)) return;
+          nodePath.remove();
+        },
+      });
+      return { code: generate(ast, { comments: true }, code).code, map: null };
+    },
+  };
+}
 
 function cdnPrefixImages(): Plugin {
   const DEBUG = process.env.CDN_IMG_DEBUG === '1';
@@ -80,7 +112,7 @@ function cdnPrefixImages(): Plugin {
     let rewrites = 0;
 
     traverse(ast, {
-      JSXAttribute(path: any) {
+      JSXAttribute(path) {
         const name = (path.node.name as t.JSXIdentifier).name;
         const isSrc = name === 'src' || name === 'href';
         const isSrcSet = name === 'srcSet' || name === 'srcset';
@@ -104,23 +136,23 @@ function cdnPrefixImages(): Plugin {
         }
       },
 
-      StringLiteral(path: any) {
+      StringLiteral(path) {
         // skip object keys: { "image": "..." }
         if (t.isObjectProperty(path.parent) && path.parentKey === 'key' && !path.parent.computed) return;
         // skip import/export sources
         if (t.isImportDeclaration(path.parent) || t.isExportAllDeclaration(path.parent) || t.isExportNamedDeclaration(path.parent)) return;
         // skip inside JSX attribute (already handled)
-        if (path.findParent((p: any) => p.isJSXAttribute())) return;
+        if (path.findParent(p => p.isJSXAttribute())) return;
 
         const before = path.node.value;
         const after = toCDN(before, cdn);
         if (after !== before) { path.node.value = after; rewrites++; }
       },
 
-      TemplateLiteral(path: any) {
+      TemplateLiteral(path) {
         // handle `"/images/foo.png"` as template with NO expressions
         if (path.node.expressions.length) return;
-        const raw = path.node.quasis.map((q: any) => q.value.cooked ?? q.value.raw).join('');
+        const raw = path.node.quasis.map(q => q.value.cooked ?? q.value.raw).join('');
         const after = toCDN(raw, cdn);
         if (after !== raw) {
           path.replaceWith(t.stringLiteral(after));
@@ -142,7 +174,7 @@ function cdnPrefixImages(): Plugin {
     const stack = [imagesDir];
     while (stack.length) {
       const cur = stack.pop()!;
-      let entries: any[] = [];
+      let entries: Dirent[] = [];
       try {
         entries = await fs.readdir(cur, { withFileTypes: true });
       } catch {
@@ -215,6 +247,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       tailwindcss(),
       react(),
+      pdfjsEsmTreeShaking(),
       mode === 'development' &&
       componentTagger(),
       cdnPrefixImages(),
@@ -223,7 +256,7 @@ export default defineConfig(({ mode }) => {
       alias: {
         "@": path.resolve(__dirname, "./src"),
         // Proxy react-router-dom to our wrapper
-        "react-router-dom": path.resolve(__dirname, "./src/lib/react-router-dom-proxy.tsx"),
+        "react-router-dom": path.resolve(__dirname, "./src/lib/react-router-dom.ts"),
         // Original react-router-dom under a different name
         "react-router-dom-original": "react-router-dom",
       },
@@ -254,6 +287,7 @@ export default defineConfig(({ mode }) => {
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
             if (id.includes('?url')) return undefined;
+            if (id.includes('/@supabase/') || id.includes('/iceberg-js/') || id.includes('/tslib/')) return 'vendor-supabase';
             if (id.includes('pdfjs-dist/legacy/')) return 'vendor-pdfjs-legacy';
             if (id.includes('pdfjs-dist')) return 'vendor-pdfjs';
             if (id.includes('/jspdf')) return 'vendor-jspdf';

@@ -210,7 +210,7 @@ export default function UtentiPage() {
       toast.success(`Email aggiornata → ${trimmed}`);
       setEditEmail('');
       load();
-    } catch (e) {
+    } catch {
       toast.error('Errore di rete durante il cambio email');
     } finally {
       setChangingEmail(false);

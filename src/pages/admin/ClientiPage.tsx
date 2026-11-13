@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -126,7 +126,7 @@ export default function ClientiPage() {
   const [segUploading, setSegUploading]       = useState<string | null>(null);
   const fileSegRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!user?.id) return;
     if (isSegnalatore) {
       const { data: pratt } = await supabase.from('practices').select('client_id').eq('segnalatore_id', user.id);
@@ -160,7 +160,7 @@ export default function ClientiPage() {
       setClients(data ?? []);
     }
     setLoading(false);
-  }
+  }, [user?.id, isSegnalatore, isAgente, isSegreteria]);
 
   async function openSegDocs(clientId: string) {
     if (!user?.id) return;
@@ -178,7 +178,7 @@ export default function ClientiPage() {
     setSegUploading(docId);
     const ext = file.name.split('.').pop();
     const path = `${segPracticeId}/${docId}/${Date.now()}.${ext}`;
-    try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch (_) { /* ok */ }
+    try { await supabase.storage.from('practice-files').upload(path, file, { upsert: false }); } catch { /* ok */ }
     await supabase.from('uploaded_files').insert({ practice_id: segPracticeId, doc_id: docId, nome_file: file.name, storage_path: path, uploaded_by: user.id });
     await supabase.from('practice_documents').update({ status: 'caricato', uploaded_at: new Date().toISOString() }).eq('id', docId);
     setSegUploading(null);
@@ -187,7 +187,7 @@ export default function ClientiPage() {
     setSegDocs((docs ?? []) as {id:string;nome:string;status:string}[]);
   }
 
-  useEffect(() => { if (!authLoading && user?.id) load(); }, [authLoading, user?.id, isSegnalatore, isAgente, isSegreteria]);
+  useEffect(() => { if (!authLoading && user?.id) load(); }, [authLoading, user?.id, load]);
 
   const toForm = (c: Client): FormState => ({
     ragione_sociale:   c.ragione_sociale,

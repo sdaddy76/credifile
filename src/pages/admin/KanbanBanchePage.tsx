@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
@@ -21,6 +21,21 @@ interface PraticaBanca {
   data_invio: string | null;
   created_at_pb: string;
   agente: string;
+}
+
+interface PraticaBancaRow {
+  id: string;
+  practice_id: string;
+  bank_id: string | null;
+  status: string | null;
+  data_invio: string | null;
+  created_at: string;
+  practices: {
+    numero_pratica?: string;
+    status?: string;
+    assigned_agent?: { nome?: string | null; email?: string | null } | { nome?: string | null; email?: string | null }[] | null;
+    clients?: { ragione_sociale?: string | null } | { ragione_sociale?: string | null }[] | null;
+  } | null;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -107,7 +122,7 @@ export default function KanbanBanchePage() {
   // Mostra nome agente sulla card solo per ruoli che gestiscono più agenti
   const showAgente = isSuperAdmin || isSegreteria;
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data: bancheData } = await supabase
@@ -168,9 +183,9 @@ export default function KanbanBanchePage() {
         q = q.in('practice_id', allowedIds);
       }
 
-      const { data: pbData } = await q;
+      const { data: pbData } = await q.returns<PraticaBancaRow[]>();
 
-      const mapped: PraticaBanca[] = (pbData ?? []).map((row: any) => {
+      const mapped: PraticaBanca[] = (pbData ?? []).map(row => {
         const pr = row.practices ?? {};
         const ag = Array.isArray(pr.assigned_agent) ? pr.assigned_agent[0] : pr.assigned_agent;
         const cl = Array.isArray(pr.clients)         ? pr.clients[0]        : pr.clients;
@@ -187,9 +202,9 @@ export default function KanbanBanchePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [isAgente, isSegreteria, isSegnalatore, user?.id]);
 
-  useEffect(() => { if (!authLoading) load(); }, [authLoading, user?.id]);
+  useEffect(() => { if (!authLoading) load(); }, [authLoading, load]);
 
   // Raggruppa per banca
   const byBank: Record<string, PraticaBanca[]> = {};

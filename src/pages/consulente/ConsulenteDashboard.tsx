@@ -30,14 +30,6 @@ async function extractPdfText(file: File): Promise<string> {
   return pages.join('\n');
 }
 
-function isolaSezione(text: string, start: RegExp, end: RegExp): string {
-  const si = text.search(start);
-  if (si === -1) return '';
-  const sub = text.substring(si);
-  const ei  = sub.search(end);
-  return ei !== -1 ? sub.substring(0, ei) : sub;
-}
-
 function cleanup(s: string): string {
   return s.trim().replace(/\s{2,}/g, ' ').replace(/[,|/\\]+$/, '').trim();
 }

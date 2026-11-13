@@ -55,4 +55,38 @@ describe('uploadPracticeFile system attribution', () => {
     expect(mockStorageUpload).not.toHaveBeenCalled();
     expect(mockInsert).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['bilancio.xlsx', 'application/zip', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['relazione.docx', '', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['bilancio.xbrl', '', 'application/xbrl+xml'],
+    ['documenti.zip', '', 'application/zip'],
+  ])('uploads %s with the canonical MIME and unchanged original filename', async (fileName, reported, expected) => {
+    const result = await uploadPracticeFile({
+      practiceId: 'practice-123',
+      file: new Blob(['file'], { type: reported }),
+      fileName,
+      mimeType: reported,
+      uploadedBy: 'cliente',
+    });
+    expect(result.error).toBeNull();
+    expect(mockStorageUpload).toHaveBeenCalledWith(
+      expect.stringContaining(fileName),
+      expect.any(Blob),
+      expect.objectContaining({ contentType: expected, upsert: false }),
+    );
+    expect(mockInsert).toHaveBeenCalledWith(expect.objectContaining({
+      nome_file: fileName,
+      mime_type: expected,
+      dimensione: 4,
+    }));
+  });
+
+  it('rejects unsupported extensions before storage upload', async () => {
+    const result = await uploadPracticeFile({
+      practiceId: 'practice-123', file: new Blob(['file']), fileName: 'eseguibile.exe',
+    });
+    expect(result.error?.message).toContain('Formato non supportato');
+    expect(mockStorageUpload).not.toHaveBeenCalled();
+  });
 });

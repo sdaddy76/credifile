@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, ChevronDown, ChevronUp, Save, ClipboardList, CheckSquare, GripVertical } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, ClipboardList, CheckSquare, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ChecklistItem { id?: string; nome: string; descrizione?: string; obbligatorio: boolean; ordine: number; }

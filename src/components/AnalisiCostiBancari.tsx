@@ -85,7 +85,7 @@ export function AnalisiCostiBancari({
       setTransactions((data ?? []) as StoredTransaction[]);
     }
     setLoading(false);
-  }, [practiceId, providedTransactions]);
+  }, [accessCode, clientEmail, practiceId, providedTransactions]);
 
   useEffect(() => { load(); }, [load]);
 

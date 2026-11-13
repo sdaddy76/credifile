@@ -81,20 +81,17 @@ export default function DashboardPage() {
         allowedPracticeIds = (data ?? []).map(row => row.id);
       }
 
-      const applyPracticeVisibility = (query: any) => (
-        allowedPracticeIds === null
-          ? query
-          : query.in(
-              'id',
-              allowedPracticeIds.length > 0
-                ? allowedPracticeIds
-                : ['00000000-0000-0000-0000-000000000000'],
-            )
-      );
+      let practicesQuery = supabase.from('practices').select('*, clients(ragione_sociale), banks(nome)');
+      if (allowedPracticeIds !== null) {
+        practicesQuery = practicesQuery.in(
+          'id',
+          allowedPracticeIds.length > 0
+            ? allowedPracticeIds
+            : ['00000000-0000-0000-0000-000000000000'],
+        );
+      }
       const [pratiche, clienti, banche] = await Promise.all([
-        applyPracticeVisibility(
-          supabase.from('practices').select('*, clients(ragione_sociale), banks(nome)')
-        ).order('created_at', { ascending: false }).limit(200),
+        practicesQuery.order('created_at', { ascending: false }).limit(200),
         allowedPracticeIds === null
           ? supabase.from('clients').select('id')
           : supabase.from('practices').select('client_id').in(

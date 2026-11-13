@@ -136,7 +136,7 @@ function CircleGauge({ score, size = 120 }: { score: number; size?: number }) {
 }
 
 // ─── Componente principale ───────────────────────────────────────────────────
-export default function IndiceBancabilita({ latestKpi, practiceId, bancaId }: Props) {
+export default function IndiceBancabilita({ latestKpi, bancaId }: Props) {
   const [pesi,        setPesi]        = useState<PesoRecord[]>([]);
   const [scores,      setScores]      = useState<KpiScore[]>([]);
   const [indice,      setIndice]      = useState<number | null>(null);

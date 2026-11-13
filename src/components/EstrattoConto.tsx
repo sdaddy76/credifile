@@ -349,10 +349,10 @@ async function estraiTestoPdf(arrayBuffer: ArrayBuffer): Promise<PositionedPdfRo
     const byY: Map<number, Array<{ str: string; x: number }>> = new Map();
     for (const item of content.items) {
       if (!('str' in item)) continue;
-      const y = Math.round((item as any).transform[5] / 3) * 3;
-      const x = (item as any).transform[4] as number;
+      const y = Math.round(item.transform[5] / 3) * 3;
+      const x = item.transform[4];
       if (!byY.has(y)) byY.set(y, []);
-      byY.get(y)!.push({ str: (item as any).str, x });
+      byY.get(y)!.push({ str: item.str, x });
     }
     // Ordina per Y decrescente (top→bottom), poi per X crescente (sinistra→destra)
     const sorted = [...byY.entries()].sort((a, b) => b[0] - a[0]);

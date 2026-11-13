@@ -356,13 +356,6 @@ interface KpiEntry {
   source_note?: string;
 }
 
-function semaforo(v: number | null, thresholds: { green: [number, number] | null; yellow: [number, number] | null }, higherIsBetter: boolean): Semaforo {
-  if (v === null || !isFinite(v)) return 'nd';
-  if (thresholds.green && v >= thresholds.green[0] && v <= thresholds.green[1]) return 'verde';
-  if (thresholds.yellow && v >= thresholds.yellow[0] && v <= thresholds.yellow[1]) return 'giallo';
-  return 'rosso';
-}
-
 function fmtPct(v: number | null) { return v !== null ? v.toFixed(1) + '%' : 'N/D'; }
 function fmtMult(v: number | null) { return v !== null ? v.toFixed(2) + 'x' : 'N/D'; }
 function fmtRatio(v: number | null) { return v !== null ? v.toFixed(2) : 'N/D'; }
@@ -796,9 +789,6 @@ Deno.serve(async (req) => {
   const periodTransactions = transactionsForBalanceYear(transactions ?? [], bilData.anno_esercizio);
   const {
     is_holding,
-    ebit: _ebit,
-    ebitda: _ebitda,
-    pfn: _pfn,
     kpi,
     dscr_source,
     servizio_debito_annuo,

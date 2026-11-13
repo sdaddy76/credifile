@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useAutoBackup } from '@/hooks/useAutoBackup';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
 import NotificationBell from '@/components/NotificationBell';
 
 const NAV_SUPER = [
@@ -96,7 +95,6 @@ const ROLE_COLOR: Record<string, string> = {
 
 export default function AdminLayout() {
   const { user, role, profileNome, signOut, loading: authLoading, isSegreteria } = useAuth();
-  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useAutoBackup(user?.id, isSegreteria, !authLoading);

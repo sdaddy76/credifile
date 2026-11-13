@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { sanitizeFileName, sanitizePracticeFileName } from '@/lib/sanitizeFileName';
+import { documentMimeType, validateDocumentFile } from '@/lib/documentFormats';
 
 export { sanitizeFileName, sanitizePracticeFileName };
 
@@ -32,6 +33,13 @@ export async function uploadPracticeFile({
   prefix,
 }: UploadPracticeFileParams): Promise<UploadPracticeFileResult> {
   const nomefile_originale = fileName;
+  const validationError = validateDocumentFile({ name: fileName, size: file.size });
+  if (validationError) {
+    return { path: null, uploadedFileId: null, nomefile_originale, error: new Error(validationError) };
+  }
+  // I browser possono lasciare il MIME vuoto o indicare application/zip
+  // per i documenti Office. Il nome originale determina il MIME canonico.
+  const effectiveMimeType = documentMimeType(fileName, mimeType || file.type);
   let effectiveUploadedBy = uploadedBy;
   if (uploadedBy === 'sistema') {
     const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -54,7 +62,7 @@ export async function uploadPracticeFile({
 
   const { error: storageError } = await supabase.storage
     .from('practice-files')
-    .upload(path, file, { cacheControl: '3600', upsert: false });
+    .upload(path, file, { cacheControl: '3600', upsert: false, contentType: effectiveMimeType });
 
   if (storageError) {
     return { path: null, uploadedFileId: null, nomefile_originale, error: new Error(storageError.message) };
@@ -64,8 +72,8 @@ export async function uploadPracticeFile({
     practice_id: practiceId,
     nome_file: nomefile_originale,
     storage_path: path,
-    mime_type: mimeType ?? (file instanceof File ? file.type : null),
-    dimensione: size ?? (file instanceof File ? file.size : null),
+    mime_type: effectiveMimeType,
+    dimensione: size ?? file.size,
     uploaded_by: effectiveUploadedBy,
   };
 

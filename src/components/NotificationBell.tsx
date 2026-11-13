@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Bell, Check, CheckCheck, Trash2, X } from 'lucide-react';
@@ -36,18 +36,19 @@ const TIPO_ICON: Record<string, string> = {
 
 export default function NotificationBell() {
   const { user } = useAuth();
+  const userId = user?.id;
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
-  const load = async () => {
-    if (!user?.id) return;
+  const load = useCallback(async () => {
+    if (!userId) return;
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(30);
     if (error) {
@@ -59,22 +60,22 @@ export default function NotificationBell() {
     const list = (data ?? []) as Notification[];
     setNotifications(list);
     setUnread(list.filter(n => !n.letto).length);
-  };
+  }, [userId]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!userId) return;
     load();
     // Realtime per la consegna immediata; polling come fallback per ambienti
     // in cui la pubblicazione Supabase Realtime non è ancora attiva.
     const channel = supabase
-      .channel(`notifications:${user?.id}`)
+      .channel(`notifications:${userId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'notifications',
-          filter: `user_id=eq.${user.id}`,
+          filter: `user_id=eq.${userId}`,
         },
         () => { load(); },
       )
@@ -88,7 +89,7 @@ export default function NotificationBell() {
       clearInterval(interval);
       void supabase.removeChannel(channel);
     };
-  }, [user?.id]);
+  }, [load, userId]);
 
   // Chiudi al click fuori
   useEffect(() => {

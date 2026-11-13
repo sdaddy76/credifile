@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,19 +42,15 @@ export default function StatistichePage() {
   const [totaleClienti, setTotaleClienti] = useState(0);
   const [totaleBanche, setTotaleBanche] = useState(0);
 
-  // Attende che l'auth sia pronta (role caricato) prima di caricare i dati
-  useEffect(() => {
-    if (!authLoading && user?.id) load();
-  }, [user?.id, authLoading, isSegreteria, isSuperAdmin]);
-
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!user?.id) return;
     setLoading(true);
 
     // Agenti visibili (segreteria → solo i propri, superadmin → tutti)
     let aids: string[] = [];
     if (isSegreteria) {
       const { data } = await supabase.from('segreteria_agent_assignments')
-        .select('agent_user_id').eq('segreteria_user_id', user!.id);
+        .select('agent_user_id').eq('segreteria_user_id', user.id);
       aids = (data ?? []).map((a: { agent_user_id: string }) => a.agent_user_id);
     } else if (isSuperAdmin) {
       const { data } = await supabase.from('admin_profiles').select('id').eq('ruolo', 'agente');
@@ -71,7 +67,7 @@ export default function StatistichePage() {
     // Pratiche (filtrate per agenti visibili)
     let q = supabase.from('practices').select('id,status,created_by,assigned_to,created_at,numero_pratica,importo_richiesto,clients(ragione_sociale)');
     if (isSegreteria && aids.length > 0) q = q.in('created_by', aids);
-    else if (!isSuperAdmin) q = q.eq('created_by', user!.id);
+    else if (!isSuperAdmin) q = q.eq('created_by', user.id);
     const { data: pData } = await q.order('created_at', { ascending: false });
     const pList = (pData ?? []) as unknown as Practice[];
     setPractices(pList);
@@ -106,7 +102,12 @@ export default function StatistichePage() {
     setTotaleBanche(bCount ?? 0);
 
     setLoading(false);
-  };
+  }, [user?.id, isSegreteria, isSuperAdmin]);
+
+  // Attende che l'auth sia pronta (role caricato) prima di caricare i dati
+  useEffect(() => {
+    if (!authLoading && user?.id) load();
+  }, [user?.id, authLoading, load]);
 
   // ── Metriche globali ──────────────────────────────────────────────────────
   const totale = practices.length;
@@ -114,7 +115,6 @@ export default function StatistichePage() {
   practices.forEach(p => { byStatus[p.status] = (byStatus[p.status] ?? 0) + 1; });
 
   const completate  = (byStatus['deliberata'] ?? 0) + (byStatus['erogata'] ?? 0);
-  const inCorso     = (byStatus['raccolta_documenti'] ?? 0) + (byStatus['inviata_banca'] ?? 0) + (byStatus['istruttoria'] ?? 0) + (byStatus['in_delibera'] ?? 0);
   const bozze       = byStatus['bozza'] ?? 0;
   const rifiutate   = byStatus['declinata'] ?? 0;
   // Pratiche ancora aperte (qualsiasi stato non terminale)
@@ -126,16 +126,6 @@ export default function StatistichePage() {
     .filter(p => !['deliberata','erogata','declinata'].includes(p.status))
     .map(p => daysBetween(p.created_at, new Date().toISOString()));
   const durataMediaAttiva = avg(durateAttive);
-
-  // Durata media pratiche completate
-  // (usiamo il last status_log ma non lo abbiamo; usiamo created_at come proxy)
-  // Tempo medio risposta cliente: da created_at del codice accesso a primo upload
-  const tempiRisposta: number[] = [];
-  accessCodes.forEach(ac => {
-    const firstUpload = uploads.find(u => u.practice_id === ac.practice_id);
-    if (firstUpload) tempiRisposta.push(daysBetween(ac.created_at, firstUpload.uploaded_at));
-  });
-  const tempoMedioRisposta = avg(tempiRisposta);
 
   // Pratiche con documenti mancanti (richiesto o rifiutato)
   const praticheConDocMancanti = new Set(

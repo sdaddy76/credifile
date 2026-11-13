@@ -1,7 +1,8 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { uploadPracticeFile } from '@/lib/uploadFile';
+import { DOCUMENT_FILE_ACCEPT } from '@/lib/documentFormats';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -28,8 +29,6 @@ import {
   emptyStructuredSubject as emptySubject,
   getStructuredSubjects as getContactSubjects,
   isStructuredSubjectComplete,
-  readStructuredContacts as getContactsResponse,
-  type StructuredContact,
   type StructuredContactRole as ContactRole,
   type StructuredSubject as FinPromoterSubject,
   type StructuredSubjectType,
@@ -77,8 +76,6 @@ interface BankSearchRequest {
     email?: string | null;
   } | null;
 }
-
-type ContactField = keyof StructuredContact;
 
 const notifyAgentDocumentUpload = async ({
   practiceId,
@@ -236,7 +233,7 @@ export default function ClientPortalPage() {
     'Fido bancario', 'Carta di credito revolving', 'Altro',
   ];
 
-  const loadFinancing = async () => {
+  const loadFinancing = useCallback(async () => {
     if (!practiceId) return;
     const { data } = await supabase
       .from('client_financing')
@@ -253,7 +250,7 @@ export default function ClientPortalPage() {
       debito_residuo: r.debito_residuo?.toString() ?? '',
       note: r.note ?? '',
     })));
-  };
+  }, [practiceId]);
 
   const updateQuestionAnswer = (questionId: string, value: string) => {
     setClientQuestions(prev => prev.map(question => (
@@ -337,28 +334,6 @@ export default function ClientPortalPage() {
     }));
   };
 
-  const updateContactRequirement = (
-    documentId: string,
-    role: 'legal_representative' | 'administrator' | 'beneficial_owners',
-    field: ContactField,
-    value: string,
-    ownerIndex?: number,
-  ) => {
-    setDocuments(prev => prev.map(document => {
-      if (document.id !== documentId) return document;
-      const contacts = getContactsResponse(document.client_response);
-      if (role === 'beneficial_owners') {
-        const index = ownerIndex ?? 0;
-        contacts.beneficial_owners = contacts.beneficial_owners.map((owner, currentIndex) => (
-          currentIndex === index ? { ...owner, [field]: value } : owner
-        ));
-      } else {
-        contacts[role] = { ...contacts[role], [field]: value };
-      }
-      return { ...document, client_response: contacts as unknown as Record<string, unknown> };
-    }));
-  };
-
   const updateContactSubject = (
     documentId: string,
     subjectIndex: number,
@@ -398,35 +373,6 @@ export default function ClientPortalPage() {
         client_response: {
           ...(document.client_response ?? {}),
           subjects: subjects.length > 0 ? subjects : [emptySubject()],
-        } as unknown as Record<string, unknown>,
-      };
-    }));
-  };
-
-  const addBeneficialOwner = (documentId: string) => {
-    setDocuments(prev => prev.map(document => {
-      if (document.id !== documentId) return document;
-      const contacts = getContactsResponse(document.client_response);
-      return {
-        ...document,
-        client_response: {
-          ...contacts,
-          beneficial_owners: [...contacts.beneficial_owners, emptySubject(['beneficial_owner'])],
-        } as unknown as Record<string, unknown>,
-      };
-    }));
-  };
-
-  const removeBeneficialOwner = (documentId: string, ownerIndex: number) => {
-    setDocuments(prev => prev.map(document => {
-      if (document.id !== documentId) return document;
-      const contacts = getContactsResponse(document.client_response);
-      const remaining = contacts.beneficial_owners.filter((_, index) => index !== ownerIndex);
-      return {
-        ...document,
-        client_response: {
-          ...contacts,
-          beneficial_owners: remaining.length > 0 ? remaining : [emptySubject(['beneficial_owner'])],
         } as unknown as Record<string, unknown>,
       };
     }));
@@ -734,7 +680,7 @@ export default function ClientPortalPage() {
     setSession(s);
   }, [practiceId, navigate]);
 
-  const loadBankSearchRequest = async () => {
+  const loadBankSearchRequest = useCallback(async () => {
     if (!practiceId || !session) return;
     setLoadingBankSearch(true);
     try {
@@ -753,7 +699,7 @@ export default function ClientPortalPage() {
     } finally {
       setLoadingBankSearch(false);
     }
-  };
+  }, [practiceId, session]);
 
   const submitBankSearchRequest = async () => {
     if (!practiceId || !session) return;
@@ -796,7 +742,7 @@ export default function ClientPortalPage() {
     }
   };
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!practiceId || !session) return;
     const [p, docs, pbRes, logsRes, questionsRes, clientBanksRes, accessRes, integrationsRes] = await Promise.all([
       supabase.from('practices').select('*, clients(*), banks(nome)').eq('id', practiceId).single(),
@@ -853,7 +799,7 @@ export default function ClientPortalPage() {
     setLoading(false);
     loadFinancing();
     loadBankSearchRequest();
-  };
+  }, [practiceId, session, loadFinancing, loadBankSearchRequest]);
 
   const downloadModuloTemplate = async (filePath: string, nome: string) => {
     const { data } = await supabase.storage.from('bank-moduli').createSignedUrl(filePath, 300);
@@ -881,7 +827,7 @@ export default function ClientPortalPage() {
     load();
   };
 
-  useEffect(() => { if (session) load(); }, [session]);
+  useEffect(() => { if (session) void load(); }, [session, load]);
 
   const handleFileUpload = async (docId: string, file: File) => {
     if (!practiceId) return;
@@ -2438,7 +2384,7 @@ export default function ClientPortalPage() {
                           type="file"
                           ref={el => { fileInputRefs.current[`quick_${doc.id}`] = el; }}
                           className="hidden"
-                          accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                          accept={DOCUMENT_FILE_ACCEPT}
                           onChange={e => handleFileSelect(doc.id, e)}
                         />
                         <Button
@@ -2470,7 +2416,7 @@ export default function ClientPortalPage() {
                 type="file"
                 ref={freeUploadRef}
                 className="hidden"
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip"
+                accept={DOCUMENT_FILE_ACCEPT}
                 onChange={e => {
                   const f = e.target.files?.[0];
                   if (f) handleFreeDocUpload(f);
@@ -2490,7 +2436,7 @@ export default function ClientPortalPage() {
                 )}
               </Button>
               <p className="text-xs text-muted-foreground text-center mt-1">
-                PDF, Word, Excel, immagini, ZIP — max 30 MB
+                PDF, Word (.doc, .docx), Excel (.xls, .xlsx), XBRL/XML, immagini, ZIP — max 30 MB. Gli ZIP restano allegati, senza estrazione automatica.
               </p>
             </div>
           </CardContent>

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { documentMimeType } from '@/lib/documentFormats';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -138,7 +139,7 @@ export default function NuovaSegnalazionePage() {
   const uploadFile = async (file: File, path: string): Promise<{ url: string; path: string }> => {
     const { error: uploadError } = await supabase.storage
       .from('practice-files')
-      .upload(path, file, { upsert: false, cacheControl: '3600' });
+      .upload(path, file, { upsert: false, cacheControl: '3600', contentType: documentMimeType(file.name, file.type) });
     if (uploadError) {
       throw new Error(`Upload "${file.name}" non riuscito: ${uploadError.message}`);
     }
@@ -194,7 +195,7 @@ export default function NuovaSegnalazionePage() {
           nome: documento.label,
           url: upload.url,
           path: upload.path,
-          mime_type: file.type,
+          mime_type: documentMimeType(file.name, file.type),
           dimensione: file.size,
         });
       }
@@ -204,7 +205,7 @@ export default function NuovaSegnalazionePage() {
           nome: doc.nome || doc.file.name,
           url: upload.url,
           path: upload.path,
-          mime_type: doc.file.type,
+          mime_type: documentMimeType(doc.file.name, doc.file.type),
           dimensione: doc.file.size,
         });
       }

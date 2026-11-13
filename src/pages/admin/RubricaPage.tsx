@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -133,7 +133,7 @@ export default function RubricaPage() {
     setAgents((data ?? []) as AgentProfile[]);
   }
 
-  async function loadLeads() {
+  const loadLeads = useCallback(async () => {
     if (!user?.id) return;
     let query = supabase
       .from('leads')
@@ -149,14 +149,14 @@ export default function RubricaPage() {
     if (error) toast.error('Errore caricamento lead: ' + error.message);
     setLeads((data ?? []) as Lead[]);
     setLoading(false);
-  }
+  }, [user?.id, role]);
 
   useEffect(() => {
     if (!authLoading && user?.id) {
       loadAgents();
       loadLeads();
     }
-  }, [authLoading, user?.id, role]);
+  }, [authLoading, user?.id, loadLeads]);
 
   // ── KPI ───────────────────────────────────────────────────────────────────
 
