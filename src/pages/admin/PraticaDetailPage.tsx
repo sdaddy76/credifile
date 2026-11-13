@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState, useCallback, useRef, type Componen
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { loadAgentSecretaries } from '@/lib/loadAgentSecretaries';
 import { uploadPracticeFile } from '@/lib/uploadFile';
 import { invokeSendToBank } from '@/lib/sendToBank';
 import { invokeAiMatching } from '@/lib/aiMatching';
@@ -1290,16 +1291,14 @@ export default function PraticaDetailPage() {
     // Carica segreteria di competenza (solo super_admin)
     if (isSuperAdmin && (p.data as Practice & { assigned_to?: string })?.assigned_to) {
       const agentId = (p.data as Practice & { assigned_to?: string }).assigned_to!;
-      supabase
-        .from('segreteria_agent_assignments')
-        .select('segreteria:admin_profiles!segreteria_agent_assignments_segreteria_user_id_fkey(nome,email)')
-        .eq('agent_user_id', agentId)
-        .limit(1)
-        .then(({ data: sData }) => {
-          const raw = (sData as unknown as Array<{ agent_user_id: string; segreteria: Array<{ nome?: string; email?: string }> }>);
-          const first = raw?.[0]?.segreteria?.[0] ?? null;
-          setSegreteriaDiCompetenza(first as { nome?: string; email: string } | null);
+      loadAgentSecretaries(agentId)
+        .then(secretaries => setSegreteriaDiCompetenza(secretaries[agentId] ?? null))
+        .catch(() => {
+          setSegreteriaDiCompetenza(null);
+          toast.error('Impossibile caricare la segreteria di competenza.');
         });
+    } else {
+      setSegreteriaDiCompetenza(null);
     }
     setDocuments(docs.data as PracticeDocument[] ?? []);
     const { data: accessLogs, error: accessLogsError } = await supabase

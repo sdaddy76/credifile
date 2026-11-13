@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { loadAgentSecretaries } from '@/lib/loadAgentSecretaries';
 import { invokeSendToBank } from '@/lib/sendToBank';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -232,20 +233,11 @@ export default function PratichePage() {
     }
     // Mappa agente → segreteria per super_admin
     if (isSuperAdmin) {
-      supabase
-        .from('segreteria_agent_assignments')
-        .select('agent_user_id, segreteria:admin_profiles!segreteria_agent_assignments_segreteria_user_id_fkey(nome,email)')
-        .then(({ data: sData }) => {
-          const map: Record<string, string> = {};
-          (sData as unknown as Array<{ agent_user_id: string; segreteria: Array<{ nome?: string; email?: string }> }>)
-            ?.forEach((row) => {
-              const seg = row.segreteria?.[0];
-              if (seg) {
-                map[row.agent_user_id] = seg.nome || seg.email || '';
-              }
-            });
-          setSegreteriaMap(map);
-        });
+      loadAgentSecretaries()
+        .then(secretaries => setSegreteriaMap(Object.fromEntries(
+          Object.entries(secretaries).map(([agentId, secretary]) => [agentId, secretary.nome || secretary.email]),
+        )))
+        .catch(() => toast.error('Impossibile caricare le segreterie di competenza.'));
     }
   }, [authLoading, isAgente, isSegreteria, isSuperAdmin, user?.id, load]);
 
