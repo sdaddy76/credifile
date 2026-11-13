@@ -239,12 +239,22 @@ export default defineConfig(({ mode }) => {
       ),
     },
     build: {
+      minify: 'terser',
+      terserOptions: {
+        compress: { passes: 2 },
+        format: { comments: false },
+      },
       // Mantiene i moduli pesanti fuori dal bundle iniziale. Le route che
       // generano PDF o grafici li caricano solo quando vengono utilizzate.
       rollupOptions: {
         output: {
+          // Non trascinare le dipendenze condivise (React, helper) nei vendor:
+          // altrimenti le importazioni normali rendono eager i moduli lazy.
+          onlyExplicitManualChunks: true,
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
+            if (id.includes('?url')) return undefined;
+            if (id.includes('pdfjs-dist/legacy/')) return 'vendor-pdfjs-legacy';
             if (id.includes('pdfjs-dist')) return 'vendor-pdfjs';
             if (id.includes('/jspdf')) return 'vendor-jspdf';
             if (id.includes('html2canvas')) return 'vendor-html2canvas';

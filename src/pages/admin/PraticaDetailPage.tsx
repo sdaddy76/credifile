@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, useRef, type ComponentProps } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
@@ -14,19 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent as SectionContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
-import SchedaValutazioneRischio from '@/components/SchedaValutazioneRischio';
-import AnalisiFinanziariaTab from '@/components/AnalisiFinanziariaTab';
-import BancabilitaTab from '@/components/BancabilitaTab';
-import ReputazioneTab from '@/components/ReputazioneTab';
-import RelazioneTab from '@/components/RelazioneTab';
-import { EstrattoConto } from '@/components/EstrattoConto';
-import { AnalisiCostiBancari } from '@/components/AnalisiCostiBancari';
-import AmlReportTab from '@/components/AmlReportTab';
-import DocumentCoherenceTab from '@/components/DocumentCoherenceTab';
-import PracticeTimelineCalendar from '@/components/PracticeTimelineCalendar';
-import Partecipogramma from '@/components/Partecipogramma';
 import {
   ArrowLeft, Copy, Plus, Link2, CheckCircle, XCircle,
   FileText, Clock, Download, Upload, RefreshCw, Building2, User, Euro, AlertCircle, Mail, Trash2,
@@ -34,17 +23,35 @@ import {
   CheckSquare, StickyNote, Pin, ListChecks, Phone, Pencil, Landmark
 } from 'lucide-react';
 import { toast } from 'sonner';
-import * as pdfjs from 'pdfjs-dist';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { parseCentraleRischi, categoriaToTipologia, type CRRiga } from '@/lib/parseCentraleRischi';
-import { jsPDF } from 'jspdf';
 import { formatRomeDate, formatRomeDateTime } from '@/lib/dateTime';
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url
-).toString();
+// Ogni sezione viene scaricata solo quando il suo pannello è aperto.
+const AnalisiFinanziariaTab = lazy(() => import('@/components/AnalisiFinanziariaTab'));
+const BancabilitaTab = lazy(() => import('@/components/BancabilitaTab'));
+const ReputazioneTab = lazy(() => import('@/components/ReputazioneTab'));
+const RelazioneTab = lazy(() => import('@/components/RelazioneTab'));
+const EstrattoConto = lazy(() => import('@/components/EstrattoConto').then(module => ({ default: module.EstrattoConto })));
+const AnalisiCostiBancari = lazy(() => import('@/components/AnalisiCostiBancari').then(module => ({ default: module.AnalisiCostiBancari })));
+const AmlReportTab = lazy(() => import('@/components/AmlReportTab'));
+const DocumentCoherenceTab = lazy(() => import('@/components/DocumentCoherenceTab'));
+const PracticeTimelineCalendar = lazy(() => import('@/components/PracticeTimelineCalendar'));
+const Partecipogramma = lazy(() => import('@/components/Partecipogramma'));
+
+function TabsContent({ children, ...props }: ComponentProps<typeof SectionContent>) {
+  return (
+    <SectionContent {...props}>
+      <Suspense fallback={<p role="status" className="py-8 text-center text-sm text-muted-foreground">Caricamento sezione...</p>}>
+        {children}
+      </Suspense>
+    </SectionContent>
+  );
+}
 
 async function extractPdfText(file: File): Promise<string> {
+  const pdfjs = await import('pdfjs-dist');
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
   const buf = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data: buf }).promise;
   const pages: string[] = [];
@@ -920,6 +927,7 @@ export default function PraticaDetailPage() {
 
   const handleExportPdf = async () => {
     if (!generatedText.trim()) { toast.error('Genera prima il documento'); return; }
+    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
     const margin = 20;
     const pageW = doc.internal.pageSize.getWidth();
