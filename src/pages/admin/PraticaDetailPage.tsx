@@ -2994,6 +2994,7 @@ export default function PraticaDetailPage() {
               <TabsTrigger value="analisi" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📈 Analisi Finanziaria</TabsTrigger>
               <TabsTrigger value="partecipogramma" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🌳 Partecipogramma</TabsTrigger>
               <TabsTrigger value="coerenza" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🔎 Coerenza Documentale</TabsTrigger>
+              <TabsTrigger value="report" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">📄 Report di Bancabilità</TabsTrigger>
               <TabsTrigger value="bancabilita" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">✅ Bancabilità</TabsTrigger>
               <TabsTrigger value="reputazione" className="h-auto min-h-8 justify-start px-2 py-1.5 text-left text-xs leading-tight whitespace-normal">🛡️ Reputazione</TabsTrigger>
               {(isSuperAdmin || isSegreteria || isAgente) && (
@@ -4418,6 +4419,10 @@ export default function PraticaDetailPage() {
 
             <TabsContent value="coerenza" className="mt-3">
               {id && <DocumentCoherenceTab practiceId={id} />}
+            </TabsContent>
+
+            <TabsContent value="report" className="mt-3">
+              {id && <BancabilitaTab practiceId={id} reportOnly />}
             </TabsContent>
 
             <TabsContent value="bancabilita" className="mt-3">

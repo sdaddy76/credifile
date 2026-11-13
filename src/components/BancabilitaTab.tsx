@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RefreshCw, ShieldCheck, Download, ChevronDown, ChevronUp, AlertCircle, TrendingUp, Plus, FileDown, Upload, Loader2, FileText } from 'lucide-react';
 import IndiceBancabilita from '@/components/IndiceBancabilita';
 import { toast } from 'sonner';
@@ -10,7 +10,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { uploadPracticeFile } from '@/lib/uploadFile';
 
-interface Props { practiceId: string }
+interface Props { practiceId: string; reportOnly?: boolean }
 
 interface KpiEntry { valore: number | null; formatted: string; semaforo: string; label: string }
 type KpiResult = Record<string, Record<string, KpiEntry>>;
@@ -20,6 +20,13 @@ interface BilancioRecord {
   is_holding: boolean; kpi: KpiResult; created_at: string;
   ricavi_vendite?: number | null; utile_netto?: number | null;
   utile_perdita_esercizio?: number | null;
+}
+
+interface ArchivedReport {
+  id: string;
+  nome_file: string;
+  storage_path: string;
+  created_at: string;
 }
 
 // Chiavi KPI che sono colonne dirette in bilanci_kpi, NON nel JSON kpi
@@ -429,10 +436,11 @@ function BankLogoWithFallback({ name, logoUrl, size = 'md' }: { name: string; lo
   );
 }
 
-export default function BancabilitaTab({ practiceId }: Props) {
+export default function BancabilitaTab({ practiceId, reportOnly = false }: Props) {
   const [bilanci,   setBilanci]   = useState<BilancioRecord[]>([]);
   const [checks,    setChecks]    = useState<BancaCheck[]>([]);
   const [loading,   setLoading]   = useState(true);
+  const [archivedReports, setArchivedReports] = useState<ArchivedReport[]>([]);
   const [expanded,  setExpanded]  = useState<string | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
   // moduli
@@ -452,6 +460,12 @@ export default function BancabilitaTab({ practiceId }: Props) {
         .order('anno_esercizio', { ascending: false });
       const bil = (kpiRows ?? []) as BilancioRecord[];
       setBilanci(bil);
+      const { data: reportRows } = await supabase.from('uploaded_files')
+        .select('id,nome_file,storage_path,created_at')
+        .eq('practice_id', practiceId)
+        .ilike('nome_file', 'Bancabilita_%.pdf')
+        .order('created_at', { ascending: false });
+      setArchivedReports((reportRows ?? []) as ArchivedReport[]);
       const latestKpi: KpiResult | null = bil.length > 0 ? bil[0].kpi : null;
 
       // TUTTE le banche (nessun filtro attiva — include anche quelle con attiva=NULL)
@@ -597,6 +611,21 @@ export default function BancabilitaTab({ practiceId }: Props) {
     const a = document.createElement('a'); a.href = data.signedUrl; a.download = nome; a.click();
   };
 
+  const downloadArchivedReport = async (report: ArchivedReport) => {
+    const { data, error } = await supabase.storage
+      .from('practice-files')
+      .createSignedUrl(report.storage_path, 60);
+    if (error || !data?.signedUrl) {
+      toast.error('Impossibile aprire il report archiviato');
+      return;
+    }
+    const anchor = document.createElement('a');
+    anchor.href = data.signedUrl;
+    anchor.download = report.nome_file;
+    anchor.rel = 'noopener';
+    anchor.click();
+  };
+
   const uploadCompilato = async (moduloId: string, file: File) => {
     setUploadingComp(moduloId);
     const ext  = file.name.split('.').pop() ?? 'pdf';
@@ -625,6 +654,76 @@ export default function BancabilitaTab({ practiceId }: Props) {
   const latest = bilanci[0];
   const noBilancio = bilanci.length === 0;
   const noBanche   = checks.length === 0;
+
+  if (reportOnly) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FileText className="h-4 w-4 text-primary" /> Report di Bancabilità
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Genera il PDF con i dati finanziari e la verifica di bancabilità della pratica.
+              Il documento viene scaricato e archiviato tra i file della pratica.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {latest ? (
+              <p className="text-xs text-muted-foreground">
+                Ultimo bilancio: <strong>{latest.anno_esercizio}</strong> · {latest.ragione_sociale}
+              </p>
+            ) : (
+              <p className="text-sm text-amber-700">
+                Non ci sono bilanci analizzati. Carica e analizza un bilancio nella sezione “Analisi Finanziaria” per generare il report.
+              </p>
+            )}
+            <Button
+              disabled={noBilancio}
+              onClick={async () => {
+                try {
+                  await generatePdf(bilanci, checks, practiceId);
+                  toast.success('Report generato, archiviato e scaricato');
+                  await load();
+                } catch (error) {
+                  toast.error('Impossibile archiviare il report: ' + String(error));
+                }
+              }}
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Genera report PDF
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Report archiviati nella pratica</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {archivedReports.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Non ci sono ancora report archiviati.</p>
+            ) : (
+              <div className="divide-y">
+                {archivedReports.map(report => (
+                  <div key={report.id} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{report.nome_file}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(report.created_at).toLocaleString('it-IT')}
+                      </p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => downloadArchivedReport(report)}>
+                      <FileDown className="mr-1.5 h-3.5 w-3.5" /> Apri PDF
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

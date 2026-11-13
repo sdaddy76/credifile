@@ -32,6 +32,22 @@ export async function uploadPracticeFile({
   prefix,
 }: UploadPracticeFileParams): Promise<UploadPracticeFileResult> {
   const nomefile_originale = fileName;
+  let effectiveUploadedBy = uploadedBy;
+  if (uploadedBy === 'sistema') {
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) {
+      return {
+        path: null,
+        uploadedFileId: null,
+        nomefile_originale,
+        error: new Error('Sessione non valida: accedi di nuovo per archiviare il report.'),
+      };
+    }
+    // I file generati dall'applicazione restano attribuiti all'utente che li
+    // ha richiesti, così le policy RLS possono applicare gli stessi controlli
+    // di identità previsti per gli altri documenti della pratica.
+    effectiveUploadedBy = authData.user.id;
+  }
   const safeName = sanitizePracticeFileName(fileName);
   const folder = prefix ? `${prefix.replace(/^\/+|\/+$/g, '')}/${practiceId}` : practiceId;
   const path = `${folder}/${practiceDocumentId ?? 'documenti-liberi'}/${Date.now()}_${safeName}`;
@@ -50,7 +66,7 @@ export async function uploadPracticeFile({
     storage_path: path,
     mime_type: mimeType ?? (file instanceof File ? file.type : null),
     dimensione: size ?? (file instanceof File ? file.size : null),
-    uploaded_by: uploadedBy,
+    uploaded_by: effectiveUploadedBy,
   };
 
   if (practiceDocumentId) {
